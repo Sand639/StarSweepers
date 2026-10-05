@@ -11,6 +11,7 @@ using UnityEngine.Serialization;
 ///
 /// ・動かされた物はそのまま残る（投げたり、爆発させたりできる）
 /// ・**Respawn When Moved を OFF にすると、消えたときだけ出し直す**（真ん中の特殊デブリ用。動かすたびに増えないように）
+/// ・**One Random Point を ON にすると、子の場所のうち毎回ランダムな1か所にだけ出す**（STAGE_03 の特殊デブリ）
 /// ・**ラウンドの結果が出たら、もう出さない**
 ///
 /// ## オンラインのとき
@@ -36,6 +37,10 @@ public class SpaceJunkBombPoints : MonoBehaviour
     [Tooltip("置いた場所から横にこれ以上離れたら「動かされた」とみなす（m）")]
     [SerializeField] private float moveThreshold = 1f;
 
+    [Tooltip("ON：子の場所のうち、毎回ランダムな1か所にだけ出す（同時に1つだけ。STAGE_03 の特殊デブリの上・中・下）。" +
+             "OFF：子の場所すべてに1つずつ出す")]
+    [SerializeField] private bool oneRandomPoint = false;
+
     [Tooltip("始まってから最初の物を出すまでの秒数（シーン切り替えが落ち着くのを待つ）")]
     [SerializeField] private float startDelaySeconds = 0.5f;
 
@@ -53,6 +58,13 @@ public class SpaceJunkBombPoints : MonoBehaviour
 
     private void Awake()
     {
+        if (oneRandomPoint)
+        {
+            // 1か所分の状態だけ持ち、出すたびに場所を選び直す
+            points = new Point[] { new Point { place = RandomChild() } };
+            return;
+        }
+
         points = new Point[transform.childCount];
         for (int i = 0; i < points.Length; i++)
         {
@@ -127,9 +139,25 @@ public class SpaceJunkBombPoints : MonoBehaviour
         return offset.sqrMagnitude > moveThreshold * moveThreshold;
     }
 
+    /// <summary>子の場所から1つランダムに選ぶ。子が無ければ null。</summary>
+    private Transform RandomChild()
+    {
+        return transform.childCount > 0 ? transform.GetChild(Random.Range(0, transform.childCount)) : null;
+    }
+
     private void SpawnAt(Point point)
     {
         point.waitTimer = -1f;
+
+        if (oneRandomPoint)
+        {
+            point.place = RandomChild();
+        }
+
+        if (point.place == null)
+        {
+            return;
+        }
 
         GameObject spawned = Instantiate(spawnPrefab, point.place.position, point.place.rotation);
         point.bomb = spawned.GetComponent<HookableObject>();

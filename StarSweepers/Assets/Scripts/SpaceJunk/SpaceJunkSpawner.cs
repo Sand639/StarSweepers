@@ -11,6 +11,7 @@ using UnityEngine;
 /// ・出す場所に他の物やプレイヤーがいたら、別の場所を探す
 /// ・**ラウンドの結果が出たら、もう出さない**
 /// ・**Spawn Zones に範囲（四角）を入れたら、その範囲の中にだけ出す**（STAGE_02 の緑の範囲など）
+/// ・**Spawn Circle Radius を入れたら円の中に出す。Require Ground Below を ON にすると、真下に床がある所にだけ出す**（STAGE_03 のドーナツ）
 ///
 /// ## オンラインのとき
 ///
@@ -96,6 +97,13 @@ public class SpaceJunkSpawner : MonoBehaviour
     [Tooltip("ここに入れた四角の中にだけ出す（空のオブジェクトを置き、位置と Scale の X・Z で四角を決める）。" +
              "空なら Area Half Size の範囲に出す。選ぶと、シーン画面に緑の枠で見える")]
     [SerializeField] private Transform[] spawnZones = new Transform[0];
+
+    [Tooltip("0より大きくすると、このオブジェクトの位置を中心に、この半径の円の中に出す（Spawn Zones が空のとき）。" +
+             "STAGE_03 のドーナツなど。0なら Area Half Size の四角")]
+    [SerializeField] private float spawnCircleRadius = 0f;
+
+    [Tooltip("ON にすると、**真下に床があるときだけ**出す（穴の上には出さない）")]
+    [SerializeField] private bool requireGroundBelow = false;
 
     private float timer;
     private bool initialDone;
@@ -325,7 +333,7 @@ public class SpaceJunkSpawner : MonoBehaviour
             Vector3 bottom = new Vector3(candidate.x, transform.position.y + clearRadius + 0.1f, candidate.z);
             bool blocked = Physics.CheckCapsule(bottom, candidate, clearRadius, ~0, QueryTriggerInteraction.Ignore);
 
-            if (!blocked)
+            if (!blocked && HasGroundBelow(candidate))
             {
                 position = candidate;
                 return true;
@@ -334,6 +342,20 @@ public class SpaceJunkSpawner : MonoBehaviour
 
         position = Vector3.zero;
         return false;
+    }
+
+    /// <summary>
+    /// 真下に床があるか（Require Ground Below が OFF なら常に true）。
+    /// 出す場所の周りは空いていると確かめてあるので、真下に最初に当たる物が床になる。
+    /// </summary>
+    private bool HasGroundBelow(Vector3 candidate)
+    {
+        if (!requireGroundBelow)
+        {
+            return true;
+        }
+
+        return Physics.Raycast(candidate, Vector3.down, dropHeight + 2f, ~0, QueryTriggerInteraction.Ignore);
     }
 
     /// <summary>
@@ -346,6 +368,13 @@ public class SpaceJunkSpawner : MonoBehaviour
         foreach (Transform zone in spawnZones)
         {
             totalArea += ZoneArea(zone);
+        }
+
+        if (totalArea <= 0f && spawnCircleRadius > 0f)
+        {
+            // 円の中で、どこも同じくらいの出やすさになるように選ぶ
+            Vector2 inCircle = Random.insideUnitCircle * spawnCircleRadius;
+            return transform.position + new Vector3(inCircle.x, dropHeight, inCircle.y);
         }
 
         if (totalArea <= 0f)
@@ -410,7 +439,21 @@ public class SpaceJunkSpawner : MonoBehaviour
         }
         Gizmos.matrix = Matrix4x4.identity;
 
-        if (!hasZone)
+        if (!hasZone && spawnCircleRadius > 0f)
+        {
+            // 円を線でつないで描く
+            Vector3 center = transform.position + Vector3.up * dropHeight;
+            const int segments = 48;
+            for (int i = 0; i < segments; i++)
+            {
+                float a0 = i * Mathf.PI * 2f / segments;
+                float a1 = (i + 1) * Mathf.PI * 2f / segments;
+                Gizmos.DrawLine(
+                    center + new Vector3(Mathf.Cos(a0), 0f, Mathf.Sin(a0)) * spawnCircleRadius,
+                    center + new Vector3(Mathf.Cos(a1), 0f, Mathf.Sin(a1)) * spawnCircleRadius);
+            }
+        }
+        else if (!hasZone)
         {
             Gizmos.DrawWireCube(
                 transform.position + Vector3.up * dropHeight,
