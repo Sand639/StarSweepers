@@ -51,7 +51,13 @@ MonoBehaviour:
     goalMask: 15
   - scene: {fileID: 102900000, guid: e7bdbdc9ac9aaa14f968fe8859d7c13d, type: 3}
     showInLobby: 1
-    displayName: 1VS1
-    sceneName: 1VS1
-    scenePath: Assets/Scenes/Prototype/SpaceJunk/1VS1.unity
+    displayName: "\u30B7\u30F3\u30D7\u30EB1VS1\u30B9\u30C6\u30FC\u30B8"
+    sceneName: STAGE_01
+    scenePath: Assets/Scenes/Prototype/SpaceJunk/Stage/STAGE_01.unity
+    goalMask: 10
+  - scene: {fileID: 102900000, guid: 8a4927a91b4ea2c4a90c9e120df1b0a6, type: 3}
+    showInLobby: 1
+    displayName: "\u5217\u8ECA\u304C\u6765\u308BMap"
+    sceneName: STAGE_02
+    scenePath: Assets/Scenes/Prototype/SpaceJunk/Stage/STAGE_02.unity
     goalMask: 10
