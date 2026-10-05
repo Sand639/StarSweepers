@@ -11,6 +11,7 @@ using UnityEngine;
 /// ・出す場所に他の物やプレイヤーがいたら、別の場所を探す
 /// ・**ラウンドの結果が出たら、もう出さない**
 /// ・**Spawn Zones に範囲（四角）を入れたら、その範囲の中にだけ出す**（STAGE_02 の緑の範囲など）
+/// ・**Bomb Prefab を入れたら、素材と一緒に爆弾も出す**（Bomb Chance の確率で。マップの爆弾は Max Bombs 個まで。STAGE_06）
 /// ・**Kind Zones に種類と範囲を入れたら、その種類だけその範囲に出す**（STAGE_05 の「敵陣まで取りに行く」）
 /// ・**Spawn Circle Radius を入れたら円の中に出す。Require Ground Below を ON にすると、真下に床がある所にだけ出す**（STAGE_03 のドーナツ）
 ///
@@ -24,7 +25,7 @@ using UnityEngine;
 ///
 /// 釣り（<c>FishingObjectSpawner</c>）は「物資」と「爆発物」の2種類を、爆発物6：物資1で出していた。
 /// こちらは**素材3種類を均等に出す**のと、**爆発物を出さない**のが違う
-/// （爆発物は今回入れない。2026/9/17・大槻さん）。
+/// （爆発物は入れない、が 2026/9/17 の決まりだったが、2026/10/6 から Bomb Prefab で出せるようにした。STAGE_06）。
 /// </summary>
 public class SpaceJunkSpawner : MonoBehaviour
 {
@@ -68,6 +69,16 @@ public class SpaceJunkSpawner : MonoBehaviour
     /// （ホストでも参加者でも入っている）。
     /// </summary>
     public static SpaceJunkSpawner Current { get; private set; }
+
+    [Header("爆弾も出す（STAGE_06 など）")]
+    [Tooltip("素材と一緒に出す爆弾のプレハブ（スタン爆弾 FishingOnlineBomb など）。空なら爆弾は出さない")]
+    [SerializeField] private GameObject bombPrefab;
+
+    [Tooltip("1回出すときに、素材の代わりに爆弾を出す確率（0〜1）")]
+    [SerializeField] private float bombChance = 0.2f;
+
+    [Tooltip("マップにある爆弾がこの数以上なら、爆弾は出さない。**素材の Max Objects とは別に数える**")]
+    [SerializeField] private int maxBombs = 2;
 
     [Header("数と間隔")]
     [Tooltip("マップにこの数以上あったら、もう出さない")]
@@ -230,12 +241,23 @@ public class SpaceJunkSpawner : MonoBehaviour
 
     private GameObject SpawnOne(bool ignoreLimit)
     {
-        if (!ignoreLimit && CountMaterials() >= maxObjects)
+        bool materialsFull = !ignoreLimit && CountMaterials() >= maxObjects;
+
+        // 爆弾は、素材の数とは別に数えて上限までだけ出す（イベント用の追加では出さない）
+        GameObject prefab;
+        if (!ignoreLimit && CanSpawnBomb() && Random.value < bombChance)
+        {
+            prefab = bombPrefab;
+        }
+        else if (materialsFull)
         {
             return null;
         }
+        else
+        {
+            prefab = ChoosePrefab();
+        }
 
-        GameObject prefab = ChoosePrefab();
         if (prefab == null)
         {
             return null;
@@ -284,6 +306,25 @@ public class SpaceJunkSpawner : MonoBehaviour
             }
         }
         return count;
+    }
+
+    /// <summary>爆弾を出してよいか（プレハブが入っていて、マップの爆弾が上限より少ない）。</summary>
+    private bool CanSpawnBomb()
+    {
+        if (bombPrefab == null || bombChance <= 0f || maxBombs <= 0)
+        {
+            return false;
+        }
+
+        int count = 0;
+        foreach (HookableObject item in HookableObject.All)
+        {
+            if (item != null && !item.IsVanished && item.GetComponent<ExplosiveObject>() != null)
+            {
+                count++;
+            }
+        }
+        return count < maxBombs;
     }
 
     /// <summary>重みの割合で、3種類（＋追加の素材）のうち1つのプレハブを選ぶ。</summary>
