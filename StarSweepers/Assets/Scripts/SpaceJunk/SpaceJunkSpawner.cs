@@ -1,17 +1,20 @@
+using System.Collections.Generic;
 using Unity.Netcode;
 using UnityEngine;
 
 /// <summary>
-/// **宇宙船の素材3種類を、マップ上に次々と落とすスポナー。**
+/// **宇宙船の素材（と爆弾）を、マップ上に次々と落とすスポナー。**
 ///
 /// 決まった間隔ごとに、範囲の中のランダムな場所の少し上から1つ落とす。
-/// どの種類を出すかは**重み（出やすさ）の割合**で決める（初期値は3種類とも同じ）。
+/// 何を出すかは **Spawn List（プレハブと出やすさの一覧）** の割合で決める。素材も爆弾も同じ一覧に入れる（2026/10/6 から。
+/// 前の「3種類＋追加の素材＋爆弾」の書き方のシーンは、自動で一覧へ移し替える）。
 ///
 /// ・マップにある素材が **Max Objects 以上なら出さない**
 /// ・出す場所に他の物やプレイヤーがいたら、別の場所を探す
 /// ・**ラウンドの結果が出たら、もう出さない**
 /// ・**Spawn Zones に範囲（四角）を入れたら、その範囲の中にだけ出す**（STAGE_02 の緑の範囲など）
-/// ・**Bomb Prefab を入れたら、素材と一緒に爆弾も出す**（Bomb Chance の確率で。マップの爆弾は Max Bombs 個まで。STAGE_06）
+/// ・**Spawn List に爆弾（ExplosiveObject 付き）を入れたら、素材と一緒に爆弾も出す**（マップの爆弾は Max Bombs 個まで。STAGE_06）
+/// ・**Cycle Zones を ON にすると、Spawn Zones に1回ずつ出すのを1巡として回す**（1巡ごとに順番をシャッフル。STAGE_06_A）
 /// ・**Kind Zones に種類と範囲を入れたら、その種類だけその範囲に出す**（STAGE_05 の「敵陣まで取りに行く」）
 /// ・**Spawn Circle Radius を入れたら円の中に出す。Require Ground Below を ON にすると、真下に床がある所にだけ出す**（STAGE_03 のドーナツ）
 ///
@@ -29,40 +32,24 @@ using UnityEngine;
 /// </summary>
 public class SpaceJunkSpawner : MonoBehaviour
 {
-    [Header("出す素材（基本の3種類）")]
-    [Tooltip("装甲板のプレハブ")]
-    [SerializeField] private GameObject platePrefab;
-
-    [Tooltip("回路基板のプレハブ")]
-    [SerializeField] private GameObject circuitPrefab;
-
-    [Tooltip("燃料タンクのプレハブ")]
-    [SerializeField] private GameObject fuelPrefab;
-
-    [Header("割合（出やすさ）")]
-    [Tooltip("装甲板の出やすさ")]
-    [SerializeField] private int plateWeight = 1;
-
-    [Tooltip("回路基板の出やすさ")]
-    [SerializeField] private int circuitWeight = 1;
-
-    [Tooltip("燃料タンクの出やすさ")]
-    [SerializeField] private int fuelWeight = 1;
-
-    /// <summary>上の3種類のほかに出す素材1つ分。</summary>
+    /// <summary>出す物1つ分（プレハブと出やすさ）。</summary>
     [System.Serializable]
-    public class ExtraMaterial
+    public class SpawnEntry
     {
-        [Tooltip("素材のプレハブ（SpaceJunkMaterial が付いたもの）")]
+        [Tooltip("出すプレハブ。素材（SpaceJunkMaterial 付き）でも、爆弾（ExplosiveObject 付き）でもよい")]
         public GameObject prefab;
 
-        [Tooltip("出やすさ")]
-        public int weight = 1;
+        [Tooltip("出やすさ。ほかの物との割合で決まる（全部 1 なら同じくらい）。0 なら出さない")]
+        [Min(0f)] public float weight = 1f;
     }
 
-    [Header("追加の素材（4種類目から）")]
-    [Tooltip("上の3種類のほかに出す素材。空なら3種類だけ（今までのマップ）")]
-    [SerializeField] private ExtraMaterial[] extraMaterials = new ExtraMaterial[0];
+    [Header("出す物（＋／−で足したり消したりできる）")]
+    [Tooltip("出すプレハブと出やすさの一覧。素材も爆弾もここに入れる。" +
+             "例：素材5種類を 1 ずつ、スタン爆弾を 1.25 にすると、だいたい5回に1回が爆弾になる")]
+    [SerializeField] private List<SpawnEntry> spawnList = new List<SpawnEntry>();
+
+    [Tooltip("マップにある爆弾がこの数以上なら、爆弾は出さない。**素材の Max Objects とは別に数える**")]
+    [SerializeField] private int maxBombs = 2;
 
     /// <summary>
     /// **いまのシーンのスポナー。** どの種類の素材が出るマップかを、ラウンドのイベントや画面が調べるのに使う
@@ -70,15 +57,28 @@ public class SpaceJunkSpawner : MonoBehaviour
     /// </summary>
     public static SpaceJunkSpawner Current { get; private set; }
 
-    [Header("爆弾も出す（STAGE_06 など）")]
-    [Tooltip("素材と一緒に出す爆弾のプレハブ（スタン爆弾 FishingOnlineBomb など）。空なら爆弾は出さない")]
-    [SerializeField] private GameObject bombPrefab;
+    // ------------------------------------------------------------
+    // 古い書き方（2026/10/6 まで）。**Spawn List が空なら、ここから自動で移し替える。**
+    // インスペクターには出さない。前に作ったマップのシーンを書き直さずに済むように残してある
+    // ------------------------------------------------------------
 
-    [Tooltip("1回出すときに、素材の代わりに爆弾を出す確率（0〜1）")]
-    [SerializeField] private float bombChance = 0.2f;
+    /// <summary>古い書き方の「追加の素材」1つ分。</summary>
+    [System.Serializable]
+    public class ExtraMaterial
+    {
+        public GameObject prefab;
+        public int weight = 1;
+    }
 
-    [Tooltip("マップにある爆弾がこの数以上なら、爆弾は出さない。**素材の Max Objects とは別に数える**")]
-    [SerializeField] private int maxBombs = 2;
+    [HideInInspector][SerializeField] private GameObject platePrefab;
+    [HideInInspector][SerializeField] private GameObject circuitPrefab;
+    [HideInInspector][SerializeField] private GameObject fuelPrefab;
+    [HideInInspector][SerializeField] private int plateWeight = 1;
+    [HideInInspector][SerializeField] private int circuitWeight = 1;
+    [HideInInspector][SerializeField] private int fuelWeight = 1;
+    [HideInInspector][SerializeField] private ExtraMaterial[] extraMaterials = new ExtraMaterial[0];
+    [HideInInspector][SerializeField] private GameObject bombPrefab;
+    [HideInInspector][SerializeField] private float bombChance = 0.2f;
 
     [Header("数と間隔")]
     [Tooltip("マップにこの数以上あったら、もう出さない")]
@@ -110,6 +110,10 @@ public class SpaceJunkSpawner : MonoBehaviour
              "空なら Area Half Size の範囲に出す。選ぶと、シーン画面に緑の枠で見える")]
     [SerializeField] private Transform[] spawnZones = new Transform[0];
 
+    [Tooltip("ON：Spawn Zones が2つ以上あるとき、**全部のゾーンに1回ずつ出すのを1巡とする**（順番は1巡ごとにシャッフル。" +
+             "テトリスの7種1巡と同じ）。OFF：毎回ランダムなゾーン（広いゾーンほど出やすい）")]
+    [SerializeField] private bool cycleZones = false;
+
     [Tooltip("0より大きくすると、このオブジェクトの位置を中心に、この半径の円の中に出す（Spawn Zones が空のとき）。" +
              "STAGE_03 のドーナツなど。0なら Area Half Size の四角")]
     [SerializeField] private float spawnCircleRadius = 0f;
@@ -136,6 +140,82 @@ public class SpaceJunkSpawner : MonoBehaviour
     private float timer;
     private bool initialDone;
 
+    /// <summary>1巡法で、この巡でまだ出していないゾーン（先頭から使う）。</summary>
+    private readonly List<Transform> zoneBag = new List<Transform>();
+
+    private void Awake()
+    {
+        MigrateLegacy();
+    }
+
+#if UNITY_EDITOR
+    private void OnValidate()
+    {
+        // 前の書き方のシーンを開いたら、インスペクターでも新しいリストで見えるようにする。
+        // 移し替えたら古い項目は空にする（シーンを保存すると、新しい書き方で残る）
+        if (MigrateLegacy())
+        {
+            platePrefab = null;
+            circuitPrefab = null;
+            fuelPrefab = null;
+            extraMaterials = new ExtraMaterial[0];
+            bombPrefab = null;
+        }
+    }
+#endif
+
+    /// <summary>
+    /// **古い書き方（3種類＋追加の素材＋爆弾）を Spawn List へ移し替える。** Spawn List が空のときだけ。
+    /// 爆弾の「確率」は、素材の出やすさの合計から、同じ割合になる出やすさに直す。移し替えたら true。
+    /// </summary>
+    private bool MigrateLegacy()
+    {
+        if (spawnList == null)
+        {
+            spawnList = new List<SpawnEntry>();
+        }
+
+        if (spawnList.Count > 0)
+        {
+            return false;
+        }
+
+        float materialTotal = 0f;
+        materialTotal += AddLegacy(platePrefab, plateWeight);
+        materialTotal += AddLegacy(circuitPrefab, circuitWeight);
+        materialTotal += AddLegacy(fuelPrefab, fuelWeight);
+        if (extraMaterials != null)
+        {
+            foreach (ExtraMaterial extra in extraMaterials)
+            {
+                if (extra != null)
+                {
+                    materialTotal += AddLegacy(extra.prefab, extra.weight);
+                }
+            }
+        }
+
+        if (bombPrefab != null && bombChance > 0f)
+        {
+            float chance = Mathf.Clamp(bombChance, 0.01f, 0.95f);
+            float weight = Mathf.Round(materialTotal * chance / (1f - chance) * 100f) / 100f;
+            spawnList.Add(new SpawnEntry { prefab = bombPrefab, weight = weight });
+        }
+
+        return spawnList.Count > 0;
+    }
+
+    private float AddLegacy(GameObject prefab, int weight)
+    {
+        if (prefab == null)
+        {
+            return 0f;
+        }
+
+        spawnList.Add(new SpawnEntry { prefab = prefab, weight = Mathf.Max(0, weight) });
+        return Mathf.Max(0, weight);
+    }
+
     private void OnEnable()
     {
         Current = this;
@@ -152,26 +232,17 @@ public class SpaceJunkSpawner : MonoBehaviour
     /// <summary>この種類の素材を出すか（プレハブが入っていて、出やすさが0より大きいか）。</summary>
     public bool UsesKind(SpaceJunkMaterialKind kind)
     {
-        if (IsKind(platePrefab, plateWeight, kind) || IsKind(circuitPrefab, circuitWeight, kind) ||
-            IsKind(fuelPrefab, fuelWeight, kind))
-        {
-            return true;
-        }
+        MigrateLegacy();
 
-        foreach (ExtraMaterial extra in extraMaterials)
+        foreach (SpawnEntry entry in spawnList)
         {
-            if (extra != null && IsKind(extra.prefab, extra.weight, kind))
+            if (entry != null && entry.prefab != null && entry.weight > 0f &&
+                entry.prefab.TryGetComponent(out SpaceJunkMaterial material) && material.Kind == kind)
             {
                 return true;
             }
         }
         return false;
-    }
-
-    private static bool IsKind(GameObject prefab, int weight, SpaceJunkMaterialKind kind)
-    {
-        return prefab != null && weight > 0 &&
-               prefab.TryGetComponent(out SpaceJunkMaterial material) && material.Kind == kind;
     }
 
     private void Update()
@@ -241,24 +312,18 @@ public class SpaceJunkSpawner : MonoBehaviour
 
     private GameObject SpawnOne(bool ignoreLimit)
     {
-        bool materialsFull = !ignoreLimit && CountMaterials() >= maxObjects;
-
         // 爆弾は、素材の数とは別に数えて上限までだけ出す（イベント用の追加では出さない）
-        GameObject prefab;
-        if (!ignoreLimit && CanSpawnBomb() && Random.value < bombChance)
-        {
-            prefab = bombPrefab;
-        }
-        else if (materialsFull)
+        bool bombsAllowed = !ignoreLimit && CanSpawnBomb();
+        GameObject prefab = ChoosePrefab(bombsAllowed);
+
+        if (prefab == null)
         {
             return null;
         }
-        else
-        {
-            prefab = ChoosePrefab();
-        }
 
-        if (prefab == null)
+        // 素材を選んだが、マップの素材がもう上限なら、この回は出さない
+        // （上限のときに爆弾ばかりにならないよう、選び直さない）
+        if (!IsBomb(prefab) && !ignoreLimit && CountMaterials() >= maxObjects)
         {
             return null;
         }
@@ -311,7 +376,7 @@ public class SpaceJunkSpawner : MonoBehaviour
     /// <summary>爆弾を出してよいか（プレハブが入っていて、マップの爆弾が上限より少ない）。</summary>
     private bool CanSpawnBomb()
     {
-        if (bombPrefab == null || bombChance <= 0f || maxBombs <= 0)
+        if (maxBombs <= 0)
         {
             return false;
         }
@@ -327,65 +392,82 @@ public class SpaceJunkSpawner : MonoBehaviour
         return count < maxBombs;
     }
 
-    /// <summary>重みの割合で、3種類（＋追加の素材）のうち1つのプレハブを選ぶ。</summary>
-    private GameObject ChoosePrefab()
+    /// <summary>
+    /// **出やすさの割合で、Spawn List から1つ選ぶ。**
+    /// <paramref name="bombsAllowed"/> が false なら、爆弾は選ばない（マップの爆弾が上限・イベント用の追加）。
+    /// </summary>
+    private GameObject ChoosePrefab(bool bombsAllowed)
     {
-        int plate = platePrefab != null ? Mathf.Max(0, plateWeight) : 0;
-        int circuit = circuitPrefab != null ? Mathf.Max(0, circuitWeight) : 0;
-        int fuel = fuelPrefab != null ? Mathf.Max(0, fuelWeight) : 0;
-        int total = plate + circuit + fuel;
-        foreach (ExtraMaterial extra in extraMaterials)
+        MigrateLegacy();
+
+        float total = 0f;
+        foreach (SpawnEntry entry in spawnList)
         {
-            total += ExtraWeight(extra);
+            total += Weight(entry, bombsAllowed);
         }
 
-        if (total <= 0)
+        if (total <= 0f)
         {
             return null;
         }
 
-        int roll = Random.Range(0, total);
+        float roll = Random.value * total;
+        GameObject last = null;
 
-        if (roll < plate)
+        foreach (SpawnEntry entry in spawnList)
         {
-            return platePrefab;
-        }
-
-        if (roll < plate + circuit)
-        {
-            return circuitPrefab;
-        }
-
-        if (roll < plate + circuit + fuel)
-        {
-            return fuelPrefab;
-        }
-
-        roll -= plate + circuit + fuel;
-        foreach (ExtraMaterial extra in extraMaterials)
-        {
-            int weight = ExtraWeight(extra);
-            if (roll < weight)
+            float weight = Weight(entry, bombsAllowed);
+            if (weight <= 0f)
             {
-                return extra.prefab;
+                continue;
             }
+
+            last = entry.prefab;
             roll -= weight;
+            if (roll < 0f)
+            {
+                return entry.prefab;
+            }
         }
 
-        return fuelPrefab;
+        return last;
     }
 
-    private static int ExtraWeight(ExtraMaterial extra)
+    /// <summary>その1つ分の出やすさ。プレハブが無い・爆弾を選ばない回の爆弾なら 0。</summary>
+    private static float Weight(SpawnEntry entry, bool bombsAllowed)
     {
-        return extra != null && extra.prefab != null ? Mathf.Max(0, extra.weight) : 0;
+        if (entry == null || entry.prefab == null || entry.weight <= 0f)
+        {
+            return 0f;
+        }
+
+        if (!bombsAllowed && IsBomb(entry.prefab))
+        {
+            return 0f;
+        }
+
+        return entry.weight;
+    }
+
+    /// <summary>爆弾（ExplosiveObject 付き）か。</summary>
+    private static bool IsBomb(GameObject prefab)
+    {
+        return prefab != null && prefab.GetComponent<ExplosiveObject>() != null;
     }
 
     /// <summary>範囲の中から、何も無い場所を探す。</summary>
     private bool TryFindPlace(Transform[] zones, out Vector3 position)
     {
+        // 1巡法：この回に出すゾーンを、1巡の残りから1つ取る
+        Transform bagZone = null;
+        if (cycleZones && zones == spawnZones && UsableZoneCount(zones) >= 2)
+        {
+            bagZone = NextZoneFromBag(zones);
+        }
+
         for (int i = 0; i < placementTries; i++)
         {
-            Vector3 candidate = RandomPointInArea(zones);
+            Vector3 candidate = bagZone != null ? PointInZone(bagZone) : RandomPointInArea(zones);
 
             // 落とす高さから床の少し上まで、縦に長く調べる（プレイヤーや障害物の真上を避ける）
             Vector3 bottom = new Vector3(candidate.x, transform.position.y + clearRadius + 0.1f, candidate.z);
@@ -398,8 +480,73 @@ public class SpaceJunkSpawner : MonoBehaviour
             }
         }
 
+        // 空いた場所が無かった。1巡法なら、このゾーンを次の回に回す（1巡の中で抜けが出ないように）
+        if (bagZone != null)
+        {
+            zoneBag.Insert(0, bagZone);
+        }
+
         position = Vector3.zero;
         return false;
+    }
+
+    // ------------------------------------------------------------
+    // 1巡法（Cycle Zones）
+    // ------------------------------------------------------------
+
+    /// <summary>使えるゾーン（入っていて、広さがある）の数。</summary>
+    private static int UsableZoneCount(Transform[] zones)
+    {
+        int count = 0;
+        foreach (Transform zone in zones)
+        {
+            if (ZoneArea(zone) > 0f)
+            {
+                count++;
+            }
+        }
+        return count;
+    }
+
+    /// <summary>
+    /// **1巡の残りから、次のゾーンを1つ取る。** 残りが無くなったら、全ゾーンを入れ直してシャッフルする
+    /// （テトリスの7種1巡と同じ。1巡の中では、どのゾーンにも1回ずつ出る）。
+    /// </summary>
+    private Transform NextZoneFromBag(Transform[] zones)
+    {
+        // ゾーンが消された・入れ替えられたときに、古いものを使わない
+        zoneBag.RemoveAll(zone => ZoneArea(zone) <= 0f || System.Array.IndexOf(zones, zone) < 0);
+
+        if (zoneBag.Count == 0)
+        {
+            foreach (Transform zone in zones)
+            {
+                if (ZoneArea(zone) > 0f)
+                {
+                    zoneBag.Add(zone);
+                }
+            }
+
+            // 並びをシャッフル（フィッシャー–イェーツ）
+            for (int i = zoneBag.Count - 1; i > 0; i--)
+            {
+                int j = Random.Range(0, i + 1);
+                (zoneBag[i], zoneBag[j]) = (zoneBag[j], zoneBag[i]);
+            }
+        }
+
+        Transform next = zoneBag[0];
+        zoneBag.RemoveAt(0);
+        return next;
+    }
+
+    /// <summary>ゾーン（四角）の中のランダムな1点（高さは「床＋Drop Height」）。</summary>
+    private Vector3 PointInZone(Transform zone)
+    {
+        Vector3 local = new Vector3(Random.Range(-0.5f, 0.5f), 0f, Random.Range(-0.5f, 0.5f));
+        Vector3 point = zone.TransformPoint(local);
+        point.y = transform.position.y + dropHeight;
+        return point;
     }
 
     /// <summary>
