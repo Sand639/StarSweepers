@@ -168,7 +168,7 @@ public partial class SpaceJunkRound : NetworkBehaviour
         return 1 << (int)kind;
     }
 
-    /// <summary>3種類そろった状態のビット（0b111）。</summary>
+    /// <summary>そのマップで出る種類が全部そろった状態のビット（3種類のマップなら 0b111）。</summary>
     private static int FullMask
     {
         get
@@ -176,7 +176,10 @@ public partial class SpaceJunkRound : NetworkBehaviour
             int mask = 0;
             for (int i = 0; i < SpaceJunkMaterials.Count; i++)
             {
-                mask |= 1 << i;
+                if (SpaceJunkMaterials.IsUsed(SpaceJunkMaterials.FromIndex(i)))
+                {
+                    mask |= 1 << i;
+                }
             }
             return mask;
         }
@@ -362,8 +365,8 @@ public partial class SpaceJunkRound : NetworkBehaviour
         Debug.Log($"[JUNK] {SpaceJunkTeams.TeamName(team)} が {SpaceJunkMaterials.Name(kind)} を集めました" +
                   $"（{KindCountOf(team)} / {SpaceJunkMaterials.Count} 種類）。");
 
-        // 3種類そろったら、その場でラウンド勝利
-        if (collected[team] == FullMask)
+        // そのマップで出る種類が全部そろったら、その場でラウンド勝利
+        if ((collected[team] & FullMask) == FullMask)
         {
             FinishRound(team);
         }
@@ -381,12 +384,19 @@ public partial class SpaceJunkRound : NetworkBehaviour
         collected[team] = collected[team] | KindBit(kind);
 
         int bonus = ServerEventBonusOnCollect(team, kind, item);
+
+        // 真ん中の特殊デブリ（SpaceJunkBonusDebris）なら、その点数も足す
+        if (item != null && item.TryGetComponent(out SpaceJunkBonusDebris bonusDebris))
+        {
+            bonus += bonusDebris.BonusPoints;
+        }
+
         int gained = PointPerItem + bonus;
 
         scores[team] = scores[team] + gained;
 
         Debug.Log($"[JUNK] {SpaceJunkTeams.TeamName(team)} が {SpaceJunkMaterials.Name(kind)} を入れました" +
-                  $"（+{gained} 点{(bonus > 0 ? $"。イベントのボーナス {bonus} 点込み" : string.Empty)}／" +
+                  $"（+{gained} 点{(bonus > 0 ? $"。ボーナス {bonus} 点込み" : string.Empty)}／" +
                   $"合計 {scores[team]} 点）。");
     }
 

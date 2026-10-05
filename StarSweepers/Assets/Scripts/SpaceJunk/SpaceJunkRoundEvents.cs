@@ -444,7 +444,7 @@ public partial class SpaceJunkRound
                 break;
 
             case SpaceJunkEventKind.HighValueDebris:
-                highValueKind.Value = Random.Range(0, SpaceJunkMaterials.Count);
+                highValueKind.Value = SpaceJunkMaterials.RandomUsedIndex();
                 Debug.Log($"[JUNK] 高価値の種類：{SpaceJunkMaterials.Name(SpaceJunkMaterials.FromIndex(highValueKind.Value))}" +
                           $"（+{highValueBonus.Value} 点）");
                 break;
@@ -532,7 +532,7 @@ public partial class SpaceJunkRound
 
         for (int n = 0; n < MaxSetSize; n++)
         {
-            int kindIndex = n < size ? Random.Range(0, SpaceJunkMaterials.Count) : -1;
+            int kindIndex = n < size ? SpaceJunkMaterials.RandomUsedIndex() : -1;
             setSequence[team * MaxSetSize + n] = kindIndex;
 
             if (kindIndex >= 0)

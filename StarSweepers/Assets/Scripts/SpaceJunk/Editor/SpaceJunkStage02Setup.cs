@@ -1,4 +1,3 @@
-using System.Collections.Generic;
 using UnityEditor;
 using UnityEditor.SceneManagement;
 using UnityEngine;
@@ -6,17 +5,34 @@ using UnityEngine;
 /// <summary>
 /// **STAGE_02（真ん中を列車が通るステージ）の仕掛けを、開いているシーンに置くメニュー。**
 ///
-/// 1. 爆弾の置き場所4つ（<see cref="SpaceJunkBombPoints"/>）を、左右の地面の手前と奥に置く
-/// 2. 素材のスポナーが、**左右の地面の上にだけ**素材を出すようにする（真ん中の地面には出さない）
+/// 1. 爆弾の置き場所4つ（<see cref="SpaceJunkBombPoints"/>）を、左右の床の手前と奥に置く。動かされたら3秒後に出し直す
+/// 2. 真ん中に**得点の高い特殊デブリ**の置き場所を置く。消えたら3秒後に真ん中へ出し直す
+/// 3. 素材のスポナーを設定する
+///    - **左右の床の緑の範囲（SpawnZone_West / East）の中にだけ**素材を出す
+///    - **最大10個**
+///    - **素材は5種類**（4・5種類目のアンテナ・エンジンを足す）
 ///
-/// 何度実行してもよい（置き場所は作り直し、地面の指定は上書きする）。
+/// 足りないプレハブ（アンテナ・エンジン・特殊デブリ）は、装甲板のプレハブを複製して作る。
+/// 何度実行してもよい（置き場所・範囲は作り直す。**手で動かした位置は初期位置に戻る**ので注意）。
 /// </summary>
 public static class SpaceJunkStage02Setup
 {
     private const string BombPrefabPath = "Assets/Prefabs/Fish/Online/Gimmick/FishingOnlineBomb.prefab";
-    private const string BombPointsName = "BombPoints";
+    private const string AntennaPrefabPath = SpaceJunkPrefabBuilder.OnlinePrefabFolder + "/SpaceJunkAntenna.prefab";
+    private const string EnginePrefabPath = SpaceJunkPrefabBuilder.OnlinePrefabFolder + "/SpaceJunkEngine.prefab";
+    private const string SpecialPrefabPath = SpaceJunkPrefabBuilder.OnlinePrefabFolder + "/SpaceJunkSpecial.prefab";
 
-    /// <summary>爆弾の置き場所（左右の地面の手前と奥）。地面の上面は高さ0。</summary>
+    private const string BombPointsName = "BombPoints";
+    private const string SpecialPointName = "SpecialDebrisPoint";
+    private const string SpawnZonesName = "SpawnZones";
+
+    /// <summary>素材の最大数（企画メモ：ステージ中最大10個）。</summary>
+    private const int MaxDebris = 10;
+
+    /// <summary>特殊デブリの大きさ（装甲板の何倍か）。</summary>
+    private const float SpecialScale = 1.8f;
+
+    /// <summary>爆弾の置き場所（左右の床の手前と奥）。床の上面は高さ0。</summary>
     private static readonly Vector3[] BombPositions =
     {
         new Vector3(-11f, 0.6f, 10f),
@@ -25,54 +41,156 @@ public static class SpaceJunkStage02Setup
         new Vector3(11f, 0.6f, -10f),
     };
 
+    /// <summary>
+    /// 素材を出す範囲（緑の範囲）。左右の床（幅8m × 長さ30m）の、ふちを少し残した内側。
+    /// 位置と、大きさ（X が横幅・Z が長さ）。
+    /// </summary>
+    private static readonly (string name, Vector3 position, Vector3 size)[] Zones =
+    {
+        ("SpawnZone_West", new Vector3(-11f, 0f, 0f), new Vector3(6f, 1f, 27f)),
+        ("SpawnZone_East", new Vector3(11f, 0f, 0f), new Vector3(6f, 1f, 27f)),
+    };
+
     [MenuItem("Tools/StarSweepers/開いているマップに STAGE_02 の爆弾と素材の出る地面を設定する")]
     private static void Setup()
     {
-        PlaceBombPoints();
-        SetSpawnGrounds();
+        GameObject antenna = EnsureMaterialPrefab(AntennaPrefabPath, SpaceJunkMaterialKind.Antenna);
+        GameObject engine = EnsureMaterialPrefab(EnginePrefabPath, SpaceJunkMaterialKind.Engine);
+        GameObject special = EnsureSpecialPrefab();
+        AssetDatabase.SaveAssets();
+
+        GameObject bomb = AssetDatabase.LoadAssetAtPath<GameObject>(BombPrefabPath);
+        if (bomb == null)
+        {
+            Debug.LogError($"[JUNK] 爆弾のプレハブが見つかりません：{BombPrefabPath}。BombPoints の Spawn Prefab に手で入れてください。");
+        }
+
+        PlacePoints(BombPointsName, BombPositions, bomb, respawnWhenMoved: true);
+        PlacePoints(SpecialPointName, new[] { new Vector3(0f, 0.6f, 0f) }, special, respawnWhenMoved: false);
+        SetupSpawner(antenna, engine);
 
         EditorSceneManager.MarkSceneDirty(EditorSceneManager.GetActiveScene());
         EditorSceneManager.SaveOpenScenes();
+
+        Debug.Log("[JUNK] STAGE_02 の設定が終わりました（爆弾4つ・真ん中の特殊デブリ・緑の範囲・最大10個・素材5種類）。");
     }
 
-    private static void PlaceBombPoints()
+    // ------------------------------------------------------------
+    // プレハブ
+    // ------------------------------------------------------------
+
+    /// <summary>
+    /// 素材のプレハブが無ければ、**装甲板のプレハブを複製して、種類と色だけ変えて**作る。
+    /// Unity の中で複製するので、通信で使う番号は新しく付く。
+    /// </summary>
+    private static GameObject EnsureMaterialPrefab(string path, SpaceJunkMaterialKind kind)
     {
-        GameObject old = GameObject.Find(BombPointsName);
+        GameObject existing = AssetDatabase.LoadAssetAtPath<GameObject>(path);
+        if (existing != null)
+        {
+            SpaceJunkPrefabBuilder.RegisterNetworkPrefab(existing);
+            return existing;
+        }
+
+        if (!AssetDatabase.CopyAsset(SpaceJunkPrefabBuilder.PlatePrefabPath, path))
+        {
+            Debug.LogError($"[JUNK] {SpaceJunkPrefabBuilder.PlatePrefabPath} を複製できませんでした。");
+            return null;
+        }
+
+        GameObject contents = PrefabUtility.LoadPrefabContents(path);
+        contents.name = $"SpaceJunk{kind}";
+
+        SpaceJunkMaterial marker = contents.GetComponent<SpaceJunkMaterial>();
+        if (marker != null)
+        {
+            FishingSceneBuilder.SetInt(marker, "kind", (int)kind);
+        }
+
+        // エディタで見ても色が分かるように、種類の色のマテリアルを貼る（再生中は SpaceJunkMaterial も色を塗る）
+        Material material = FishingSceneBuilder.GetOrCreateMaterial(
+            $"{FishingSceneBuilder.MaterialFolder}/SpaceJunk{kind}.mat",
+            SpaceJunkMaterials.Color(kind));
+        foreach (MeshRenderer renderer in contents.GetComponentsInChildren<MeshRenderer>())
+        {
+            renderer.sharedMaterial = material;
+        }
+
+        GameObject saved = PrefabUtility.SaveAsPrefabAsset(contents, path);
+        PrefabUtility.UnloadPrefabContents(contents);
+
+        SpaceJunkPrefabBuilder.RegisterNetworkPrefab(saved);
+        Debug.Log($"[JUNK] {SpaceJunkMaterials.Name(kind)}（{SpaceJunkMaterials.ColorName(kind)}）のプレハブを作りました：{path}");
+        return saved;
+    }
+
+    /// <summary>
+    /// 特殊デブリのプレハブが無ければ、**装甲板のプレハブを複製して、大きくし、<see cref="SpaceJunkBonusDebris"/> を付けて**作る。
+    /// </summary>
+    private static GameObject EnsureSpecialPrefab()
+    {
+        GameObject existing = AssetDatabase.LoadAssetAtPath<GameObject>(SpecialPrefabPath);
+        if (existing != null)
+        {
+            SpaceJunkPrefabBuilder.RegisterNetworkPrefab(existing);
+            return existing;
+        }
+
+        if (!AssetDatabase.CopyAsset(SpaceJunkPrefabBuilder.PlatePrefabPath, SpecialPrefabPath))
+        {
+            Debug.LogError($"[JUNK] {SpaceJunkPrefabBuilder.PlatePrefabPath} を複製できませんでした。");
+            return null;
+        }
+
+        GameObject contents = PrefabUtility.LoadPrefabContents(SpecialPrefabPath);
+        contents.name = "SpaceJunkSpecial";
+        contents.transform.localScale *= SpecialScale;
+
+        if (contents.GetComponent<SpaceJunkBonusDebris>() == null)
+        {
+            contents.AddComponent<SpaceJunkBonusDebris>();
+        }
+
+        GameObject saved = PrefabUtility.SaveAsPrefabAsset(contents, SpecialPrefabPath);
+        PrefabUtility.UnloadPrefabContents(contents);
+
+        SpaceJunkPrefabBuilder.RegisterNetworkPrefab(saved);
+        Debug.Log($"[JUNK] 特殊デブリのプレハブを作りました：{SpecialPrefabPath}");
+        return saved;
+    }
+
+    // ------------------------------------------------------------
+    // シーン
+    // ------------------------------------------------------------
+
+    /// <summary>置き場所（<see cref="SpaceJunkBombPoints"/>）を作り直す。子1つが1か所。</summary>
+    private static void PlacePoints(string rootName, Vector3[] positions, GameObject prefab, bool respawnWhenMoved)
+    {
+        GameObject old = GameObject.Find(rootName);
         if (old != null)
         {
             Undo.DestroyObjectImmediate(old);
         }
 
-        GameObject root = new GameObject(BombPointsName);
-        Undo.RegisterCreatedObjectUndo(root, "爆弾の置き場所を置く");
+        GameObject root = new GameObject(rootName);
+        Undo.RegisterCreatedObjectUndo(root, "置き場所を置く");
 
-        for (int i = 0; i < BombPositions.Length; i++)
+        for (int i = 0; i < positions.Length; i++)
         {
-            GameObject point = new GameObject($"BombPoint_{i + 1}");
+            GameObject point = new GameObject($"{rootName}_{i + 1}");
             point.transform.SetParent(root.transform, false);
-            point.transform.position = BombPositions[i];
+            point.transform.position = positions[i];
         }
 
-        SpaceJunkBombPoints bombPoints = root.AddComponent<SpaceJunkBombPoints>();
-        GameObject bombPrefab = AssetDatabase.LoadAssetAtPath<GameObject>(BombPrefabPath);
-        if (bombPrefab == null)
-        {
-            Debug.LogError($"[JUNK] 爆弾のプレハブが見つかりません：{BombPrefabPath}。BombPoints の Bomb Prefab に手で入れてください。");
-            return;
-        }
-
-        SerializedObject serialized = new SerializedObject(bombPoints);
-        serialized.FindProperty("bombPrefab").objectReferenceValue = bombPrefab;
+        SpaceJunkBombPoints points = root.AddComponent<SpaceJunkBombPoints>();
+        SerializedObject serialized = new SerializedObject(points);
+        serialized.FindProperty("spawnPrefab").objectReferenceValue = prefab;
+        serialized.FindProperty("respawnWhenMoved").boolValue = respawnWhenMoved;
         serialized.ApplyModifiedPropertiesWithoutUndo();
-
-        Debug.Log("[JUNK] 爆弾の置き場所を4つ置きました（BombPoints の子を動かせば場所を変えられます）。");
     }
 
-    /// <summary>
-    /// 「Ground」の下にある地面のうち、**中心（原点）の真上にかかっていないもの**だけを、素材を出す地面にする。
-    /// STAGE_02 では、左右の細長い地面（1・2）が入り、真ん中の地面（3）が外れる。
-    /// </summary>
-    private static void SetSpawnGrounds()
+    /// <summary>素材のスポナーに、緑の範囲・最大数・追加の素材を設定する。</summary>
+    private static void SetupSpawner(GameObject antenna, GameObject engine)
     {
         SpaceJunkSpawner spawner = Object.FindFirstObjectByType<SpaceJunkSpawner>();
         if (spawner == null)
@@ -81,39 +199,47 @@ public static class SpaceJunkStage02Setup
             return;
         }
 
-        GameObject ground = GameObject.Find("Ground");
-        if (ground == null)
+        // 緑の範囲を作り直す
+        GameObject old = GameObject.Find(SpawnZonesName);
+        if (old != null)
         {
-            Debug.LogError("[JUNK] 「Ground」が見つかりません。SpaceJunkSpawner の Spawn Grounds に、素材を出したい地面を手で入れてください。");
-            return;
+            Undo.DestroyObjectImmediate(old);
         }
 
-        List<Collider> grounds = new List<Collider>();
-        foreach (Collider collider in ground.GetComponentsInChildren<Collider>())
+        GameObject root = new GameObject(SpawnZonesName);
+        Undo.RegisterCreatedObjectUndo(root, "素材を出す範囲を置く");
+
+        Transform[] zones = new Transform[Zones.Length];
+        for (int i = 0; i < Zones.Length; i++)
         {
-            Bounds bounds = collider.bounds;
-            bool coversCenter = bounds.min.x <= 0f && bounds.max.x >= 0f
-                             && bounds.min.z <= 0f && bounds.max.z >= 0f;
-            if (!coversCenter)
-            {
-                grounds.Add(collider);
-            }
+            GameObject zone = new GameObject(Zones[i].name);
+            zone.transform.SetParent(root.transform, false);
+            zone.transform.position = Zones[i].position;
+            zone.transform.localScale = Zones[i].size;
+            zones[i] = zone.transform;
         }
 
         SerializedObject serialized = new SerializedObject(spawner);
-        SerializedProperty list = serialized.FindProperty("spawnGrounds");
-        list.arraySize = grounds.Count;
-        for (int i = 0; i < grounds.Count; i++)
+
+        SerializedProperty zoneList = serialized.FindProperty("spawnZones");
+        zoneList.arraySize = zones.Length;
+        for (int i = 0; i < zones.Length; i++)
         {
-            list.GetArrayElementAtIndex(i).objectReferenceValue = grounds[i];
+            zoneList.GetArrayElementAtIndex(i).objectReferenceValue = zones[i];
         }
 
-        // 左右の地面は端（x = ±15）まであるので、範囲もそこまで広げる。
-        // 壁の中には出ない（スポナーが空いた場所を探すため）
-        serialized.FindProperty("areaHalfSize").vector2Value = new Vector2(15f, 15f);
-        serialized.ApplyModifiedProperties();
+        serialized.FindProperty("maxObjects").intValue = MaxDebris;
 
-        List<string> names = grounds.ConvertAll(c => c.name);
-        Debug.Log($"[JUNK] 素材は次の地面の上にだけ出ます：{string.Join("、", names)}");
+        GameObject[] extras = { antenna, engine };
+        SerializedProperty extraList = serialized.FindProperty("extraMaterials");
+        extraList.arraySize = extras.Length;
+        for (int i = 0; i < extras.Length; i++)
+        {
+            SerializedProperty entry = extraList.GetArrayElementAtIndex(i);
+            entry.FindPropertyRelative("prefab").objectReferenceValue = extras[i];
+            entry.FindPropertyRelative("weight").intValue = 1;
+        }
+
+        serialized.ApplyModifiedProperties();
     }
 }

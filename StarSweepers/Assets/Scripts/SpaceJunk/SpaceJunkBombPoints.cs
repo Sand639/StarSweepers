@@ -1,36 +1,42 @@
 using Unity.Netcode;
 using UnityEngine;
+using UnityEngine.Serialization;
 
 /// <summary>
-/// **決まった場所に爆弾を置き、無くなったら同じ場所にまた出すスポナー。**
+/// **決まった場所に物（爆弾・特殊デブリ）を置き、無くなったら同じ場所にまた出すスポナー。**
 ///
-/// 子オブジェクト1つが「爆弾を置く場所」1か所になる（4つ置けば4か所）。
-/// 置いた爆弾が**その場所から動かされた**か**消えた**（爆発・場外）ら、
-/// **Respawn Seconds（初期値3秒）後に、同じ場所へ新しい爆弾を出す。**
+/// 子オブジェクト1つが「物を置く場所」1か所になる（4つ置けば4か所）。
+/// 置いた物が**その場所から動かされた**か**消えた**（爆発・ゴール・場外）ら、
+/// **Respawn Seconds（初期値3秒）後に、同じ場所へ新しく出す。**
 ///
-/// ・動かされた爆弾はそのまま残る（投げたり、爆発させたりできる）
+/// ・動かされた物はそのまま残る（投げたり、爆発させたりできる）
+/// ・**Respawn When Moved を OFF にすると、消えたときだけ出し直す**（真ん中の特殊デブリ用。動かすたびに増えないように）
 /// ・**ラウンドの結果が出たら、もう出さない**
 ///
 /// ## オンラインのとき
 ///
 /// **出すのはホストだけ。** ホストが出して Spawn() すると、全員の画面に同じ物が現れる。
-/// 爆弾のプレハブは `DefaultNetworkPrefabs` に登録してあるもの
-/// （`FishingOnlineBomb` や `KnockBackBoom`）を使うこと。
+/// プレハブは `DefaultNetworkPrefabs` に登録してあるもの
+/// （`FishingOnlineBomb` や `KnockBackBoom`、`SpaceJunkSpecial`）を使うこと。
 /// </summary>
 public class SpaceJunkBombPoints : MonoBehaviour
 {
-    [Header("出す爆弾")]
-    [Tooltip("爆弾のプレハブ。オンラインで使うなら NetworkObject が付いたもの（FishingOnlineBomb / KnockBackBoom）")]
-    [SerializeField] private GameObject bombPrefab;
+    [Header("出す物")]
+    [Tooltip("出す物のプレハブ。オンラインで使うなら NetworkObject が付いたもの（FishingOnlineBomb / KnockBackBoom / SpaceJunkSpecial）")]
+    [FormerlySerializedAs("bombPrefab")]
+    [SerializeField] private GameObject spawnPrefab;
 
     [Header("出し直し")]
-    [Tooltip("爆弾が動かされた・消えてから、同じ場所に次を出すまでの秒数")]
+    [Tooltip("動かされた・消えてから、同じ場所に次を出すまでの秒数")]
     [SerializeField] private float respawnSeconds = 3f;
+
+    [Tooltip("ON：動かされたら出し直す（爆弾）。OFF：消えたときだけ出し直す（特殊デブリ）")]
+    [SerializeField] private bool respawnWhenMoved = true;
 
     [Tooltip("置いた場所から横にこれ以上離れたら「動かされた」とみなす（m）")]
     [SerializeField] private float moveThreshold = 1f;
 
-    [Tooltip("始まってから最初の爆弾を出すまでの秒数（シーン切り替えが落ち着くのを待つ）")]
+    [Tooltip("始まってから最初の物を出すまでの秒数（シーン切り替えが落ち着くのを待つ）")]
     [SerializeField] private float startDelaySeconds = 0.5f;
 
     /// <summary>1か所分の状態。</summary>
@@ -56,7 +62,7 @@ public class SpaceJunkBombPoints : MonoBehaviour
 
     private void Update()
     {
-        if (!CanSpawnOnThisPC() || bombPrefab == null)
+        if (!CanSpawnOnThisPC() || spawnPrefab == null)
         {
             return;
         }
@@ -103,12 +109,17 @@ public class SpaceJunkBombPoints : MonoBehaviour
         }
     }
 
-    /// <summary>置いた爆弾が、消えたか・場所から動かされたか。</summary>
+    /// <summary>置いた物が、消えたか・場所から動かされたか（Respawn When Moved が OFF なら、消えたかだけ）。</summary>
     private bool HasLeft(Point point)
     {
         if (point.bomb == null || point.bomb.IsVanished)
         {
             return true;
+        }
+
+        if (!respawnWhenMoved)
+        {
+            return false;
         }
 
         Vector3 offset = point.bomb.transform.position - point.place.position;
@@ -120,12 +131,12 @@ public class SpaceJunkBombPoints : MonoBehaviour
     {
         point.waitTimer = -1f;
 
-        GameObject spawned = Instantiate(bombPrefab, point.place.position, point.place.rotation);
+        GameObject spawned = Instantiate(spawnPrefab, point.place.position, point.place.rotation);
         point.bomb = spawned.GetComponent<HookableObject>();
 
         if (point.bomb == null)
         {
-            Debug.LogWarning($"[JUNK] {bombPrefab.name} に HookableObject が無いため、動かされたか分かりません。" +
+            Debug.LogWarning($"[JUNK] {spawnPrefab.name} に HookableObject が無いため、動かされたか分かりません。" +
                              "爆弾のプレハブを入れてください。");
         }
 
@@ -140,7 +151,7 @@ public class SpaceJunkBombPoints : MonoBehaviour
             }
             else
             {
-                Debug.LogWarning($"[JUNK] {bombPrefab.name} に NetworkObject が無いため、ホストの画面にしか出ません。" +
+                Debug.LogWarning($"[JUNK] {spawnPrefab.name} に NetworkObject が無いため、ホストの画面にしか出ません。" +
                                  "オンライン用のプレハブを入れてください。");
             }
         }
