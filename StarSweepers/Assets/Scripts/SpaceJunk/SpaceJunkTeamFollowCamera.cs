@@ -30,7 +30,8 @@ using UnityEngine;
 /// ## ふつうのカメラ（TopDownCameraFollow）との関係
 ///
 /// 追いかけ方は同じで、**向きを回す部分だけを足したもの。**
-/// 釣りのカメラは変えていない。このカメラは宇宙ごみのマップ（`SpaceJunkMap01TeamCam`）にだけ置く。
+/// 釣りのカメラは変えていない。このカメラは宇宙ごみのマップ（`SpaceJunkMap01TeamCam`）と、
+/// STAGE_01〜05 のカメラ（`SpaceJunkStageCamera.prefab`。全体カメラと C キーで切り替え → <see cref="SpaceJunkCameraModeSwitch"/>）に置いてある。
 /// 置くのは `Tools > StarSweepers > 宇宙ごみの自陣向きカメラのマップを作る（Map01を複製）`。
 /// </summary>
 public class SpaceJunkTeamFollowCamera : MonoBehaviour
@@ -65,6 +66,13 @@ public class SpaceJunkTeamFollowCamera : MonoBehaviour
         target = newTarget;
 
         if (target == null)
+        {
+            return;
+        }
+
+        // 止めてある（全体カメラのモード中。SpaceJunkCameraModeSwitch）なら、カメラを飛ばさない。
+        // 自陣カメラに切り替えたときに、そこからなめらかに追いかけ始める
+        if (!isActiveAndEnabled)
         {
             return;
         }

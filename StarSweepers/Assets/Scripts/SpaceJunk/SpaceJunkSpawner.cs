@@ -10,6 +10,9 @@ using UnityEngine;
 /// ・マップにある素材が **Max Objects 以上なら出さない**
 /// ・出す場所に他の物やプレイヤーがいたら、別の場所を探す
 /// ・**ラウンドの結果が出たら、もう出さない**
+/// ・**Spawn Zones に範囲（四角）を入れたら、その範囲の中にだけ出す**（STAGE_02 の緑の範囲など）
+/// ・**Kind Zones に種類と範囲を入れたら、その種類だけその範囲に出す**（STAGE_05 の「敵陣まで取りに行く」）
+/// ・**Spawn Circle Radius を入れたら円の中に出す。Require Ground Below を ON にすると、真下に床がある所にだけ出す**（STAGE_03 のドーナツ）
 ///
 /// ## オンラインのとき
 ///
@@ -25,7 +28,7 @@ using UnityEngine;
 /// </summary>
 public class SpaceJunkSpawner : MonoBehaviour
 {
-    [Header("出す素材（3種類）")]
+    [Header("出す素材（基本の3種類）")]
     [Tooltip("装甲板のプレハブ")]
     [SerializeField] private GameObject platePrefab;
 
@@ -44,6 +47,27 @@ public class SpaceJunkSpawner : MonoBehaviour
 
     [Tooltip("燃料タンクの出やすさ")]
     [SerializeField] private int fuelWeight = 1;
+
+    /// <summary>上の3種類のほかに出す素材1つ分。</summary>
+    [System.Serializable]
+    public class ExtraMaterial
+    {
+        [Tooltip("素材のプレハブ（SpaceJunkMaterial が付いたもの）")]
+        public GameObject prefab;
+
+        [Tooltip("出やすさ")]
+        public int weight = 1;
+    }
+
+    [Header("追加の素材（4種類目から）")]
+    [Tooltip("上の3種類のほかに出す素材。空なら3種類だけ（今までのマップ）")]
+    [SerializeField] private ExtraMaterial[] extraMaterials = new ExtraMaterial[0];
+
+    /// <summary>
+    /// **いまのシーンのスポナー。** どの種類の素材が出るマップかを、ラウンドのイベントや画面が調べるのに使う
+    /// （ホストでも参加者でも入っている）。
+    /// </summary>
+    public static SpaceJunkSpawner Current { get; private set; }
 
     [Header("数と間隔")]
     [Tooltip("マップにこの数以上あったら、もう出さない")]
@@ -71,8 +95,73 @@ public class SpaceJunkSpawner : MonoBehaviour
     [Tooltip("空いた場所を探す回数。見つからなければ、その回は出さない")]
     [SerializeField] private int placementTries = 8;
 
+    [Tooltip("ここに入れた四角の中にだけ出す（空のオブジェクトを置き、位置と Scale の X・Z で四角を決める）。" +
+             "空なら Area Half Size の範囲に出す。選ぶと、シーン画面に緑の枠で見える")]
+    [SerializeField] private Transform[] spawnZones = new Transform[0];
+
+    [Tooltip("0より大きくすると、このオブジェクトの位置を中心に、この半径の円の中に出す（Spawn Zones が空のとき）。" +
+             "STAGE_03 のドーナツなど。0なら Area Half Size の四角")]
+    [SerializeField] private float spawnCircleRadius = 0f;
+
+    [Tooltip("ON にすると、**真下に床があるときだけ**出す（穴の上には出さない）")]
+    [SerializeField] private bool requireGroundBelow = false;
+
+    /// <summary>ある種類の素材だけを出す範囲。</summary>
+    [System.Serializable]
+    public class KindZone
+    {
+        [Tooltip("どの種類の素材か")]
+        public SpaceJunkMaterialKind kind;
+
+        [Tooltip("この種類だけを出す範囲（四角。Spawn Zones と同じ作り方）")]
+        public Transform[] zones = new Transform[0];
+    }
+
+    [Header("種類ごとの出す範囲（STAGE_05）")]
+    [Tooltip("ここに入れた種類は、その範囲にだけ出す（入れていない種類は Spawn Zones などのふつうの範囲）。" +
+             "「敵陣まで取りに行く」ように、種類ごとに出る場所を分けたいとき")]
+    [SerializeField] private KindZone[] kindZones = new KindZone[0];
+
     private float timer;
     private bool initialDone;
+
+    private void OnEnable()
+    {
+        Current = this;
+    }
+
+    private void OnDisable()
+    {
+        if (Current == this)
+        {
+            Current = null;
+        }
+    }
+
+    /// <summary>この種類の素材を出すか（プレハブが入っていて、出やすさが0より大きいか）。</summary>
+    public bool UsesKind(SpaceJunkMaterialKind kind)
+    {
+        if (IsKind(platePrefab, plateWeight, kind) || IsKind(circuitPrefab, circuitWeight, kind) ||
+            IsKind(fuelPrefab, fuelWeight, kind))
+        {
+            return true;
+        }
+
+        foreach (ExtraMaterial extra in extraMaterials)
+        {
+            if (extra != null && IsKind(extra.prefab, extra.weight, kind))
+            {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    private static bool IsKind(GameObject prefab, int weight, SpaceJunkMaterialKind kind)
+    {
+        return prefab != null && weight > 0 &&
+               prefab.TryGetComponent(out SpaceJunkMaterial material) && material.Kind == kind;
+    }
 
     private void Update()
     {
@@ -141,7 +230,7 @@ public class SpaceJunkSpawner : MonoBehaviour
 
     private GameObject SpawnOne(bool ignoreLimit)
     {
-        if (!ignoreLimit && HookableObject.CountActive() >= maxObjects)
+        if (!ignoreLimit && CountMaterials() >= maxObjects)
         {
             return null;
         }
@@ -152,7 +241,7 @@ public class SpaceJunkSpawner : MonoBehaviour
             return null;
         }
 
-        if (!TryFindPlace(out Vector3 position))
+        if (!TryFindPlace(ZonesFor(prefab), out Vector3 position))
         {
             return null;
         }
@@ -179,13 +268,35 @@ public class SpaceJunkSpawner : MonoBehaviour
         return spawned;
     }
 
-    /// <summary>重みの割合で、3種類のうち1つのプレハブを選ぶ。</summary>
+    /// <summary>
+    /// マップにある素材の数。**素材の目印（SpaceJunkMaterial）が付いた物だけ数え、特殊デブリは数えない**
+    /// （爆弾・アンカー・<see cref="SpaceJunkBombPoints"/> で置いた特殊デブリで、出せる素材の数が減らないようにする）。
+    /// </summary>
+    private static int CountMaterials()
+    {
+        int count = 0;
+        foreach (HookableObject item in HookableObject.All)
+        {
+            if (item != null && !item.IsVanished && item.GetComponent<SpaceJunkMaterial>() != null &&
+                item.GetComponent<SpaceJunkBonusDebris>() == null)
+            {
+                count++;
+            }
+        }
+        return count;
+    }
+
+    /// <summary>重みの割合で、3種類（＋追加の素材）のうち1つのプレハブを選ぶ。</summary>
     private GameObject ChoosePrefab()
     {
         int plate = platePrefab != null ? Mathf.Max(0, plateWeight) : 0;
         int circuit = circuitPrefab != null ? Mathf.Max(0, circuitWeight) : 0;
         int fuel = fuelPrefab != null ? Mathf.Max(0, fuelWeight) : 0;
         int total = plate + circuit + fuel;
+        foreach (ExtraMaterial extra in extraMaterials)
+        {
+            total += ExtraWeight(extra);
+        }
 
         if (total <= 0)
         {
@@ -204,24 +315,42 @@ public class SpaceJunkSpawner : MonoBehaviour
             return circuitPrefab;
         }
 
+        if (roll < plate + circuit + fuel)
+        {
+            return fuelPrefab;
+        }
+
+        roll -= plate + circuit + fuel;
+        foreach (ExtraMaterial extra in extraMaterials)
+        {
+            int weight = ExtraWeight(extra);
+            if (roll < weight)
+            {
+                return extra.prefab;
+            }
+            roll -= weight;
+        }
+
         return fuelPrefab;
     }
 
+    private static int ExtraWeight(ExtraMaterial extra)
+    {
+        return extra != null && extra.prefab != null ? Mathf.Max(0, extra.weight) : 0;
+    }
+
     /// <summary>範囲の中から、何も無い場所を探す。</summary>
-    private bool TryFindPlace(out Vector3 position)
+    private bool TryFindPlace(Transform[] zones, out Vector3 position)
     {
         for (int i = 0; i < placementTries; i++)
         {
-            Vector3 candidate = transform.position + new Vector3(
-                Random.Range(-areaHalfSize.x, areaHalfSize.x),
-                dropHeight,
-                Random.Range(-areaHalfSize.y, areaHalfSize.y));
+            Vector3 candidate = RandomPointInArea(zones);
 
             // 落とす高さから床の少し上まで、縦に長く調べる（プレイヤーや障害物の真上を避ける）
             Vector3 bottom = new Vector3(candidate.x, transform.position.y + clearRadius + 0.1f, candidate.z);
             bool blocked = Physics.CheckCapsule(bottom, candidate, clearRadius, ~0, QueryTriggerInteraction.Ignore);
 
-            if (!blocked)
+            if (!blocked && HasGroundBelow(candidate))
             {
                 position = candidate;
                 return true;
@@ -232,12 +361,164 @@ public class SpaceJunkSpawner : MonoBehaviour
         return false;
     }
 
+    /// <summary>
+    /// 真下に床があるか（Require Ground Below が OFF なら常に true）。
+    /// 出す場所の周りは空いていると確かめてあるので、真下に最初に当たる物が床になる。
+    /// </summary>
+    private bool HasGroundBelow(Vector3 candidate)
+    {
+        if (!requireGroundBelow)
+        {
+            return true;
+        }
+
+        return Physics.Raycast(candidate, Vector3.down, dropHeight + 2f, ~0, QueryTriggerInteraction.Ignore);
+    }
+
+    /// <summary>
+    /// このプレハブを出す範囲。Kind Zones にその種類があればその範囲、無ければ Spawn Zones。
+    /// </summary>
+    private Transform[] ZonesFor(GameObject prefab)
+    {
+        if (prefab != null && prefab.TryGetComponent(out SpaceJunkMaterial material))
+        {
+            foreach (KindZone kindZone in kindZones)
+            {
+                if (kindZone != null && kindZone.kind == material.Kind && kindZone.zones != null &&
+                    kindZone.zones.Length > 0)
+                {
+                    return kindZone.zones;
+                }
+            }
+        }
+
+        return spawnZones;
+    }
+
+    /// <summary>
+    /// 出す候補の場所を1つ選ぶ（高さは「床＋Drop Height」）。
+    /// 範囲（<paramref name="zones"/>）があれば、**その四角のどれか**（広いものほど選ばれやすい）の中。
+    /// 無ければ、Spawn Circle Radius の円か、Area Half Size の四角の中。
+    /// </summary>
+    private Vector3 RandomPointInArea(Transform[] zones)
+    {
+        float totalArea = 0f;
+        foreach (Transform zone in zones)
+        {
+            totalArea += ZoneArea(zone);
+        }
+
+        if (totalArea <= 0f && spawnCircleRadius > 0f)
+        {
+            // 円の中で、どこも同じくらいの出やすさになるように選ぶ
+            Vector2 inCircle = Random.insideUnitCircle * spawnCircleRadius;
+            return transform.position + new Vector3(inCircle.x, dropHeight, inCircle.y);
+        }
+
+        if (totalArea <= 0f)
+        {
+            return transform.position + new Vector3(
+                Random.Range(-areaHalfSize.x, areaHalfSize.x),
+                dropHeight,
+                Random.Range(-areaHalfSize.y, areaHalfSize.y));
+        }
+
+        float roll = Random.Range(0f, totalArea);
+        foreach (Transform zone in zones)
+        {
+            float area = ZoneArea(zone);
+            if (area <= 0f)
+            {
+                continue;
+            }
+
+            if (roll <= area)
+            {
+                // 四角の中の1点（-0.5〜0.5 を、四角の大きさと向きに合わせて広げる）
+                Vector3 local = new Vector3(Random.Range(-0.5f, 0.5f), 0f, Random.Range(-0.5f, 0.5f));
+                Vector3 point = zone.TransformPoint(local);
+                point.y = transform.position.y + dropHeight;
+                return point;
+            }
+            roll -= area;
+        }
+
+        return transform.position + Vector3.up * dropHeight;
+    }
+
+    /// <summary>範囲の四角の広さ（大きさ Scale の X × Z）。</summary>
+    private static float ZoneArea(Transform zone)
+    {
+        if (zone == null)
+        {
+            return 0f;
+        }
+
+        Vector3 size = zone.lossyScale;
+        return Mathf.Abs(size.x * size.z);
+    }
+
     private void OnDrawGizmosSelected()
     {
         // 出す範囲をシーン画面に緑の枠で出す
         Gizmos.color = new Color(0.3f, 1f, 0.4f, 0.8f);
-        Gizmos.DrawWireCube(
-            transform.position + Vector3.up * dropHeight,
-            new Vector3(areaHalfSize.x * 2f, 0.1f, areaHalfSize.y * 2f));
+
+        bool hasZone = false;
+        foreach (Transform zone in spawnZones)
+        {
+            if (zone == null)
+            {
+                continue;
+            }
+
+            hasZone = true;
+            Gizmos.matrix = zone.localToWorldMatrix;
+            Gizmos.DrawWireCube(Vector3.zero, new Vector3(1f, 0.05f, 1f));
+        }
+
+        // 種類ごとの範囲は、その素材の色の枠で出す
+        foreach (KindZone kindZone in kindZones)
+        {
+            if (kindZone == null || kindZone.zones == null)
+            {
+                continue;
+            }
+
+            Gizmos.color = SpaceJunkMaterials.Color(kindZone.kind);
+            foreach (Transform zone in kindZone.zones)
+            {
+                if (zone == null)
+                {
+                    continue;
+                }
+
+                hasZone = true;
+                Gizmos.matrix = zone.localToWorldMatrix;
+                Gizmos.DrawWireCube(Vector3.zero, new Vector3(1f, 0.05f, 1f));
+            }
+        }
+        Gizmos.matrix = Matrix4x4.identity;
+        Gizmos.color = new Color(0.3f, 1f, 0.4f, 0.8f);
+
+        if (!hasZone && spawnCircleRadius > 0f)
+        {
+            // 円を線でつないで描く
+            Vector3 center = transform.position + Vector3.up * dropHeight;
+            const int segments = 48;
+            for (int i = 0; i < segments; i++)
+            {
+                float a0 = i * Mathf.PI * 2f / segments;
+                float a1 = (i + 1) * Mathf.PI * 2f / segments;
+                Gizmos.DrawLine(
+                    center + new Vector3(Mathf.Cos(a0), 0f, Mathf.Sin(a0)) * spawnCircleRadius,
+                    center + new Vector3(Mathf.Cos(a1), 0f, Mathf.Sin(a1)) * spawnCircleRadius);
+            }
+        }
+        else if (!hasZone)
+        {
+            Gizmos.DrawWireCube(
+                transform.position + Vector3.up * dropHeight,
+                new Vector3(areaHalfSize.x * 2f, 0.1f, areaHalfSize.y * 2f));
+        }
     }
 }

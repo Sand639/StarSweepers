@@ -182,13 +182,20 @@ public class SpaceJunkMatchUI : MonoBehaviour
 
             GUI.color = saved;
 
-            // 素材3種類ぶんの印
+            // 素材の種類ぶんの印（そのマップで出る種類だけ）
             GUILayout.BeginHorizontal();
             GUILayout.Space(16f);
 
             for (int i = 0; i < SpaceJunkMaterials.Count; i++)
             {
                 SpaceJunkMaterialKind kind = SpaceJunkMaterials.FromIndex(i);
+
+                // そのマップで出ない種類は出さない
+                if (!SpaceJunkMaterials.IsUsed(kind))
+                {
+                    continue;
+                }
+
                 bool has = round.HasKind(team, kind);
 
                 Color kindSaved = GUI.color;
@@ -211,6 +218,12 @@ public class SpaceJunkMatchUI : MonoBehaviour
         {
             GUILayout.Space(4f);
             GUILayout.Label($"落ちたら［{SpaceJunkPlayerSetup.LocalResetKeyName}］で戻れます", lineStyle);
+        }
+
+        // **カメラの切り替えの案内。** 切り替えられるカメラ（STAGE_01〜05）のときだけ出す
+        if (!string.IsNullOrEmpty(SpaceJunkCameraModeSwitch.LocalToggleKeyName))
+        {
+            GUILayout.Label($"［{SpaceJunkCameraModeSwitch.LocalToggleKeyName}］でカメラ切り替え（全体／自陣）", lineStyle);
         }
 
         GUILayout.EndArea();

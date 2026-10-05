@@ -11,7 +11,8 @@ using UnityEngine.UI;
 /// | 項目 | 押すとどうなるか |
 /// | **ゲームをつづける** | 画面を閉じて、続きから遊ぶ |
 /// | **設定** | 音量とマウス感度を変える画面へ |
-/// | **ゲームをやめる** | ゲームを終了する（エディタでは再生を止める） |
+/// | **ロビーに戻る** | **宇宙ごみの試合中だけ出る。** 確かめてから試合を抜けてロビーへ（ホストなら全員で戻る）。`SpaceJunkLeaveMatch` |
+/// | **ゲームをやめる** | 確かめてから、ゲームを終了する（エディタでは再生を止める） |
 ///
 /// **マウスで選ぶ。** 項目に重なると**色が変わり、少し大きくなり、左に「▶」が出る**
 /// （<see cref="MenuHoverHighlight"/>）。
@@ -97,9 +98,20 @@ public class PauseMenu : MonoBehaviour
     /// </summary>
     public static bool Exists => Current != null;
 
+    /// <summary>
+    /// **「ロビーに戻る」を出してよいか。** 遊びの側（宇宙ごみなど）が入れる差し込み口。
+    /// 入っていない・false なら、ボタンを出さない（釣りなど、ロビーへ戻る処理が無い遊び）。
+    /// 宇宙ごみは <c>SpaceJunkLeaveMatch</c> が入れている。
+    /// </summary>
+    public static System.Func<bool> CanReturnToLobby;
+
+    /// <summary>「ロビーに戻る」を決定したときに呼ぶ処理。遊びの側が入れる。</summary>
+    public static System.Action ReturnToLobby;
+
     private GameObject root;
     private GameObject mainPage;
     private GameObject settingsPage;
+    private GameObject confirmPage;
     private Font font;
 
     // 開く前のカーソルの状態（閉じたときに戻すため）
@@ -170,7 +182,12 @@ public class PauseMenu : MonoBehaviour
         }
         else if (IsOpen && GamepadInput.WasPressed(backButton))
         {
-            if (settingsPage != null && settingsPage.activeSelf)
+            if (confirmPage != null && confirmPage.activeSelf)
+            {
+                // 確かめる画面からは、最初の画面へ戻る
+                ShowSettings(false);
+            }
+            else if (settingsPage != null && settingsPage.activeSelf)
             {
                 ShowSettings(false);
             }
@@ -222,6 +239,9 @@ public class PauseMenu : MonoBehaviour
         // 無ければここで作り直さないと、ボタンが反応しない
         EnsureEventSystem();
 
+        // 「ロビーに戻る」を出すかは、開くときの状況（試合中か）で変わるので、毎回作り直す
+        RebuildMainPage();
+
         SetVisible(true);
         ShowSettings(false);
 
@@ -267,7 +287,95 @@ public class PauseMenu : MonoBehaviour
             settingsPage.SetActive(show);
         }
 
+        CloseConfirm();
+
         SelectFirstForGamepad(show ? settingsPage : mainPage);
+    }
+
+    // ------------------------------------------------------------
+    // 確かめる画面（ロビーに戻る・ゲームをやめる）
+    // ------------------------------------------------------------
+
+    /// <summary>
+    /// **本当にいいか確かめる画面を出す。**
+    /// 上の項目（<paramref name="cancelLabel"/>）は閉じて遊びに戻る、下の項目（<paramref name="okLabel"/>）で実行する。
+    /// コントローラーでは**上の「つづける」側を選んだ状態**で開く（うっかり抜けないように）。
+    /// </summary>
+    private void ShowConfirm(string message, string note, string cancelLabel, string okLabel,
+        UnityEngine.Events.UnityAction onOk)
+    {
+        CloseConfirm();
+
+        mainPage.SetActive(false);
+        settingsPage.SetActive(false);
+
+        confirmPage = new GameObject("ConfirmPage", typeof(RectTransform));
+        confirmPage.transform.SetParent(root.transform, false);
+        Stretch(confirmPage.GetComponent<RectTransform>());
+
+        GameObject messageObject = CreateText("Message", confirmPage.transform, message, fontSize + 4);
+        PlaceText(messageObject, 150f, 56f);
+
+        GameObject noteObject = CreateText("Note", confirmPage.transform, note, fontSize - 8);
+        PlaceText(noteObject, 100f, 36f);
+
+        CreateMenuItem(confirmPage.transform, cancelLabel, 10f, Close);
+        CreateMenuItem(confirmPage.transform, okLabel, 10f - (ItemHeight + ItemGap), onOk);
+
+        SelectFirstForGamepad(confirmPage);
+    }
+
+    /// <summary>確かめる画面を消す（出ていなければ何もしない）。</summary>
+    private void CloseConfirm()
+    {
+        if (confirmPage != null)
+        {
+            Destroy(confirmPage);
+            confirmPage = null;
+        }
+    }
+
+    /// <summary>画面の真ん中の、高さ <paramref name="y"/> に横長の文字を置く。</summary>
+    private static void PlaceText(GameObject textObject, float y, float height)
+    {
+        RectTransform rect = textObject.GetComponent<RectTransform>();
+        rect.anchorMin = new Vector2(0.5f, 0.5f);
+        rect.anchorMax = new Vector2(0.5f, 0.5f);
+        rect.sizeDelta = new Vector2(1200f, height);
+        rect.anchoredPosition = new Vector2(0f, y);
+    }
+
+    /// <summary>「ロビーに戻る」を押したとき。確かめてから戻る。</summary>
+    private void ConfirmReturnToLobby()
+    {
+        ShowConfirm(
+            "試合から抜けてロビーに戻ります",
+            "※ホストの場合は全員がロビーに戻されます",
+            "試合をつづける",
+            "ロビーに戻る",
+            () =>
+            {
+                // 止めた時間やカーソルを元に戻してから移る
+                Close();
+                ReturnToLobby?.Invoke();
+            });
+    }
+
+    /// <summary>「ゲームをやめる」を押したとき。確かめてから終わる。</summary>
+    private void ConfirmQuit()
+    {
+        ShowConfirm(
+            IsInMatch() ? "試合から抜けてゲームを終了します" : "ゲームを終了します",
+            "※ホストの場合は全員がタイトル画面に戻されます",
+            "ゲームをつづける",
+            "ゲームをやめる",
+            QuitGame);
+    }
+
+    /// <summary>いま「ロビーに戻る」を出せる場面（試合中）か。</summary>
+    private static bool IsInMatch()
+    {
+        return CanReturnToLobby != null && ReturnToLobby != null && CanReturnToLobby();
     }
 
     /// <summary>
@@ -363,9 +471,35 @@ public class PauseMenu : MonoBehaviour
 
     private void BuildMainPage()
     {
-        CreateMenuItem(mainPage.transform, "ゲームをつづける", 90f, Close);
-        CreateMenuItem(mainPage.transform, "設定", 90f - (ItemHeight + ItemGap), () => ShowSettings(true));
-        CreateMenuItem(mainPage.transform, "ゲームをやめる", 90f - (ItemHeight + ItemGap) * 2f, QuitGame);
+        float y = 90f;
+        CreateMenuItem(mainPage.transform, "ゲームをつづける", y, Close);
+
+        y -= ItemHeight + ItemGap;
+        CreateMenuItem(mainPage.transform, "設定", y, () => ShowSettings(true));
+
+        // 試合中だけ「ロビーに戻る」を出す（宇宙ごみ。釣りなどには出ない）
+        if (IsInMatch())
+        {
+            y -= ItemHeight + ItemGap;
+            CreateMenuItem(mainPage.transform, "ロビーに戻る", y, ConfirmReturnToLobby);
+        }
+
+        y -= ItemHeight + ItemGap;
+        CreateMenuItem(mainPage.transform, "ゲームをやめる", y, ConfirmQuit);
+    }
+
+    /// <summary>最初の画面を作り直す（「ロビーに戻る」を出すかどうかを、いまの状況に合わせる）。</summary>
+    private void RebuildMainPage()
+    {
+        if (mainPage != null)
+        {
+            // Destroy はフレームの終わりに消えるので、先に隠して、新しい画面と重ならないようにする
+            mainPage.SetActive(false);
+            Destroy(mainPage);
+        }
+
+        mainPage = CreatePage("MainPage", "ポーズ");
+        BuildMainPage();
     }
 
     private void BuildSettingsPage()

@@ -31,7 +31,7 @@ public static class SpaceJunkTeamCameraSetup
     private const string SourcePath = SpaceJunkSetup.MapSceneFolder + "/SpaceJunkMap01.unity";
     private const string DestinationPath = SpaceJunkSetup.MapSceneFolder + "/SpaceJunkMap01TeamCam.unity";
 
-    [MenuItem("Tools/StarSweepers/宇宙ごみの自陣向きカメラのマップを作る（Map01を複製）")]
+    [MenuItem("Tools/StarSweepers/アーカイブ/宇宙ごみ/自陣向きカメラのマップを作る（Map01を複製）")]
     public static void Create()
     {
         if (!EditorSceneManager.SaveCurrentModifiedScenesIfUserWantsTo())
