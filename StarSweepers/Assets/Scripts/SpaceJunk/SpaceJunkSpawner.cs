@@ -10,6 +10,7 @@ using UnityEngine;
 /// ・マップにある素材が **Max Objects 以上なら出さない**
 /// ・出す場所に他の物やプレイヤーがいたら、別の場所を探す
 /// ・**ラウンドの結果が出たら、もう出さない**
+/// ・**Spawn Grounds に地面を入れたら、その地面の上にだけ出す**（穴や真ん中の地面を避けたいとき）
 ///
 /// ## オンラインのとき
 ///
@@ -70,6 +71,10 @@ public class SpaceJunkSpawner : MonoBehaviour
 
     [Tooltip("空いた場所を探す回数。見つからなければ、その回は出さない")]
     [SerializeField] private int placementTries = 8;
+
+    [Tooltip("ここに入れた地面の上にだけ出す（真下を調べて、この中のどれかがあれば出す）。" +
+             "空なら範囲のどこにでも出す（穴の上にも出る）")]
+    [SerializeField] private Collider[] spawnGrounds = new Collider[0];
 
     private float timer;
     private bool initialDone;
@@ -141,7 +146,7 @@ public class SpaceJunkSpawner : MonoBehaviour
 
     private GameObject SpawnOne(bool ignoreLimit)
     {
-        if (!ignoreLimit && HookableObject.CountActive() >= maxObjects)
+        if (!ignoreLimit && CountMaterials() >= maxObjects)
         {
             return null;
         }
@@ -177,6 +182,23 @@ public class SpaceJunkSpawner : MonoBehaviour
         }
 
         return spawned;
+    }
+
+    /// <summary>
+    /// マップにある素材の数。**爆弾は数えない**
+    /// （<see cref="SpaceJunkBombPoints"/> の爆弾で、出せる素材の数が減らないようにする）。
+    /// </summary>
+    private static int CountMaterials()
+    {
+        int count = 0;
+        foreach (HookableObject item in HookableObject.All)
+        {
+            if (item != null && !item.IsVanished && item.GetComponent<ExplosiveObject>() == null)
+            {
+                count++;
+            }
+        }
+        return count;
     }
 
     /// <summary>重みの割合で、3種類のうち1つのプレハブを選ぶ。</summary>
@@ -221,7 +243,7 @@ public class SpaceJunkSpawner : MonoBehaviour
             Vector3 bottom = new Vector3(candidate.x, transform.position.y + clearRadius + 0.1f, candidate.z);
             bool blocked = Physics.CheckCapsule(bottom, candidate, clearRadius, ~0, QueryTriggerInteraction.Ignore);
 
-            if (!blocked)
+            if (!blocked && IsOverSpawnGround(candidate))
             {
                 position = candidate;
                 return true;
@@ -229,6 +251,27 @@ public class SpaceJunkSpawner : MonoBehaviour
         }
 
         position = Vector3.zero;
+        return false;
+    }
+
+    /// <summary>真下が、出してよい地面かどうか。地面の指定が無ければ常に true。</summary>
+    private bool IsOverSpawnGround(Vector3 candidate)
+    {
+        if (spawnGrounds == null || spawnGrounds.Length == 0)
+        {
+            return true;
+        }
+
+        Ray down = new Ray(candidate, Vector3.down);
+        float distance = dropHeight + 5f;
+
+        foreach (Collider ground in spawnGrounds)
+        {
+            if (ground != null && ground.Raycast(down, out _, distance))
+            {
+                return true;
+            }
+        }
         return false;
     }
 
