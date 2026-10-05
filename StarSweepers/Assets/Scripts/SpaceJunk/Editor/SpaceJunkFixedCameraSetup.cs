@@ -55,7 +55,7 @@ public static class SpaceJunkFixedCameraSetup
     /// <summary>これより大きい見た目は、ステージの外の飾り（背景など）とみなして計算に入れない。</summary>
     private const float IgnoreLargerThan = 300f;
 
-    [MenuItem("Tools/StarSweepers/宇宙ごみの全体固定カメラのマップを作る（Map01を複製）")]
+    [MenuItem("Tools/StarSweepers/アーカイブ/宇宙ごみ/全体固定カメラのマップを作る（Map01を複製）")]
     public static void Create()
     {
         if (!EditorSceneManager.SaveCurrentModifiedScenesIfUserWantsTo())

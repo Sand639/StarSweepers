@@ -36,7 +36,7 @@ public static class SpaceJunkDuelMapSetup
     /// <summary>残すゴールの番号（1=東、3=西）。</summary>
     private static readonly int[] KeepGoals = { 1, 3 };
 
-    [MenuItem("Tools/StarSweepers/宇宙ごみの東西1対1のマップを作る（Map01を複製）")]
+    [MenuItem("Tools/StarSweepers/アーカイブ/宇宙ごみ/東西1対1のマップを作る（Map01を複製）")]
     public static void Create()
     {
         if (!EditorSceneManager.SaveCurrentModifiedScenesIfUserWantsTo())
