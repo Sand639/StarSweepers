@@ -667,6 +667,25 @@ public class SpaceJunkSession : NetworkBehaviour
         }
     }
 
+    /// <summary>ロビーのシーンの名前。</summary>
+    public string LobbySceneName => lobbySceneName;
+
+    /// <summary>
+    /// **ポーズ画面の「ロビーに戻る」をホストが押したとき。** 試合を打ち切って、全員をロビーへ戻す。
+    /// ホストでなければ何もせず false（<see cref="SpaceJunkLeaveMatch"/> から呼ばれる）。
+    /// </summary>
+    public bool ServerReturnToLobby()
+    {
+        if (!IsServer)
+        {
+            return false;
+        }
+
+        StopAllCoroutines();
+        AbortToLobby();
+        return true;
+    }
+
     /// <summary>試合を打ち切って、全員をロビーへ戻す。</summary>
     private void AbortToLobby()
     {
