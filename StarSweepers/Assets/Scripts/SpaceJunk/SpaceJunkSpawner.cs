@@ -11,6 +11,7 @@ using UnityEngine;
 /// ・出す場所に他の物やプレイヤーがいたら、別の場所を探す
 /// ・**ラウンドの結果が出たら、もう出さない**
 /// ・**Spawn Zones に範囲（四角）を入れたら、その範囲の中にだけ出す**（STAGE_02 の緑の範囲など）
+/// ・**Kind Zones に種類と範囲を入れたら、その種類だけその範囲に出す**（STAGE_05 の「敵陣まで取りに行く」）
 /// ・**Spawn Circle Radius を入れたら円の中に出す。Require Ground Below を ON にすると、真下に床がある所にだけ出す**（STAGE_03 のドーナツ）
 ///
 /// ## オンラインのとき
@@ -104,6 +105,22 @@ public class SpaceJunkSpawner : MonoBehaviour
 
     [Tooltip("ON にすると、**真下に床があるときだけ**出す（穴の上には出さない）")]
     [SerializeField] private bool requireGroundBelow = false;
+
+    /// <summary>ある種類の素材だけを出す範囲。</summary>
+    [System.Serializable]
+    public class KindZone
+    {
+        [Tooltip("どの種類の素材か")]
+        public SpaceJunkMaterialKind kind;
+
+        [Tooltip("この種類だけを出す範囲（四角。Spawn Zones と同じ作り方）")]
+        public Transform[] zones = new Transform[0];
+    }
+
+    [Header("種類ごとの出す範囲（STAGE_05）")]
+    [Tooltip("ここに入れた種類は、その範囲にだけ出す（入れていない種類は Spawn Zones などのふつうの範囲）。" +
+             "「敵陣まで取りに行く」ように、種類ごとに出る場所を分けたいとき")]
+    [SerializeField] private KindZone[] kindZones = new KindZone[0];
 
     private float timer;
     private bool initialDone;
@@ -224,7 +241,7 @@ public class SpaceJunkSpawner : MonoBehaviour
             return null;
         }
 
-        if (!TryFindPlace(out Vector3 position))
+        if (!TryFindPlace(ZonesFor(prefab), out Vector3 position))
         {
             return null;
         }
@@ -323,11 +340,11 @@ public class SpaceJunkSpawner : MonoBehaviour
     }
 
     /// <summary>範囲の中から、何も無い場所を探す。</summary>
-    private bool TryFindPlace(out Vector3 position)
+    private bool TryFindPlace(Transform[] zones, out Vector3 position)
     {
         for (int i = 0; i < placementTries; i++)
         {
-            Vector3 candidate = RandomPointInArea();
+            Vector3 candidate = RandomPointInArea(zones);
 
             // 落とす高さから床の少し上まで、縦に長く調べる（プレイヤーや障害物の真上を避ける）
             Vector3 bottom = new Vector3(candidate.x, transform.position.y + clearRadius + 0.1f, candidate.z);
@@ -359,13 +376,34 @@ public class SpaceJunkSpawner : MonoBehaviour
     }
 
     /// <summary>
-    /// 出す候補の場所を1つ選ぶ（高さは「床＋Drop Height」）。
-    /// Spawn Zones があれば、**その四角のどれか**（広いものほど選ばれやすい）の中。無ければ Area Half Size の範囲の中。
+    /// このプレハブを出す範囲。Kind Zones にその種類があればその範囲、無ければ Spawn Zones。
     /// </summary>
-    private Vector3 RandomPointInArea()
+    private Transform[] ZonesFor(GameObject prefab)
+    {
+        if (prefab != null && prefab.TryGetComponent(out SpaceJunkMaterial material))
+        {
+            foreach (KindZone kindZone in kindZones)
+            {
+                if (kindZone != null && kindZone.kind == material.Kind && kindZone.zones != null &&
+                    kindZone.zones.Length > 0)
+                {
+                    return kindZone.zones;
+                }
+            }
+        }
+
+        return spawnZones;
+    }
+
+    /// <summary>
+    /// 出す候補の場所を1つ選ぶ（高さは「床＋Drop Height」）。
+    /// 範囲（<paramref name="zones"/>）があれば、**その四角のどれか**（広いものほど選ばれやすい）の中。
+    /// 無ければ、Spawn Circle Radius の円か、Area Half Size の四角の中。
+    /// </summary>
+    private Vector3 RandomPointInArea(Transform[] zones)
     {
         float totalArea = 0f;
-        foreach (Transform zone in spawnZones)
+        foreach (Transform zone in zones)
         {
             totalArea += ZoneArea(zone);
         }
@@ -386,7 +424,7 @@ public class SpaceJunkSpawner : MonoBehaviour
         }
 
         float roll = Random.Range(0f, totalArea);
-        foreach (Transform zone in spawnZones)
+        foreach (Transform zone in zones)
         {
             float area = ZoneArea(zone);
             if (area <= 0f)
@@ -437,7 +475,30 @@ public class SpaceJunkSpawner : MonoBehaviour
             Gizmos.matrix = zone.localToWorldMatrix;
             Gizmos.DrawWireCube(Vector3.zero, new Vector3(1f, 0.05f, 1f));
         }
+
+        // 種類ごとの範囲は、その素材の色の枠で出す
+        foreach (KindZone kindZone in kindZones)
+        {
+            if (kindZone == null || kindZone.zones == null)
+            {
+                continue;
+            }
+
+            Gizmos.color = SpaceJunkMaterials.Color(kindZone.kind);
+            foreach (Transform zone in kindZone.zones)
+            {
+                if (zone == null)
+                {
+                    continue;
+                }
+
+                hasZone = true;
+                Gizmos.matrix = zone.localToWorldMatrix;
+                Gizmos.DrawWireCube(Vector3.zero, new Vector3(1f, 0.05f, 1f));
+            }
+        }
         Gizmos.matrix = Matrix4x4.identity;
+        Gizmos.color = new Color(0.3f, 1f, 0.4f, 0.8f);
 
         if (!hasZone && spawnCircleRadius > 0f)
         {
