@@ -252,15 +252,15 @@ public class SpaceJunkSpawner : MonoBehaviour
     }
 
     /// <summary>
-    /// マップにある素材の数。**爆弾と、真ん中の特殊デブリは数えない**
-    /// （<see cref="SpaceJunkBombPoints"/> で置いた物で、出せる素材の数が減らないようにする）。
+    /// マップにある素材の数。**素材の目印（SpaceJunkMaterial）が付いた物だけ数え、特殊デブリは数えない**
+    /// （爆弾・アンカー・<see cref="SpaceJunkBombPoints"/> で置いた特殊デブリで、出せる素材の数が減らないようにする）。
     /// </summary>
     private static int CountMaterials()
     {
         int count = 0;
         foreach (HookableObject item in HookableObject.All)
         {
-            if (item != null && !item.IsVanished && item.GetComponent<ExplosiveObject>() == null &&
+            if (item != null && !item.IsVanished && item.GetComponent<SpaceJunkMaterial>() != null &&
                 item.GetComponent<SpaceJunkBonusDebris>() == null)
             {
                 count++;
