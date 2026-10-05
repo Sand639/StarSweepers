@@ -789,7 +789,11 @@ public class ThrowController : MonoBehaviour
     ///
     /// プレイヤーは動くので、行き先は毎フレーム取り直している。
     /// </summary>
-    private void UpdateReelPosition(float t)
+    /// <returns>
+    /// 宇宙ごみ式（TwoButtons）で、**途中で壁に当たって止まったら false**。
+    /// 釣り式では壁を調べない（これまでどおり。釣りの動きは変えない）ので、常に true。
+    /// </returns>
+    private bool UpdateReelPosition(float t)
     {
         Vector3 root = hook.PlayerRoot.position;
         Vector3 aimDirection = hook.CurrentAimDirection;
@@ -812,13 +816,132 @@ public class ThrowController : MonoBehaviour
             position.y += Mathf.Sin(u * Mathf.PI) * (arcLift * 0.4f);
         }
 
-        target.Body.position = position;
-        target.transform.position = position;
+        bool reached = true;
+        if (style == ThrowStyle.TwoButtons)
+        {
+            reached = MoveHeldTo(position);
+        }
+        else
+        {
+            target.Body.position = position;
+            target.transform.position = position;
+        }
 
         if (reelSpinSpeed != 0f)
         {
             target.transform.Rotate(Vector3.right, reelSpinSpeed * Time.deltaTime, Space.Self);
         }
+
+        return reached;
+    }
+
+    // ------------------------------------------------------------
+    // 壁に当たる（宇宙ごみ式。2026/10/6・大槻さん）
+    // ------------------------------------------------------------
+
+    /// <summary>壁の手前で止めるときに、壁から空けておくすき間（m）。</summary>
+    private const float WallSkin = 0.05f;
+
+    /// <summary>
+    /// **持っている物を <paramref name="desired"/> へ動かす。途中に壁があれば、壁の手前で止める。**
+    /// 止まったら false。
+    ///
+    /// 引き寄せの間は物理を止めて（Is Kinematic）決めた道筋の上へ置いているので、
+    /// そのままだと**壁を突き抜けてしまう**。動かす前に、物の形のまま通り道を調べる（SweepTest）。
+    ///
+    /// 壁とみなさない物：床（上向きの面）・プレイヤー・ほかの物資。
+    /// 床まで壁とみなすと、床の上を引きずるだけで止まってしまうため。
+    /// </summary>
+    private bool MoveHeldTo(Vector3 desired)
+    {
+        Rigidbody body = target.Body;
+        Vector3 from = body.position;
+        Vector3 delta = desired - from;
+        float distance = delta.magnitude;
+
+        if (distance < 0.0001f)
+        {
+            return true;
+        }
+
+        Vector3 direction = delta / distance;
+        float nearest = distance;
+        bool blocked = false;
+
+        foreach (RaycastHit hit in body.SweepTestAll(direction, distance, QueryTriggerInteraction.Ignore))
+        {
+            if (!IsWall(hit))
+            {
+                continue;
+            }
+
+            if (hit.distance < nearest)
+            {
+                nearest = hit.distance;
+                blocked = true;
+            }
+        }
+
+        Vector3 position = from + direction * Mathf.Max(0f, nearest - WallSkin);
+        body.position = position;
+        target.transform.position = position;
+
+        return !blocked;
+    }
+
+    /// <summary>当たった物が「壁」か（床・プレイヤー・ほかの物資・自分の持ち物は壁ではない）。</summary>
+    private bool IsWall(RaycastHit hit)
+    {
+        Collider other = hit.collider;
+        if (other == null || other.isTrigger)
+        {
+            return false;
+        }
+
+        // 上向きの面（床・台の上）は壁ではない
+        if (hit.normal.y > 0.7f)
+        {
+            return false;
+        }
+
+        if (other.attachedRigidbody != null && other.attachedRigidbody == target.Body)
+        {
+            return false;
+        }
+
+        if (other.GetComponentInParent<CharacterController>() != null ||
+            other.GetComponentInParent<HookableObject>() != null)
+        {
+            return false;
+        }
+
+        return true;
+    }
+
+    /// <summary>
+    /// **壁に当たって持ってこられなかった。フックを外して、物をその場に落とす。**
+    /// 引っ張る途中・投げる前に頭上へ持ち上げる途中・頭上で持っている間に、壁に当たったとき。
+    /// </summary>
+    private void FinishAsBlocked()
+    {
+        Rigidbody body = target.Body;
+        RestorePhysics(body);
+
+        Debug.Log("壁に当たって持ってこられなかったので、フックを外しました");
+
+        FishingNetSupply netSupply = GetNetSupply();
+
+        if (netSupply != null)
+        {
+            netSupply.RequestRelease(Vector3.zero, 0f, hook.LocalPlayerIndex);
+        }
+        else
+        {
+            body.linearVelocity = Vector3.zero;
+            body.angularVelocity = Vector3.zero;
+        }
+
+        EndPull();
     }
 
     // ------------------------------------------------------------
@@ -923,10 +1046,9 @@ public class ThrowController : MonoBehaviour
                 float drag = Mathf.Clamp01(liftTimer / heavyDragSeconds);
 
                 Vector3 dragged = Vector3.Lerp(dragFrom, dragTo, Mathf.SmoothStep(0f, 1f, drag));
-                target.Body.position = dragged;
-                target.transform.position = dragged;
 
-                if (drag >= 1f)
+                // 壁に当たったら、そこで引きずるのをやめる（壁の手前で止まる）
+                if (!MoveHeldTo(dragged) || drag >= 1f)
                 {
                     FinishHeavyDrag();
                 }
@@ -953,8 +1075,13 @@ public class ThrowController : MonoBehaviour
                 liftTimer += Time.deltaTime;
                 float travel = Mathf.Clamp01(liftTimer / pullTravelSeconds);
 
-                // 釣り式と同じ軌道（ゲージ 0〜1 ぶん）：弧を描いて頭上を通り、後ろへ抜ける
-                UpdateReelPosition(travel);
+                // 釣り式と同じ軌道（ゲージ 0〜1 ぶん）：弧を描いて頭上を通り、後ろへ抜ける。
+                // 途中で壁に当たったら、フックを外してその場に落とす
+                if (!UpdateReelPosition(travel))
+                {
+                    FinishAsBlocked();
+                    break;
+                }
 
                 if (travel >= 1f)
                 {
@@ -966,8 +1093,13 @@ public class ThrowController : MonoBehaviour
                 liftTimer += Time.deltaTime;
                 float u = Mathf.Clamp01(liftTimer / liftSeconds);
 
-                // 釣り式の前半と同じ、弧を描いて頭上へ上がる動き（ゲージ 0〜0.5 の部分）
-                UpdateReelPosition(u * 0.5f);
+                // 釣り式の前半と同じ、弧を描いて頭上へ上がる動き（ゲージ 0〜0.5 の部分）。
+                // **壁に当たって持ってこられなかったら、フックを外す**
+                if (!UpdateReelPosition(u * 0.5f))
+                {
+                    FinishAsBlocked();
+                    break;
+                }
 
                 if (u >= 1f)
                 {
@@ -977,8 +1109,13 @@ public class ThrowController : MonoBehaviour
                 break;
 
             case TwoButtonStage.AimThrow:
-                // 頭上で止めておく（プレイヤーが動いたらついてくる）
-                UpdateReelPosition(0.5f);
+                // 頭上で止めておく（プレイヤーが動いたらついてくる）。
+                // 持ったまま壁の向こうへ歩いて、物が壁に引っかかったら外す
+                if (!UpdateReelPosition(0.5f))
+                {
+                    FinishAsBlocked();
+                    break;
+                }
                 TickBar();
 
                 if (armDelay <= 0f && ThrowPressed())
