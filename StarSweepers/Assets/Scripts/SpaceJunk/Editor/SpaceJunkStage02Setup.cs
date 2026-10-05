@@ -76,6 +76,110 @@ public static class SpaceJunkStage02Setup
     }
 
     // ------------------------------------------------------------
+    // 列車と壁
+    // ------------------------------------------------------------
+
+    private const string TrainName = "Train";
+
+    /// <summary>外す壁（ゴールの囲い Pocket_* / Pad_* / GoalArea_* は残す）。「親/子」で指定。</summary>
+    private static readonly string[] WallsToRemove =
+    {
+        "Stage/Wall_North",
+        "Stage/Wall_South",
+        "Stage/Wall_East/Segment_L",
+        "Stage/Wall_East/Segment_R",
+        "Stage/Wall_West/Segment_L",
+        "Stage/Wall_West/Segment_R",
+    };
+
+    /// <summary>
+    /// **列車を置き、ゴールの囲い以外の壁を外す**（落ちるステージにする）。
+    /// 壁は消さずに**非表示（無効）**にするだけなので、Hierarchy でチェックを入れれば戻せる。
+    /// 何度実行してもよい（列車は作り直す）。
+    /// </summary>
+    [MenuItem("Tools/StarSweepers/開いているマップに STAGE_02 の列車を置き、ゴール以外の壁を外す")]
+    private static void SetupTrainAndWalls()
+    {
+        PlaceTrain();
+        RemoveWalls();
+
+        EditorSceneManager.MarkSceneDirty(EditorSceneManager.GetActiveScene());
+        EditorSceneManager.SaveOpenScenes();
+
+        Debug.Log("[JUNK] 列車を置き、ゴール以外の壁を外しました。");
+    }
+
+    private static void PlaceTrain()
+    {
+        GameObject old = GameObject.Find(TrainName);
+        if (old != null)
+        {
+            Undo.DestroyObjectImmediate(old);
+        }
+
+        GameObject train = new GameObject(TrainName);
+        Undo.RegisterCreatedObjectUndo(train, "列車を置く");
+        train.transform.position = new Vector3(0f, 1.25f, 45f);
+
+        // 見た目だけの箱。当たり判定は SpaceJunkTrain が自分で調べるので、箱の当たり判定は外す
+        GameObject body = GameObject.CreatePrimitive(PrimitiveType.Cube);
+        body.name = "Body";
+        body.transform.SetParent(train.transform, false);
+        Object.DestroyImmediate(body.GetComponent<Collider>());
+
+        Material material = FishingSceneBuilder.GetOrCreateMaterial(
+            $"{FishingSceneBuilder.MaterialFolder}/SpaceJunkTrain.mat", new Color(0.12f, 0.12f, 0.14f));
+        body.GetComponent<MeshRenderer>().sharedMaterial = material;
+
+        SpaceJunkTrain component = train.AddComponent<SpaceJunkTrain>();
+        SerializedObject serialized = new SerializedObject(component);
+        serialized.FindProperty("body").objectReferenceValue = body.transform;
+        serialized.ApplyModifiedPropertiesWithoutUndo();
+        body.transform.localScale = serialized.FindProperty("trainSize").vector3Value;
+    }
+
+    private static void RemoveWalls()
+    {
+        foreach (string path in WallsToRemove)
+        {
+            Transform wall = FindByPath(path);
+            if (wall == null)
+            {
+                Debug.LogWarning($"[JUNK] 壁が見つかりません（もう外したか、名前が違う）：{path}");
+                continue;
+            }
+
+            Undo.RecordObject(wall.gameObject, "壁を外す");
+            wall.gameObject.SetActive(false);
+        }
+    }
+
+    /// <summary>「親/子/孫」の形で、無効になっている物も含めて探す。</summary>
+    private static Transform FindByPath(string path)
+    {
+        string[] names = path.Split('/');
+        foreach (GameObject root in EditorSceneManager.GetActiveScene().GetRootGameObjects())
+        {
+            if (root.name != names[0])
+            {
+                continue;
+            }
+
+            Transform current = root.transform;
+            for (int i = 1; i < names.Length && current != null; i++)
+            {
+                current = current.Find(names[i]);
+            }
+
+            if (current != null)
+            {
+                return current;
+            }
+        }
+        return null;
+    }
+
+    // ------------------------------------------------------------
     // プレハブ
     // ------------------------------------------------------------
 
