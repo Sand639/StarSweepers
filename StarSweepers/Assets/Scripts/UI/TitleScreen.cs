@@ -25,8 +25,10 @@ using UnityEngine.UI;
 ///
 /// ## いつ出るか
 ///
-/// **ロビーのシーン（SpaceJunkLobby）で、まだつながっていない間だけ出る。** サーバーを作る・入るとロビーに切り替わる。
-/// ホストとの通信が切れてロビーへ戻ったときも、ここに戻ってくる。
+/// **タイトルのシーン（TitleScene）で出る。** ゲームはここから始まる（ビルドの最初のシーン）。
+/// サーバーを作る（ホストになる）と、**ホストが全員をロビー（SpaceJunkLobby）へ移す。** 参加者は、入った時点でホストのシーンへ自動で移る。
+/// 参加者が「ロビーに戻る」で抜けたとき・ホストとの通信が切れたときは、タイトルへ戻ってくる。
+/// ロビーを直接再生しても、どこにもつながっていなければタイトルへ移る。
 /// シーンに置かなくても、再生したときに自分で1つ作る（<see cref="PauseMenu"/> と同じ考え方）。
 ///
 /// ## 見た目を変えるには
@@ -41,7 +43,10 @@ using UnityEngine.UI;
 /// </summary>
 public class TitleScreen : MonoBehaviour
 {
-    /// <summary>タイトル画面を出すシーンの名前。</summary>
+    /// <summary>タイトル画面を出すシーンの名前（2026/10/6 からタイトル専用のシーン）。</summary>
+    private const string TitleSceneName = "TitleScene";
+
+    /// <summary>ロビーのシーンの名前（つながったら、ホストが全員をここへ移す）。</summary>
     private const string LobbySceneName = "SpaceJunkLobby";
 
     /// <summary>テーマのファイルの場所（Resources の中）。</summary>
@@ -161,7 +166,12 @@ public class TitleScreen : MonoBehaviour
 
     private void Update()
     {
-        bool shouldShow = SceneManager.GetActiveScene().name == LobbySceneName && !IsConnected();
+        string activeScene = SceneManager.GetActiveScene().name;
+
+        HandleSceneFlow(activeScene);
+
+        // **タイトルのシーンにいる間は出す。** つながったあと、ロビーへ移るまでの間も「移動しています」を出しておく
+        bool shouldShow = activeScene == TitleSceneName;
 
         if (shouldShow != IsVisible)
         {
@@ -186,6 +196,50 @@ public class TitleScreen : MonoBehaviour
         if (back && !busyOverlay.activeSelf)
         {
             GoBack();
+        }
+    }
+
+    /// <summary>ロビーを直接開いたときに、つながっていなければタイトルへ移るまで待った秒数。</summary>
+    private float notConnectedInLobbyTime;
+
+    /// <summary>ホストがロビーへ移す指示を、このタイトルのシーンでもう出したか。</summary>
+    private bool lobbyLoadRequested;
+
+    /// <summary>
+    /// **タイトルとロビーの行き来。**
+    /// ・タイトルでホストになった（サーバーを作った・1人で練習）→ **全員でロビーへ移る**（参加者はホストのシーンに自動で移る）
+    /// ・ロビーにいるのに、どこにもつながっていない（ロビーを直接再生した など）→ タイトルへ移る
+    /// </summary>
+    private void HandleSceneFlow(string activeScene)
+    {
+        NetworkManager manager = NetworkManager.Singleton;
+
+        if (activeScene != TitleSceneName)
+        {
+            lobbyLoadRequested = false;
+        }
+
+        if (activeScene == TitleSceneName && manager != null && manager.IsServer && !lobbyLoadRequested &&
+            manager.SceneManager != null)
+        {
+            lobbyLoadRequested = true;
+            SceneEventProgressStatus status = manager.SceneManager.LoadScene(LobbySceneName, LoadSceneMode.Single);
+            if (status != SceneEventProgressStatus.Started)
+            {
+                Debug.LogError($"[UI] ロビー（{LobbySceneName}）へ移れませんでした（{status}）。" +
+                               "ビルドのシーン一覧に入っているか確かめてください。");
+                lobbyLoadRequested = false;
+            }
+        }
+
+        bool idleInLobby = activeScene == LobbySceneName && (manager == null || !manager.IsListening);
+        notConnectedInLobbyTime = idleInLobby ? notConnectedInLobbyTime + Time.unscaledDeltaTime : 0f;
+
+        if (notConnectedInLobbyTime > 0.5f)
+        {
+            notConnectedInLobbyTime = 0f;
+            Debug.Log("[UI] ロビーでどこにもつながっていないので、タイトルへ移ります。");
+            SceneManager.LoadScene(TitleSceneName, LoadSceneMode.Single);
         }
     }
 
@@ -398,7 +452,12 @@ public class TitleScreen : MonoBehaviour
         string buttonLabel = null;
         UnityEngine.Events.UnityAction action = null;
 
-        if (internet != null && internet.IsBusy && current != Page.FindPublic)
+        if (IsConnected())
+        {
+            // つながった。ホストがロビーへ移すまでの間
+            message = "つながりました。ロビーに移動しています…";
+        }
+        else if (internet != null && internet.IsBusy && current != Page.FindPublic)
         {
             message = string.IsNullOrEmpty(internet.Message) ? "つないでいます…" : internet.Message;
         }
