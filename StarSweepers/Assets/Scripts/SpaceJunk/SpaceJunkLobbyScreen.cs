@@ -924,6 +924,30 @@ public class SpaceJunkLobbyScreen : MonoBehaviour
         }
 
         SetText(SpaceJunkLobbyPartRole.HudHint, hint);
+
+        SetText(SpaceJunkLobbyPartRole.HudJoinCode, JoinInfo(manager));
+    }
+
+    /// <summary>
+    /// **ほかの人を呼ぶための情報**（2026/10/6・大槻さん「参加コードをロビーの左上に出して」）。
+    /// ・インターネット：参加コード（全員に出す）。ホストには、パスワードを付けていればパスワードも出す
+    /// ・LAN：ホストにはこのPCのIPアドレス（参加する人は「サーバーを探す → LAN」で入れる）
+    /// </summary>
+    private static string JoinInfo(NetworkManager manager)
+    {
+        InternetConnection internet = Internet();
+
+        if (internet != null && internet.State == InternetConnection.Phase.Connected && !string.IsNullOrEmpty(internet.JoinCode))
+        {
+            string info = $"参加コード：{internet.JoinCode}";
+            if (manager.IsServer && internet.HasPassword)
+            {
+                info += $"\nパスワード：{internet.CurrentPassword}";
+            }
+            return info;
+        }
+
+        return manager.IsServer ? $"LAN：{TitleScreen.LocalAddresses()}" : "LAN でつないでいます";
     }
 
     // ------------------------------------------------------------

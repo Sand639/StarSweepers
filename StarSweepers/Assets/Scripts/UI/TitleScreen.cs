@@ -1177,7 +1177,7 @@ public class TitleScreen : MonoBehaviour
     }
 
     /// <summary>このPCのIPアドレス（LAN でホストになるとき、参加する人に伝える番号）。</summary>
-    private static string LocalAddresses()
+    public static string LocalAddresses()
     {
         List<string> found = new List<string>();
 
