@@ -1,3 +1,4 @@
+using System.Threading.Tasks;
 using Unity.Netcode;
 using UnityEngine;
 using UnityEngine.SceneManagement;
@@ -28,7 +29,7 @@ public static class SpaceJunkLeaveMatch
     }
 
     /// <summary>試合から抜けて、ロビーへ戻る。</summary>
-    public static void ReturnToLobby()
+    public static async void ReturnToLobby()
     {
         SpaceJunkSession session = SpaceJunkSession.Current;
         string lobby = session != null ? session.LobbySceneName : DefaultLobbySceneName;
@@ -48,7 +49,7 @@ public static class SpaceJunkLeaveMatch
                 Debug.LogWarning("[JUNK] 全員でロビーへ戻れませんでした。通信を切って、このPCだけロビーへ戻ります。");
             }
 
-            Disconnect(manager);
+            await Disconnect(manager);
         }
 
         Debug.Log($"[JUNK] 試合から抜けて、ロビー（{lobby}）へ戻ります。");
@@ -56,17 +57,23 @@ public static class SpaceJunkLeaveMatch
     }
 
     /// <summary>
-    /// 通信を切る。インターネット（合言葉）でつないでいたら、部屋からも抜ける。
-    /// 部屋から抜けるのには少し時間がかかるので、**通信だけはすぐ止めて**からシーンを移る。
+    /// 通信を切る。インターネット（合言葉）でつないでいたら、**部屋から抜け終わるのを待ってから**通信を止める。
+    ///
+    /// 2026/10/6 までは、抜け始めた直後に通信を止めていた。そのせいで抜ける処理が失敗し、
+    /// 中継サーバーに「まだ参加している」記録が残って、**もう一度同じ合言葉で入れなくなっていた**（SessionConflict）。
     /// </summary>
-    private static void Disconnect(NetworkManager manager)
+    private static async Task Disconnect(NetworkManager manager)
     {
         InternetConnection internet = manager.GetComponent<InternetConnection>();
         if (internet != null && internet.State == InternetConnection.Phase.Connected)
         {
-            internet.LeaveGame();
+            // 抜け終わったら、LeaveGameAsync が通信も止める
+            await internet.LeaveGameAsync();
         }
 
-        manager.Shutdown();
+        if (manager != null && manager.IsListening)
+        {
+            manager.Shutdown();
+        }
     }
 }
