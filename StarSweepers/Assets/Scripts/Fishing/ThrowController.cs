@@ -1547,6 +1547,19 @@ public class ThrowController : MonoBehaviour
     /// <summary>引き寄せ中に物資が消えた場合。物理には触らず、フックだけ戻す。</summary>
     private void AbandonPull()
     {
+        // **オンラインでは、ホストにも「離した」と知らせる**（2026/10/6）。
+        // このPCだけが「消えた」と判断した場合（爆発の巻き込みを、ホストと少し違う位置で判断した など）、
+        // ホストではまだ消えておらず「この人が引っ掛け中」のまま残る。そうなると、その物は**誰もつかめなくなる。**
+        // ホストで本当に消えていれば、この知らせは届かないか、引っ掛け中でないので何も起きない
+        if (target != null && anchorTarget == null)
+        {
+            FishingNetSupply netSupply = GetNetSupply();
+            if (netSupply != null && netSupply.IsSpawned)
+            {
+                netSupply.RequestRelease(Vector3.zero, 0f, hook.LocalPlayerIndex);
+            }
+        }
+
         if (pullableTarget != null)
         {
             pullableTarget.SetHooked(false);

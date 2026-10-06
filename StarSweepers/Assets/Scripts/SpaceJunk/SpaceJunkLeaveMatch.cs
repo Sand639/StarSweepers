@@ -49,6 +49,8 @@ public static class SpaceJunkLeaveMatch
                 Debug.LogWarning("[JUNK] 全員でロビーへ戻れませんでした。通信を切って、このPCだけロビーへ戻ります。");
             }
 
+            // 自分で抜けるので、「通信が切れた」の見張り役には反応させない
+            SpaceJunkDisconnectWatcher.LeavingOnPurpose = true;
             await Disconnect(manager);
         }
 
