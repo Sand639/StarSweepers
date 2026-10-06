@@ -316,6 +316,11 @@ public class PullAblePlate : MonoBehaviour
                 continue;
             }
 
+            if (!passenger.Value.enabled || !passenger.Value.gameObject.activeInHierarchy)
+            {
+                continue;
+            }
+
             passenger.Value.Move(delta);
         }
 

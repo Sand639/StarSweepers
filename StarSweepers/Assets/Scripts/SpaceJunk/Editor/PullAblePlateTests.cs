@@ -122,6 +122,36 @@ public class PullAblePlateTests
     }
 
     [Test]
+    public void ImmediatePullSkipsADisabledPassengerController()
+    {
+        GameObject plateObject = CreatePlate(out PullAblePlate plate);
+        GameObject remotePlayer = CreatePlayer("RemotePlayer", out CharacterController controller);
+
+        try
+        {
+            remotePlayer.transform.position = new Vector3(0f, 1f, 0f);
+            Physics.SyncTransforms();
+            Vector3 start = remotePlayer.transform.position;
+            controller.enabled = false;
+
+            SerializedObject serializedPlate = new SerializedObject(plate);
+            serializedPlate.FindProperty("moveDistance").floatValue = 2f;
+            serializedPlate.FindProperty("moveDuration").floatValue = 0f;
+            serializedPlate.ApplyModifiedPropertiesWithoutUndo();
+
+            plate.RegisterPassenger(remotePlayer.transform, controller);
+
+            Assert.That(plate.Pull(PullAblePlateDirection.Right), Is.True);
+            Assert.That(remotePlayer.transform.position, Is.EqualTo(start));
+        }
+        finally
+        {
+            Object.DestroyImmediate(plateObject);
+            Object.DestroyImmediate(remotePlayer);
+        }
+    }
+
+    [Test]
     public void AnchorCanOnlyBeHookedByAPlayerRidingAPlate()
     {
         GameObject plateObject = CreatePlate(out PullAblePlate plate);
