@@ -22,7 +22,7 @@ using UnityEngine.InputSystem.LowLevel;
 /// 設定を触っている最中に歩いたりフックを撃ったりしないよう、
 /// **開いている間は自分の移動とフックを止める。**
 ///
-/// 画面を描くのは <see cref="SpaceJunkLobbyUI"/>。こちらは「開いているか」だけを持つ。
+/// 画面を描くのは <see cref="SpaceJunkLobbyScreen"/>（プレハブ）。こちらは「開いているか」だけを持つ。
 /// </summary>
 public class SpaceJunkLobbyTerminal : MonoBehaviour
 {
@@ -91,10 +91,13 @@ public class SpaceJunkLobbyTerminal : MonoBehaviour
         // 読んでしまうと、ポーズを Escape で閉じた瞬間に、同じ Escape で
         // 詳細設定まで閉じてしまう（申し送り 2026/9/8・2026/9/16 と同じ取り合い）。
         // `BlocksInput` は「切り替わったフレーム」も含むので、これだけで防げる
-        // 入力欄に打ち込んでいる最中も、E を読まない（打った文字で設定が閉じないように）
-        bool inputBlocked = GamePause.BlocksInput || SpaceJunkLobbyUI.IsEditingText;
+        bool inputBlocked = GamePause.BlocksInput;
 
-        if (IsHostNearby && !inputBlocked && (WasPressed(interactKey) || GamepadInput.WasPressed(interactButton)))
+        // **開いている間は、コントローラーの A では閉じない。**（2026/10/6 から設定画面はボタンを A で押すため。
+        // 閉じるのは B／Esc／「戻る」。<see cref="SpaceJunkLobbyScreen"/> が受け持つ）
+        bool pressed = WasPressed(interactKey) || (!IsOpen && GamepadInput.WasPressed(interactButton));
+
+        if (IsHostNearby && !inputBlocked && pressed)
         {
             IsOpen = !IsOpen;
         }

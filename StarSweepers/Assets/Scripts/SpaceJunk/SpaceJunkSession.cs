@@ -142,8 +142,14 @@ public class SpaceJunkSession : NetworkBehaviour
     /// <summary>誰がどのチームか。</summary>
     private readonly NetworkList<SpaceJunkPlayerSlot> slots = new NetworkList<SpaceJunkPlayerSlot>();
 
-    /// <summary>ホストが選んだ、この試合で使うマップ。</summary>
+    /// <summary>ホストが選んだ、この試合で使うマップ（「ランダム」のときの候補。ロビーのチェック）。</summary>
     private readonly NetworkList<FixedString64Bytes> selectedMaps = new NetworkList<FixedString64Bytes>();
+
+    /// <summary>
+    /// **ホストが「このマップで遊ぶ」と1つ選んだマップ。** 空なら「ランダム」（チェックの付いたマップから選ぶ）。
+    /// 1つ選んだときは、**全部のラウンドをそのマップで遊ぶ**（2026/10/6・大槻さん。めっちゃカメレオンのマップ選び）。
+    /// </summary>
+    private readonly NetworkVariable<FixedString64Bytes> fixedMap = new NetworkVariable<FixedString64Bytes>(default);
 
     /// <summary>チームごとのラウンドの勝ち数。長さは常に <see cref="SpaceJunkTeams.MaxTeams"/>。</summary>
     private readonly NetworkList<int> roundWins = new NetworkList<int>();
@@ -283,6 +289,18 @@ public class SpaceJunkSession : NetworkBehaviour
 
     /// <summary>ホストが選んでいるマップの数。**中身が要らないときはこちらを使う**（入れ物を作らない）。</summary>
     public int SelectedMapCount => selectedMaps.Count;
+
+    /// <summary>「このマップで遊ぶ」と選ばれたマップのシーン名。空なら「ランダム」。</summary>
+    public string FixedMap => fixedMap.Value.ToString();
+
+    /// <summary>マップを「ランダム」で選ぶか（1つに決めていないか）。</summary>
+    public bool IsRandomMap => fixedMap.Value.Length == 0;
+
+    /// <summary>
+    /// 試合を始められるマップの選び方になっているか。
+    /// 1つに決めている、または「ランダム」でチェックの付いたマップが1つ以上ある。
+    /// </summary>
+    public bool HasPlayableMapChoice => !IsRandomMap || selectedMaps.Count > 0;
 
     /// <summary>そのマップが選ばれているか。</summary>
     public bool IsMapSelected(string sceneName)
@@ -768,6 +786,19 @@ public class SpaceJunkSession : NetworkBehaviour
         selectedMaps.Add(value);
     }
 
+    /// <summary>
+    /// 「このマップで遊ぶ」を決める。**空を渡すと「ランダム」**（チェックの付いたマップから、ラウンドごとに選ぶ）。
+    /// </summary>
+    public void ServerSetFixedMap(string sceneName)
+    {
+        if (!IsServer)
+        {
+            return;
+        }
+
+        fixedMap.Value = new FixedString64Bytes(sceneName ?? string.Empty);
+    }
+
     // ------------------------------------------------------------
     // ラウンドの進行（**ホストだけが動かす**）
     // ------------------------------------------------------------
@@ -783,9 +814,9 @@ public class SpaceJunkSession : NetworkBehaviour
             return;
         }
 
-        if (selectedMaps.Count == 0)
+        if (!HasPlayableMapChoice)
         {
-            Debug.LogError("[JUNK] 使うマップが1つも選ばれていないので、試合を始められません。");
+            Debug.LogError("[JUNK] マップが選ばれていない（ランダムなのにチェックの付いたマップが無い）ので、試合を始められません。");
             return;
         }
 
@@ -900,16 +931,25 @@ public class SpaceJunkSession : NetworkBehaviour
         List<string> candidates = new List<string>();
         string previous = currentMap.Value.ToString();
 
-        foreach (FixedString64Bytes map in selectedMaps)
+        // **1つに決めてあれば、毎ラウンドそのマップ**（2026/10/6）
+        if (!IsRandomMap)
         {
-            string name = map.ToString();
-
-            if (selectedMaps.Count > 1 && name == previous)
+            candidates.Add(FixedMap);
+        }
+        else
+        {
+            // ランダム：チェックの付いたマップから。2つ以上あれば、直前と同じマップは選ばない
+            foreach (FixedString64Bytes map in selectedMaps)
             {
-                continue;
-            }
+                string name = map.ToString();
 
-            candidates.Add(name);
+                if (selectedMaps.Count > 1 && name == previous)
+                {
+                    continue;
+                }
+
+                candidates.Add(name);
+            }
         }
 
         if (candidates.Count == 0)

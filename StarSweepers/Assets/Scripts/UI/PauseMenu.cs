@@ -175,7 +175,8 @@ public class PauseMenu : MonoBehaviour
     private void Update()
     {
         // タイトル画面が出ている間は開かない（Esc はタイトル画面の「戻る」に使う。2026/10/6）
-        if (TitleScreen.IsVisible)
+        // ロビーの設定画面が開いている間（と閉じたフレーム）も開かない（Esc・B は設定画面の「戻る」に使う。2026/10/6）
+        if (TitleScreen.IsVisible || SpaceJunkLobbyScreen.BlocksEscape)
         {
             if (IsOpen)
             {
