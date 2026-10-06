@@ -18,8 +18,8 @@ using UnityEngine.SceneManagement;
 /// </summary>
 public static class SpaceJunkLeaveMatch
 {
-    /// <summary>ロビーのシーンの名前（試合の係が見つからないときに使う）。</summary>
-    private const string DefaultLobbySceneName = "SpaceJunkLobby";
+    /// <summary>自分だけ抜けたときに戻るタイトルのシーン（2026/10/6）。</summary>
+    private const string TitleSceneName = "TitleScene";
 
     [RuntimeInitializeOnLoadMethod(RuntimeInitializeLoadType.BeforeSceneLoad)]
     private static void Register()
@@ -32,7 +32,6 @@ public static class SpaceJunkLeaveMatch
     public static async void ReturnToLobby()
     {
         SpaceJunkSession session = SpaceJunkSession.Current;
-        string lobby = session != null ? session.LobbySceneName : DefaultLobbySceneName;
 
         NetworkManager manager = NetworkManager.Singleton;
         if (manager != null && manager.IsListening)
@@ -54,8 +53,9 @@ public static class SpaceJunkLeaveMatch
             await Disconnect(manager);
         }
 
-        Debug.Log($"[JUNK] 試合から抜けて、ロビー（{lobby}）へ戻ります。");
-        SceneManager.LoadScene(lobby, LoadSceneMode.Single);
+        // 自分だけ抜けたので、タイトルへ戻る（2026/10/6 まではロビーへ戻っていた。サーバーを作る・探すはタイトルで行うため）
+        Debug.Log($"[JUNK] 試合から抜けて、タイトル（{TitleSceneName}）へ戻ります。");
+        SceneManager.LoadScene(TitleSceneName, LoadSceneMode.Single);
     }
 
     /// <summary>
