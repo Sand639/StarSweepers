@@ -8,6 +8,71 @@ public class MovableBlockTests
     private const string PullAblePlatePrefabPath = "Assets/Prefabs/SpaceJunk/Gimmick/PullAblePlate.prefab";
 
     [Test]
+    public void PlayerAwarePullableRejectsOnlyThePlayerItDisallows()
+    {
+        GameObject pullableObject = new GameObject("PlayerAwarePullable");
+        GameObject player = new GameObject("Player");
+
+        try
+        {
+            PlayerAwarePullableFake pullable = pullableObject.AddComponent<PlayerAwarePullableFake>();
+            pullable.CanHook = false;
+
+            Assert.That(HookController.CanHookPullable(pullable, player.transform), Is.False);
+
+            pullable.CanHook = true;
+
+            Assert.That(HookController.CanHookPullable(pullable, player.transform), Is.True);
+        }
+        finally
+        {
+            Object.DestroyImmediate(pullableObject);
+            Object.DestroyImmediate(player);
+        }
+    }
+
+    [Test]
+    public void NormalMovableBlockPullPointKeepsUsingGeneralHookCondition()
+    {
+        GameObject root = new GameObject("MovableBlock");
+        GameObject pointObject = new GameObject("Front");
+        GameObject player = new GameObject("Player");
+
+        try
+        {
+            root.AddComponent<Rigidbody>().isKinematic = true;
+            root.AddComponent<MovableBlock>();
+            pointObject.transform.SetParent(root.transform, false);
+            pointObject.AddComponent<BoxCollider>();
+            MovableBlockPullPoint pullable = pointObject.AddComponent<MovableBlockPullPoint>();
+
+            Assert.That(HookController.CanHookPullable(pullable, player.transform), Is.True);
+        }
+        finally
+        {
+            Object.DestroyImmediate(root);
+            Object.DestroyImmediate(player);
+        }
+    }
+
+    [Test]
+    public void HookPullContextKeepsTheExactPlayerRoot()
+    {
+        GameObject player = new GameObject("Player");
+
+        try
+        {
+            HookPullContext context = new HookPullContext(Vector3.one, 0.5f, player.transform);
+
+            Assert.That(context.PlayerRoot, Is.SameAs(player.transform));
+        }
+        finally
+        {
+            Object.DestroyImmediate(player);
+        }
+    }
+
+    [Test]
     public void TowardPlayerUsesHorizontalDirectionFromBlockToPlayer()
     {
         Vector3 direction = MovableBlock.CalculateMoveDirection(
@@ -226,5 +291,29 @@ public class MovableBlockTests
 
         SerializedObject serializedPoint = new SerializedObject(pullPoint);
         Assert.That(serializedPoint.FindProperty("side").enumValueIndex, Is.EqualTo((int)expectedSide));
+    }
+}
+
+public sealed class PlayerAwarePullableFake : MonoBehaviour, IHookPullable, IPlayerAwareHookPullable
+{
+    public bool CanHook { get; set; }
+    public Component HookComponent => this;
+    public Vector3 HookAnchorPoint => transform.position;
+    public bool IsHooked { get; private set; }
+    public bool CanBeHooked => true;
+
+    public bool CanBeHookedBy(Transform playerRoot)
+    {
+        return CanHook;
+    }
+
+    public void SetHooked(bool hooked)
+    {
+        IsHooked = hooked;
+    }
+
+    public void CompletePull(HookPullContext context)
+    {
+        IsHooked = false;
     }
 }
