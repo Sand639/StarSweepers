@@ -81,6 +81,7 @@ public class TitleScreen : MonoBehaviour
         FindPublic,
         FindLan,
         Settings,
+        FindFriends,
     }
 
     private enum SettingsTab
@@ -114,6 +115,9 @@ public class TitleScreen : MonoBehaviour
     private readonly List<TitleSettingRow> settingRows = new List<TitleSettingRow>();
     private readonly List<GameObject> serverCards = new List<GameObject>();
     private GameObject serverCardTemplate;
+    private GameObject friendCardTemplate;
+    private readonly List<GameObject> friendCards = new List<GameObject>();
+    private bool searchingFriends;
     private bool initialized;
 
     private Page current = Page.Main;
@@ -176,6 +180,7 @@ public class TitleScreen : MonoBehaviour
         // 遊んでいた画面から戻ってきたときなどに、カーソルが隠れたままにならないように
         ShowCursor();
 
+        JoinFromSteamRequest();
         UpdateBusyOverlay();
 
         Keyboard keyboard = Keyboard.current;
@@ -251,6 +256,7 @@ public class TitleScreen : MonoBehaviour
         AddPage(Page.FindPublic, TitlePartRole.PageFindPublic);
         AddPage(Page.FindLan, TitlePartRole.PageFindLan);
         AddPage(Page.Settings, TitlePartRole.PageSettings);
+        AddPage(Page.FindFriends, TitlePartRole.PageFindFriends);
 
         AddSettingsGroup(SettingsTab.Sound, TitlePartRole.SettingsSound);
         AddSettingsGroup(SettingsTab.Graphics, TitlePartRole.SettingsGraphics);
@@ -261,6 +267,13 @@ public class TitleScreen : MonoBehaviour
         if (serverCardTemplate != null)
         {
             serverCardTemplate.SetActive(false);
+        }
+
+        // フレンドのサーバーのカードの見本（Steam。2026/10/6）
+        friendCardTemplate = PartObject(TitlePartRole.FriendCardTemplate);
+        if (friendCardTemplate != null)
+        {
+            friendCardTemplate.SetActive(false);
         }
 
         GameObject busy = PartObject(TitlePartRole.BusyOverlay);
@@ -297,7 +310,8 @@ public class TitleScreen : MonoBehaviour
         foreach (TitleMenuButton look in GetComponentsInChildren<TitleMenuButton>(true))
         {
             // 一覧のカードのボタンは、カードを作るときにつなぐ
-            if (serverCardTemplate != null && look.transform.IsChildOf(serverCardTemplate.transform))
+            if ((serverCardTemplate != null && look.transform.IsChildOf(serverCardTemplate.transform)) ||
+                (friendCardTemplate != null && look.transform.IsChildOf(friendCardTemplate.transform)))
             {
                 continue;
             }
@@ -499,6 +513,8 @@ public class TitleScreen : MonoBehaviour
             case TitleButtonAction.JoinPrivate: JoinPrivate(); break;
             case TitleButtonAction.JoinLan: JoinLan(); break;
             case TitleButtonAction.SearchPublic: SearchPublic(); break;
+            case TitleButtonAction.OpenFindFriends: ShowPage(Page.FindFriends); break;
+            case TitleButtonAction.RefreshFriends: SearchFriends(); break;
 
             case TitleButtonAction.TabSound: ShowSettingsTab(SettingsTab.Sound); break;
             case TitleButtonAction.TabGraphics: ShowSettingsTab(SettingsTab.Graphics); break;
@@ -543,6 +559,9 @@ public class TitleScreen : MonoBehaviour
             case Page.FindPublic:
                 SearchPublic();
                 break;
+            case Page.FindFriends:
+                SearchFriends();
+                break;
             case Page.Settings:
                 ShowSettingsTab(settingsTab);
                 break;
@@ -568,6 +587,7 @@ public class TitleScreen : MonoBehaviour
             case Page.FindPrivate:
             case Page.FindPublic:
             case Page.FindLan:
+            case Page.FindFriends:
                 ShowPage(Page.Find);
                 break;
         }
@@ -856,6 +876,140 @@ public class TitleScreen : MonoBehaviour
                 }
             });
         }
+    }
+
+    // ------------------------------------------------------------
+    // フレンドのサーバー（Steam。2026/10/6・大槻さん「スプラみたいにフレンドのサーバーを出したい」）
+    // ------------------------------------------------------------
+
+    /// <summary>
+    /// Steam のフレンドのうち、このゲームで部屋に入っている人を並べる（<see cref="SteamFriendsService"/>）。
+    /// フレンドの様子は取り寄せてから届くまで少しかかるので、頼んでから少し待って読む。
+    /// </summary>
+    private async void SearchFriends()
+    {
+        if (searchingFriends)
+        {
+            return;
+        }
+
+        ClearFriendCards();
+
+        if (!SteamFriendsService.IsAvailable)
+        {
+            SetText(TitlePartRole.FriendListMessage,
+                "Steam を起動していないので、フレンドのサーバーは出せません。\nSteam を起動してから、ゲームを立ち上げ直してください。");
+            return;
+        }
+
+        SetText(TitlePartRole.FriendListMessage, "フレンドを探しています…");
+        searchingFriends = true;
+        SteamFriendsService.RequestFriendRooms();
+        await System.Threading.Tasks.Task.Delay(1000);
+        searchingFriends = false;
+
+        // 待っている間に画面を移っていたら何もしない
+        if (this == null || current != Page.FindFriends)
+        {
+            return;
+        }
+
+        List<SteamFriendRoom> rooms = SteamFriendsService.FindFriendRooms();
+        SetText(TitlePartRole.FriendListMessage, rooms.Count == 0
+            ? "このゲームで部屋に入っているフレンドはいません。\n「フレンドのサーバーを更新」でもう一度探せます。"
+            : string.Empty);
+
+        GameObject content = PartObject(TitlePartRole.FriendListContent);
+        if (content == null || friendCardTemplate == null)
+        {
+            return;
+        }
+
+        foreach (SteamFriendRoom room in rooms)
+        {
+            AddFriendCard(content.transform, room);
+        }
+    }
+
+    private void ClearFriendCards()
+    {
+        foreach (GameObject card in friendCards)
+        {
+            if (card != null)
+            {
+                Destroy(card);
+            }
+        }
+
+        friendCards.Clear();
+    }
+
+    /// <summary>見本のカード（FriendCardTemplate）を複製して、フレンドの部屋1つぶんを足す。</summary>
+    private void AddFriendCard(Transform content, SteamFriendRoom room)
+    {
+        GameObject card = Instantiate(friendCardTemplate, content);
+        card.name = $"Friend {room.FriendName}";
+        card.SetActive(true);
+        friendCards.Add(card);
+
+        foreach (TitlePart part in card.GetComponentsInChildren<TitlePart>(true))
+        {
+            Text text = part.GetComponent<Text>();
+            if (text == null)
+            {
+                continue;
+            }
+
+            if (part.Role == TitlePartRole.FriendCardName)
+            {
+                text.text = $"{room.FriendName} の部屋" + (room.HasPassword ? "（パスワードあり）" : string.Empty);
+            }
+            else if (part.Role == TitlePartRole.FriendCardInfo)
+            {
+                text.text = $"{room.RoomName}　{room.Players}";
+            }
+        }
+
+        string code = room.JoinCode;
+        foreach (TitleMenuButton look in card.GetComponentsInChildren<TitleMenuButton>(true))
+        {
+            Button button = look.GetComponent<Button>();
+            if (look.Action != TitleButtonAction.JoinFriendServer || button == null)
+            {
+                continue;
+            }
+
+            button.onClick.RemoveAllListeners();
+            button.onClick.AddListener(() =>
+            {
+                InternetConnection internet = Internet();
+                if (internet != null)
+                {
+                    internet.JoinGame(code, joinPassword.Trim());
+                }
+            });
+        }
+    }
+
+    /// <summary>
+    /// Steam のフレンド一覧の「ゲームに参加」で頼まれた部屋に入る（タイトル画面にいて、まだつながっていないときだけ）。
+    /// </summary>
+    private void JoinFromSteamRequest()
+    {
+        if (string.IsNullOrEmpty(SteamFriendsService.PendingJoinCode) || IsConnected())
+        {
+            return;
+        }
+
+        InternetConnection internet = Internet();
+        if (internet == null || internet.IsBusy)
+        {
+            return;
+        }
+
+        string code = SteamFriendsService.ConsumePendingJoinCode();
+        Debug.Log($"[STEAM] Steam から頼まれた部屋（{code}）に入ります。");
+        internet.JoinGame(code, joinPassword.Trim());
     }
 
     /// <summary>

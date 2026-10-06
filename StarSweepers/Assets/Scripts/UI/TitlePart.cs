@@ -16,6 +16,7 @@ public enum TitlePartRole
     PageFindPublic = 5,
     PageFindLan = 6,
     PageSettings = 7,
+    PageFindFriends = 8,
 
     // 文字（コードが書き換える）
     PlayerNameText = 20,
@@ -34,6 +35,13 @@ public enum TitlePartRole
     ServerCardTemplate = 32,
     ServerCardName = 33,
     ServerCardPlayers = 34,
+
+    // フレンドのサーバー（Steam。2026/10/6）
+    FriendListContent = 35,
+    FriendListMessage = 36,
+    FriendCardTemplate = 37,
+    FriendCardName = 38,
+    FriendCardInfo = 39,
 
     // 設定のタブの中身
     SettingsSound = 40,

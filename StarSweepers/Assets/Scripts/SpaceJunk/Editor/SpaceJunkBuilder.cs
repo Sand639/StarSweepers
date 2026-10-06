@@ -127,6 +127,12 @@ public static class SpaceJunkBuilder
 
         CreateLaunchScripts(OutputFolder);
 
+        // Steam のフレンドの機能用（まだ App ID が無いので、テスト用の 480）。exe の隣に無いと Steam につながらない
+        if (File.Exists("steam_appid.txt"))
+        {
+            File.Copy("steam_appid.txt", Path.Combine(OutputFolder, "steam_appid.txt"), true);
+        }
+
         string mapList = string.Join("\n　　", maps);
         string full = Path.GetFullPath(OutputFolder);
 
