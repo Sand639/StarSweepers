@@ -19,18 +19,6 @@ MonoBehaviour:
     sceneName: SpaceJunkMap01
     scenePath: Assets/Scenes/Prototype/SpaceJunk/SpaceJunkMap01.unity
     goalMask: 15
-  - scene: {fileID: 102900000, guid: 08fd351c105fd3b4997a959175e597d3, type: 3}
-    showInLobby: 1
-    displayName: 
-    sceneName: SpaceJunkMap01Fixed
-    scenePath: Assets/Scenes/Prototype/SpaceJunk/SpaceJunkMap01Fixed.unity
-    goalMask: 15
-  - scene: {fileID: 102900000, guid: 7ae955111be76a24a844f20d1629ae3a, type: 3}
-    showInLobby: 1
-    displayName: 
-    sceneName: SpaceJunkMap02
-    scenePath: Assets/Scenes/Prototype/SpaceJunk/SpaceJunkMap02.unity
-    goalMask: 15
   - scene: {fileID: 102900000, guid: dc7bbf9cf5a4b4d468c0dee5d99c5b5a, type: 3}
     showInLobby: 0
     displayName: 
@@ -42,12 +30,6 @@ MonoBehaviour:
     displayName: 
     sceneName: SpaceJunkMap04
     scenePath: Assets/Scenes/Prototype/SpaceJunk/SpaceJunkMap04.unity
-    goalMask: 15
-  - scene: {fileID: 102900000, guid: 9df372df960c19a4696c8aef662a7cff, type: 3}
-    showInLobby: 1
-    displayName: 
-    sceneName: SpaceJunkMap01TeamCam
-    scenePath: Assets/Scenes/Prototype/SpaceJunk/SpaceJunkMap01TeamCam.unity
     goalMask: 15
   - scene: {fileID: 102900000, guid: e7bdbdc9ac9aaa14f968fe8859d7c13d, type: 3}
     showInLobby: 1
@@ -78,4 +60,10 @@ MonoBehaviour:
     displayName: "\u6D6E\u5CF6"
     sceneName: STAGE_05
     scenePath: Assets/Scenes/Prototype/SpaceJunk/Stage/STAGE_05.unity
+    goalMask: 10
+  - scene: {fileID: 102900000, guid: 6bcb86547aa4af447a8edab30a767437, type: 3}
+    showInLobby: 1
+    displayName: "\u30D9\u30EB\u30C8\u30B3\u30F3\u30D9\u30A2A"
+    sceneName: STAGE_06
+    scenePath: Assets/Scenes/Prototype/SpaceJunk/Stage/STAGE_06.unity
     goalMask: 10
