@@ -61,6 +61,7 @@ public class PullAblePlate : MonoBehaviour
     {
         EnabledPlates.Add(this);
         RefreshPullPointStates();
+        RefreshIgnoredCollisions();
     }
 
     private void OnDisable()
@@ -144,6 +145,48 @@ public class PullAblePlate : MonoBehaviour
         };
     }
 
+    public bool ShouldIgnoreCollision(Collider other)
+    {
+        if (other == null || other.isTrigger || other is CharacterController)
+        {
+            return false;
+        }
+
+        PullAblePlate otherPlate = other.GetComponentInParent<PullAblePlate>();
+        if (otherPlate != null)
+        {
+            return otherPlate != this;
+        }
+
+        return other.attachedRigidbody == null;
+    }
+
+    public void RefreshIgnoredCollisions()
+    {
+        Collider[] ownColliders = GetComponentsInChildren<Collider>(true);
+        Collider[] sceneColliders = FindObjectsByType<Collider>(
+            FindObjectsInactive.Exclude,
+            FindObjectsSortMode.None);
+
+        foreach (Collider ownCollider in ownColliders)
+        {
+            if (ownCollider == null || ownCollider.isTrigger || !ownCollider.enabled)
+            {
+                continue;
+            }
+
+            foreach (Collider other in sceneColliders)
+            {
+                if (other == ownCollider || !ShouldIgnoreCollision(other))
+                {
+                    continue;
+                }
+
+                Physics.IgnoreCollision(ownCollider, other, true);
+            }
+        }
+    }
+
     public void SetPullPointActive(PullAblePlateDirection direction, bool active)
     {
         switch (direction)
@@ -203,6 +246,8 @@ public class PullAblePlate : MonoBehaviour
         {
             return false;
         }
+
+        RefreshIgnoredCollisions();
 
         if (body == null)
         {

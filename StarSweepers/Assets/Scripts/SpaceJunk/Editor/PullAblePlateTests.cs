@@ -223,6 +223,73 @@ public class PullAblePlateTests
         }
     }
 
+    [Test]
+    public void CollisionPolicyIgnoresOnlyPlatesAndFixedSolidColliders()
+    {
+        GameObject plateObject = CreatePlate(out PullAblePlate plate);
+        GameObject otherPlateObject = CreatePlate(out _);
+        GameObject fixedObject = new GameObject("FixedMap");
+        GameObject playerObject = CreatePlayer("Player", out CharacterController playerController);
+        GameObject dynamicObject = new GameObject("DynamicDebris");
+        GameObject triggerObject = new GameObject("Trigger");
+
+        try
+        {
+            BoxCollider otherPlateCollider = otherPlateObject.AddComponent<BoxCollider>();
+            BoxCollider fixedCollider = fixedObject.AddComponent<BoxCollider>();
+            dynamicObject.AddComponent<Rigidbody>();
+            BoxCollider dynamicCollider = dynamicObject.AddComponent<BoxCollider>();
+            BoxCollider triggerCollider = triggerObject.AddComponent<BoxCollider>();
+            triggerCollider.isTrigger = true;
+
+            Assert.That(plate.ShouldIgnoreCollision(otherPlateCollider), Is.True);
+            Assert.That(plate.ShouldIgnoreCollision(fixedCollider), Is.True);
+            Assert.That(plate.ShouldIgnoreCollision(playerController), Is.False);
+            Assert.That(plate.ShouldIgnoreCollision(dynamicCollider), Is.False);
+            Assert.That(plate.ShouldIgnoreCollision(triggerCollider), Is.False);
+        }
+        finally
+        {
+            Object.DestroyImmediate(plateObject);
+            Object.DestroyImmediate(otherPlateObject);
+            Object.DestroyImmediate(fixedObject);
+            Object.DestroyImmediate(playerObject);
+            Object.DestroyImmediate(dynamicObject);
+            Object.DestroyImmediate(triggerObject);
+        }
+    }
+
+    [Test]
+    public void RefreshIgnoredCollisionsFindsAFixedColliderAddedAfterTheFirstRefresh()
+    {
+        GameObject plateObject = CreatePlate(out PullAblePlate plate);
+        BoxCollider plateCollider = plateObject.AddComponent<BoxCollider>();
+        GameObject fixedObject = null;
+
+        try
+        {
+            plate.RefreshIgnoredCollisions();
+
+            fixedObject = new GameObject("LateFixedMap");
+            BoxCollider fixedCollider = fixedObject.AddComponent<BoxCollider>();
+            Physics.SyncTransforms();
+
+            Assert.That(Physics.GetIgnoreCollision(plateCollider, fixedCollider), Is.False);
+
+            plate.RefreshIgnoredCollisions();
+
+            Assert.That(Physics.GetIgnoreCollision(plateCollider, fixedCollider), Is.True);
+        }
+        finally
+        {
+            Object.DestroyImmediate(plateObject);
+            if (fixedObject != null)
+            {
+                Object.DestroyImmediate(fixedObject);
+            }
+        }
+    }
+
     private static GameObject CreatePlate(out PullAblePlate plate)
     {
         GameObject plateObject = new GameObject("PullAblePlate");
