@@ -115,6 +115,7 @@ public class SpaceJunkPlayerSetup : MonoBehaviour
         LocalResetKeyName = $"{resetKey}／{GamepadInput.Label(resetButton)}";
 
         EnsureRadar();
+        EnsureLocalStateCheck();
 
         TickPlacement();
         TickRespawnLock();
@@ -126,41 +127,84 @@ public class SpaceJunkPlayerSetup : MonoBehaviour
             placedInRound = true;
 
             // 新しいラウンドの始まり。前のラウンドの復活待ちが残っていても、ここで解く
-            // （操作はラウンドの係が戻している）
             respawnRemaining = 0f;
             LocalRespawnRemaining = 0f;
 
-            MoveToSpawnPoint();
-            FollowWithCamera();
+            // 置き直しは、**自分のチームとゴールが届くまで待ってから**（TickPlacement）
+            BeginPlacement();
         }
         else if (!inRound && placedInRound)
         {
             // ロビーへ戻った。**ここでは置き直さない。**
-            //
             // この瞬間はまだシーンの入れ替わりの途中で、前のマップの物が残っている。
-            // 置き直すのは、ロビーのシーンが読み込み終わってから
-            // （<see cref="OnSceneLoaded"/> が数えるフレームのあと）
+            // 置き直すのは、ロビーのシーンが読み込み終わってから（OnSceneLoaded → TickPlacement）
             placedInRound = false;
         }
 
-        CheckReset();
+        // 置き直しを待っている間は、落下の判定もしない（止めて待っているため）
+        if (!placementPending)
+        {
+            CheckReset();
+        }
     }
 
     // ------------------------------------------------------------
-    // シーンが切り替わったときの置き直し
+    // シーンが切り替わったときの置き直し（2026/10/6 に作り直した）
     // ------------------------------------------------------------
+    //
+    // 前は「シーンを読み込んでから2フレーム待って置き直す」決め打ちだった。
+    // 通信が遅いと、2フレームの時点ではまだラウンドの係や自分のチーム・ゴールの持ち主が届いておらず、
+    // **ゴールが見つからないとき用の場所（中心のまわり）に置かれ、床の無いマップでは落ちていた。**
+    //
+    // 今は、**届くまでその場で止めて待つ**（最大 MaxPlacementWaitSeconds 秒）。
+    // 届かなければ**床がある所**を探して置き、あとからゴールが届いたら置き直す。
+
+    /// <summary>置き直しを待っているか（待っている間は、動けず落ちない）。</summary>
+    private bool placementPending;
+
+    /// <summary>待ち始めてからの秒数とフレーム数。</summary>
+    private float placementWaitTime;
+    private int placementFramesWaited;
+
+    /// <summary>ゴールが見つからず、とりあえず床のある所に置いたか（あとでゴールが届いたら置き直す）。</summary>
+    private bool placedByFallback;
+    private float fallbackRetryTimer;
+
+    /// <summary>最低でも待つフレーム数（読み込んだ直後は、前のシーンの物が残っているため）。</summary>
+    private const int MinPlacementFrames = 2;
+
+    /// <summary>マップで、自分のゴールが届くのを待つ最大の秒数。</summary>
+    private const float MaxPlacementWaitSeconds = 4f;
+
+    /// <summary>とりあえず置いたあと、ゴールが届いたら置き直す期間（秒）。</summary>
+    private const float FallbackRetrySeconds = 6f;
+
+    /// <summary>置き直しを待っているか（待っている間は動けない）。</summary>
+    public bool IsWaitingForPlacement => placementPending;
 
     /// <summary>
-    /// シーンが読み込まれてから、置き直すまでに待つフレーム数。
-    /// 0 より大きい間は数えている途中。
+    /// **いま、このプレイヤーは動けるべきか。** 答え合わせ（<see cref="SpaceJunkLocalStateCheck"/>）が、
+    /// 実際の状態と比べるのに使う。
     /// </summary>
-    private int placementCountdown;
+    public bool ControlShouldBeEnabled
+    {
+        get
+        {
+            if (placementPending || respawnRemaining > 0f)
+            {
+                return false;
+            }
 
-    /// <summary>
-    /// シーンの中身が出そろうまで待つフレーム数。
-    /// **読み込んだその場で置き直すと、まだ前のシーンの物が残っている。**
-    /// </summary>
-    private const int PlacementDelayFrames = 2;
+            if (SpaceJunkRound.Current != null)
+            {
+                return SpaceJunkRound.Current.IsPlaying; // 結果発表中は止まる
+            }
+
+            // ロビー：ホストが設定端末を開いている間は止まる
+            SpaceJunkLobbyTerminal terminal = FindFirstObjectByType<SpaceJunkLobbyTerminal>();
+            return terminal == null || !terminal.IsOpen;
+        }
+    }
 
     private void OnEnable()
     {
@@ -173,17 +217,11 @@ public class SpaceJunkPlayerSetup : MonoBehaviour
     }
 
     /// <summary>
-    /// **シーンが読み込まれたら、少し待ってから場所を置き直す。**
+    /// **シーンが読み込まれたら、置き直しを待つ。**
     ///
     /// プレイヤーはシーンをまたいで生き続けるので、**移った直後は
-    /// 「前のシーンで立っていた場所」のまま**になる。
-    /// ロビーの地面（20m四方）はマップ（40m四方）より狭いため、
-    /// マップの端にいた人は**ロビーの地面の外に出て落ちてしまう**
+    /// 「前のシーンで立っていた場所」のまま**になる。そのままだと新しいシーンの地面の外で落ちる
     /// （2026/9/20・大槻さんの報告）。
-    ///
-    /// **その場で置き直すのではなく、数フレーム待つ。**
-    /// 読み込んだ直後はまだ中身が出そろっておらず、
-    /// 前のマップのゴールをつかんで**さらに遠くへ飛ばしてしまう**ため。
     /// </summary>
     private void OnSceneLoaded(UnityEngine.SceneManagement.Scene scene,
                                UnityEngine.SceneManagement.LoadSceneMode mode)
@@ -193,23 +231,125 @@ public class SpaceJunkPlayerSetup : MonoBehaviour
             return;
         }
 
-        placementCountdown = PlacementDelayFrames;
+        BeginPlacement();
     }
 
-    /// <summary>待ち終わったら置き直す。</summary>
+    /// <summary>置き直しを待ち始める。待っている間は動けない（落ちない）。</summary>
+    private void BeginPlacement()
+    {
+        placementPending = true;
+        placementWaitTime = 0f;
+        placementFramesWaited = 0;
+        SetControlEnabled(false);
+    }
+
+    /// <summary>
+    /// **置き直しの準備ができたら置く。**
+    /// ・ロビー … 少し待ってから、ロビー用の場所へ
+    /// ・マップ … ラウンドの係と、**自分のチームのゴール**が届くまで待ってから、ゴールの近くへ。
+    ///   待ちきれなければ、床のある所へ置き、あとでゴールが届いたら置き直す
+    /// </summary>
     private void TickPlacement()
     {
-        if (placementCountdown <= 0)
+        if (placementPending)
         {
+            placementFramesWaited++;
+            placementWaitTime += Time.unscaledDeltaTime;
+
+            // ラウンドの係が操作を戻しても、置き終わるまでは止めておく（落ちないように）
+            SetControlEnabled(false);
+
+            if (placementFramesWaited < MinPlacementFrames)
+            {
+                return;
+            }
+
+            if (!IsInLobbyScene())
+            {
+                bool ready = SpaceJunkRound.Current != null &&
+                             SpaceJunkRound.Current.gameObject.scene ==
+                             UnityEngine.SceneManagement.SceneManager.GetActiveScene() &&
+                             TryFindOwnGoal(out _);
+
+                if (!ready && placementWaitTime < MaxPlacementWaitSeconds)
+                {
+                    return;
+                }
+
+                if (!ready)
+                {
+                    Debug.LogWarning($"[NET][答え合わせ] 自分のゴールが {MaxPlacementWaitSeconds:0} 秒待っても届かないので、" +
+                                     "とりあえず床のある所に置きます（届いたら置き直します）。");
+                }
+            }
+
+            placementPending = false;
+            MoveToSpawnPoint();
+            FollowWithCamera();
+            SetControlEnabled(ControlShouldBeEnabled);
             return;
         }
 
-        placementCountdown--;
-
-        if (placementCountdown == 0)
+        // とりあえず置いたあとに、自分のゴールが届いたら置き直す
+        if (placedByFallback && SpaceJunkRound.Current != null)
         {
-            MoveToSpawnPoint();
-            FollowWithCamera();
+            fallbackRetryTimer += Time.unscaledDeltaTime;
+            if (fallbackRetryTimer > FallbackRetrySeconds)
+            {
+                placedByFallback = false;
+                return;
+            }
+
+            if (TryFindOwnGoal(out _))
+            {
+                Debug.LogWarning("[NET][答え合わせ] 自分のゴールが遅れて届いたので、ゴールの近くへ置き直しました。");
+                MoveToSpawnPoint();
+                FollowWithCamera();
+            }
+        }
+    }
+
+    /// <summary>いまのシーンがロビーか。</summary>
+    private static bool IsInLobbyScene()
+    {
+        string lobby = SpaceJunkSession.Current != null ? SpaceJunkSession.Current.LobbySceneName : "SpaceJunkLobby";
+        return UnityEngine.SceneManagement.SceneManager.GetActiveScene().name == lobby;
+    }
+
+    /// <summary>
+    /// **このシーンにある、自分のチームのゴール**を探す。自分のチームがまだ届いていなければ false。
+    /// （シーンの入れ替わりの途中に残っている「前のマップのゴール」はつかまない）
+    /// </summary>
+    private bool TryFindOwnGoal(out SpaceJunkGoal found)
+    {
+        found = null;
+
+        if (SpaceJunkSession.Current == null || netPlayer == null)
+        {
+            return false;
+        }
+
+        int team = MyTeam();
+        UnityEngine.SceneManagement.Scene active = UnityEngine.SceneManagement.SceneManager.GetActiveScene();
+
+        foreach (SpaceJunkGoal goal in SpaceJunkGoal.All)
+        {
+            if (goal != null && goal.gameObject.scene == active && goal.OwnerTeam == team)
+            {
+                found = goal;
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    /// <summary>自分のぶんにだけ、答え合わせの部品を付ける。</summary>
+    private void EnsureLocalStateCheck()
+    {
+        if (GetComponent<SpaceJunkLocalStateCheck>() == null)
+        {
+            gameObject.AddComponent<SpaceJunkLocalStateCheck>();
         }
     }
 
@@ -397,7 +537,6 @@ public class SpaceJunkPlayerSetup : MonoBehaviour
 
     private Vector3 FindSpawnPosition()
     {
-        int team = MyTeam();
         Vector2 scatter = Random.insideUnitCircle * spawnScatter;
 
         // **ゴールを当てにするのは、ラウンドが動いているときだけ。**
@@ -409,15 +548,14 @@ public class SpaceJunkPlayerSetup : MonoBehaviour
         // （2026/9/20・大槻さんの報告）
         if (SpaceJunkRound.Current == null)
         {
-            return FallbackSpawnPosition(scatter);
+            placedByFallback = false;
+            return SafeFallbackPosition(scatter);
         }
 
-        foreach (SpaceJunkGoal goal in SpaceJunkGoal.All)
+        // **このシーンにある、自分のチームのゴール**（前のマップのゴールはつかまない。2026/10/6）
+        if (TryFindOwnGoal(out SpaceJunkGoal goal))
         {
-            if (goal == null || goal.OwnerTeam != team)
-            {
-                continue;
-            }
+            placedByFallback = false;
 
             // ゴールから、ステージの中心へ向かって少し内側
             Vector3 goalPosition = goal.transform.position;
@@ -432,8 +570,62 @@ public class SpaceJunkPlayerSetup : MonoBehaviour
             return new Vector3(spot.x + scatter.x, goalPosition.y, spot.z + scatter.y);
         }
 
-        // ゴールが見つからないとき（まだ持ち主が配られていないなど）
-        return FallbackSpawnPosition(scatter);
+        // ゴールが見つからないとき（まだ持ち主が配られていないなど）。**あとで届いたら置き直す**
+        placedByFallback = true;
+        fallbackRetryTimer = 0f;
+        return SafeFallbackPosition(scatter);
+    }
+
+    /// <summary>
+    /// **ゴールを当てにしないときの、床がある出てくる場所。**（2026/10/6）
+    /// まず中心のまわりの決まった場所（<see cref="FallbackSpawnPosition"/>）を見て、
+    /// そこに床が無ければ（ドーナツの穴・床の無い帯など）、まわりを順に探して床のある所を使う。
+    /// </summary>
+    private Vector3 SafeFallbackPosition(Vector2 scatter)
+    {
+        Vector3 first = FallbackSpawnPosition(scatter);
+        if (TryGroundAt(first, out Vector3 grounded))
+        {
+            return grounded;
+        }
+
+        float[] radii = { fallbackRadius, 3f, 0f, 9f, 12f, 15f };
+        for (int r = 0; r < radii.Length; r++)
+        {
+            for (int a = 0; a < 8; a++)
+            {
+                Vector3 candidate = Quaternion.Euler(0f, a * 45f, 0f) * (Vector3.forward * radii[r]);
+                if (TryGroundAt(candidate, out grounded))
+                {
+                    return grounded;
+                }
+            }
+        }
+
+        return first;
+    }
+
+    /// <summary>その場所の真下に床があれば、床の上の位置を返す。</summary>
+    private bool TryGroundAt(Vector3 spot, out Vector3 grounded)
+    {
+        grounded = spot;
+        Vector3 from = new Vector3(spot.x, spot.y + 6f, spot.z);
+
+        foreach (RaycastHit hit in Physics.RaycastAll(from, Vector3.down, 20f, ~0, QueryTriggerInteraction.Ignore))
+        {
+            // 自分の体や、物資・プレイヤーは床とみなさない
+            if (hit.collider.transform.IsChildOf(transform) ||
+                hit.collider.GetComponentInParent<HookableObject>() != null ||
+                hit.collider.GetComponentInParent<CharacterController>() != null)
+            {
+                continue;
+            }
+
+            grounded = new Vector3(spot.x, hit.point.y, spot.z);
+            return true;
+        }
+
+        return false;
     }
 
     /// <summary>
