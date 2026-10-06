@@ -51,6 +51,7 @@ public enum SpaceJunkLobbyPartRole
     HudRoster = 54,
     HudSummary = 55,
     HudHint = 56,
+    HudJoinCode = 57,
 }
 
 /// <summary>

@@ -57,24 +57,90 @@ public static class SpaceJunkLobbyScreenBuilder
                 return;
             }
 
-            // **作りが大きく変わったときだけ、作り直す**（数字を打ち込める入力欄を足した など）。
-            // 手で直した配置は消えるので、むやみに番号を上げないこと
+            // 版 3 より古い（手で直す前の）プレハブは作り直す。版 3 からは**作り直さずに、足りない部品だけを足す**（手で直した配置を消さない）
             SpaceJunkLobbyScreen existing = AssetDatabase.LoadAssetAtPath<SpaceJunkLobbyScreen>(PrefabPath);
-            if (existing != null && existing.PrefabVersion < PrefabVersion)
+            if (existing != null && existing.PrefabVersion < 3)
             {
                 Debug.LogWarning($"[JUNK] ロビーの画面のプレハブの作りが古い（{existing.PrefabVersion} → {PrefabVersion}）ので、作り直しました。" +
                                  "手で動かした配置や、変えた画像・色は消えています。");
                 Build();
+            }
+            else if (existing != null && existing.PrefabVersion < PrefabVersion)
+            {
+                Upgrade(existing.PrefabVersion);
             }
         };
     }
 
     /// <summary>
     /// **プレハブの作りの版。** 作りが大きく変わったとき（部品を足したなど）だけ上げる。
-    /// 上げると、古い版のプレハブは Unity を開いたときに自動で作り直される（**手で直した配置は消える**）。
-    /// 1：最初の版 ／ 2：数字を打ち込める入力欄 ／ 3：数字を真ん中に・パスワードの欄（2026/10/6）
+    /// 上げると、Unity を開いたときに古い版のプレハブが新しくなる。
+    /// 1：最初の版 ／ 2：数字を打ち込める入力欄 ／ 3：数字を真ん中に・パスワードの欄 ／ 4：左上に参加コード（2026/10/6）
+    /// **版 3 からは作り直さず、<see cref="Upgrade"/> で足りない部品だけを足す**（手で直した配置を消さない）。版を上げたら Upgrade に足す処理を書くこと
     /// </summary>
-    public const int PrefabVersion = 3;
+    public const int PrefabVersion = 4;
+
+    /// <summary>左上の案内の高さ（参加コードの行を足して 2026/10/6 に 720 → 800）。</summary>
+    private const float HudHeight = 800f;
+
+    /// <summary>左上の案内に「参加コード（ホストにはパスワード・LAN の IP）」の文字を足す（版 4）。</summary>
+    private static void AddHudJoinCode(Transform hud)
+    {
+        Text joinCode = NewText("JoinCode", hud, "参加コード：ABCDEF", 24, TextColor, TextAnchor.UpperLeft);
+        joinCode.fontStyle = FontStyle.Bold;
+        joinCode.horizontalOverflow = HorizontalWrapMode.Overflow;
+        Place(joinCode.rectTransform, new Vector2(0f, 1f), new Vector2(20f, -716f), new Vector2(420f, 70f), new Vector2(0f, 1f));
+        Mark(joinCode, SpaceJunkLobbyPartRole.HudJoinCode);
+    }
+
+    /// <summary>
+    /// **作り直さずに、足りない部品だけを足す**（手で直した配置を消さないため。2026/10/6 から）。
+    /// 版 3 → 4：左上の案内に参加コードの行を足す。
+    /// </summary>
+    private static void Upgrade(int fromVersion)
+    {
+        defaultFont = Resources.GetBuiltinResource<Font>("LegacyRuntime.ttf");
+        GameObject root = PrefabUtility.LoadPrefabContents(PrefabPath);
+
+        try
+        {
+            if (fromVersion < 4)
+            {
+                SpaceJunkLobbyPart hud = FindPart(root, SpaceJunkLobbyPartRole.Hud);
+                if (hud != null && FindPart(root, SpaceJunkLobbyPartRole.HudJoinCode) == null)
+                {
+                    RectTransform hudRect = (RectTransform)hud.transform;
+                    if (hudRect.sizeDelta.y < HudHeight)
+                    {
+                        hudRect.sizeDelta = new Vector2(hudRect.sizeDelta.x, HudHeight);
+                    }
+
+                    AddHudJoinCode(hud.transform);
+                }
+            }
+
+            root.GetComponent<SpaceJunkLobbyScreen>().EditorSetPrefabVersion(PrefabVersion);
+            PrefabUtility.SaveAsPrefabAsset(root, PrefabPath);
+            Debug.Log($"[JUNK] ロビーの画面のプレハブに、足りない部品を足しました（版 {fromVersion} → {PrefabVersion}。手で直した配置はそのまま）。");
+        }
+        finally
+        {
+            PrefabUtility.UnloadPrefabContents(root);
+        }
+    }
+
+    private static SpaceJunkLobbyPart FindPart(GameObject root, SpaceJunkLobbyPartRole role)
+    {
+        foreach (SpaceJunkLobbyPart part in root.GetComponentsInChildren<SpaceJunkLobbyPart>(true))
+        {
+            if (part.Role == role)
+            {
+                return part;
+            }
+        }
+
+        return null;
+    }
 
     [MenuItem("Tools/StarSweepers/ロビーの画面のプレハブを作り直す")]
     private static void BuildFromMenu()
@@ -202,7 +268,7 @@ public static class SpaceJunkLobbyScreenBuilder
     private static void BuildHud(Transform root)
     {
         Image hud = NewImage("Hud", root, new Color(0f, 0f, 0f, 0.55f));
-        Place(hud.rectTransform, new Vector2(0f, 1f), new Vector2(20f, -20f), new Vector2(460f, 720f), new Vector2(0f, 1f));
+        Place(hud.rectTransform, new Vector2(0f, 1f), new Vector2(20f, -20f), new Vector2(460f, HudHeight), new Vector2(0f, 1f));
         hud.raycastTarget = false;
         Mark(hud, SpaceJunkLobbyPartRole.Hud);
 
@@ -231,6 +297,8 @@ public static class SpaceJunkLobbyScreenBuilder
         Text hint = NewText("Hint", hud.transform, "設定端末に近づくと、ゲーム設定を開けます", 18, TextColor, TextAnchor.UpperLeft);
         Place(hint.rectTransform, new Vector2(0f, 1f), new Vector2(20f, -650f), new Vector2(420f, 60f), new Vector2(0f, 1f));
         Mark(hint, SpaceJunkLobbyPartRole.HudHint);
+
+        AddHudJoinCode(hud.transform);
     }
 
     /// <summary>ゲーム設定（左）とマップ（右）。ホストが設定端末で開く。</summary>

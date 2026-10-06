@@ -93,6 +93,11 @@ public class InternetConnection : MonoBehaviour
     /// <summary>いまの部屋にパスワードが付いているか（ホストのPCで使う）。</summary>
     public bool HasPassword => !string.IsNullOrEmpty(CurrentPassword);
 
+    /// <summary>いまの部屋の名前・人数・最大人数（Steam のフレンドに見せるのに使う。部屋に入っていなければ空・0）。</summary>
+    public string RoomName => session != null ? session.Name : string.Empty;
+    public int RoomPlayers => session != null ? session.PlayerCount : 0;
+    public int RoomMaxPlayers => session != null ? session.MaxPlayers : 0;
+
     /// <summary>
     /// **パスワードの文字数**（遊ぶ人が入れる文字数。2026/10/6・大槻さんの決まり：1〜32文字）。
     /// 中継サーバーは 8〜64 文字しか受け付けないので、8文字に足りないときは<see cref="ToSessionPassword"/> で後ろに a を足して渡す。

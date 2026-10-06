@@ -35,6 +35,9 @@ public enum TitleButtonAction
     JoinLan = 24,
     SearchPublic = 25,
     JoinListedServer = 26,
+    OpenFindFriends = 27,
+    JoinFriendServer = 28,
+    RefreshFriends = 29,
 
     // 設定
     TabSound = 30,

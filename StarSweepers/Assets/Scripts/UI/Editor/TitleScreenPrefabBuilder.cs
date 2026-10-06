@@ -62,24 +62,112 @@ public static class TitleScreenPrefabBuilder
                 return;
             }
 
-            // **作りが大きく変わったときだけ、作り直す**（パスワードの欄を足した など）。
-            // 手で直した配置は消えるので、むやみに番号を上げないこと
+            // 版 3 より古い（手で直す前の）プレハブは作り直す。版 3 からは**作り直さずに、足りない部品だけを足す**（手で直した配置を消さない）
             TitleScreen existing = AssetDatabase.LoadAssetAtPath<TitleScreen>(PrefabPath);
-            if (existing != null && existing.PrefabVersion < PrefabVersion)
+            if (existing != null && existing.PrefabVersion < 3)
             {
                 Debug.LogWarning($"[UI] タイトル画面のプレハブの作りが古い（{existing.PrefabVersion} → {PrefabVersion}）ので、作り直しました。" +
                                  "手で動かした配置や、変えた画像・色は消えています。");
                 Build();
+            }
+            else if (existing != null && existing.PrefabVersion < PrefabVersion)
+            {
+                Upgrade(existing.PrefabVersion);
             }
         };
     }
 
     /// <summary>
     /// **プレハブの作りの版。** 作りが大きく変わったとき（部品を足したなど）だけ上げる。
-    /// 上げると、古い版のプレハブは Unity を開いたときに自動で作り直される（**手で直した配置は消える**）。
-    /// 1：最初の版 ／ 2：パスワードの欄 ／ 3：パブリック・プライベートの2つのチェック（2026/10/6）
+    /// 1：最初の版 ／ 2：パスワードの欄 ／ 3：パブリック・プライベートの2つのチェック ／ 4：フレンドのサーバー（Steam）（2026/10/6）
+    /// **版 3 からは作り直さず、<see cref="Upgrade"/> で足りない部品だけを足す**（手で直した配置を消さない）。版を上げたら Upgrade に足す処理を書くこと
     /// </summary>
-    public const int PrefabVersion = 3;
+    public const int PrefabVersion = 4;
+
+    /// <summary>
+    /// **作り直さずに、足りない部品だけを足す。**
+    /// 版 3 → 4：「サーバーを探す」に「フレンドのサーバーを探す」のボタンと、その画面を足す。
+    /// </summary>
+    private static void Upgrade(int fromVersion)
+    {
+        defaultFont = Resources.GetBuiltinResource<Font>("LegacyRuntime.ttf");
+        GameObject root = PrefabUtility.LoadPrefabContents(PrefabPath);
+
+        try
+        {
+            if (fromVersion < 4 && FindPart(root, TitlePartRole.PageFindFriends) == null)
+            {
+                AddFriendsButton(root);
+
+                GameObject page = BuildFindFriendsPage(root.transform);
+                page.SetActive(false);
+
+                // つないでいる途中の表示より手前に出ないように、その前に並べる
+                TitlePart busy = FindPart(root, TitlePartRole.BusyOverlay);
+                if (busy != null)
+                {
+                    page.transform.SetSiblingIndex(busy.transform.GetSiblingIndex());
+                }
+            }
+
+            root.GetComponent<TitleScreen>().EditorSetPrefabVersion(PrefabVersion);
+            PrefabUtility.SaveAsPrefabAsset(root, PrefabPath);
+            Debug.Log($"[UI] タイトル画面のプレハブに、足りない部品を足しました（版 {fromVersion} → {PrefabVersion}。手で直した配置はそのまま）。");
+        }
+        finally
+        {
+            PrefabUtility.UnloadPrefabContents(root);
+        }
+    }
+
+    /// <summary>
+    /// 「サーバーを探す」の「LANのサーバーに参加する」を複製して「フレンドのサーバーを探す」にし、
+    /// その場所に置く（LAN のボタンは1つ下へずらす）。
+    /// </summary>
+    private static void AddFriendsButton(GameObject root)
+    {
+        TitlePart findPage = FindPart(root, TitlePartRole.PageFind);
+        if (findPage == null)
+        {
+            return;
+        }
+
+        foreach (TitleMenuButton look in findPage.GetComponentsInChildren<TitleMenuButton>(true))
+        {
+            if (look.Action != TitleButtonAction.OpenFindLan)
+            {
+                continue;
+            }
+
+            RectTransform lanRect = (RectTransform)look.transform;
+            GameObject copy = Object.Instantiate(look.gameObject, lanRect.parent);
+            copy.name = "フレンドのサーバーを探す";
+            copy.transform.SetSiblingIndex(lanRect.GetSiblingIndex());
+
+            TitleMenuButton friends = copy.GetComponent<TitleMenuButton>();
+            friends.EditorSetup(TitleButtonAction.OpenFindFriends, copy.GetComponent<Image>(), friends.Label);
+            if (friends.Label != null)
+            {
+                friends.Label.text = "フレンドのサーバーを探す";
+            }
+
+            lanRect.anchoredPosition -= new Vector2(0f, lanRect.sizeDelta.y + 22f);
+            return;
+        }
+    }
+
+    private static TitlePart FindPart(GameObject root, TitlePartRole role)
+    {
+        foreach (TitlePart part in root.GetComponentsInChildren<TitlePart>(true))
+        {
+            if (part.Role == role)
+            {
+                return part;
+            }
+        }
+
+        return null;
+    }
 
     [MenuItem("Tools/StarSweepers/タイトル画面のプレハブを作り直す")]
     private static void BuildFromMenu()
@@ -219,6 +307,7 @@ public static class TitleScreenPrefabBuilder
         BuildFindPrivatePage(root.transform).SetActive(false);
         BuildFindPublicPage(root.transform).SetActive(false);
         BuildFindLanPage(root.transform).SetActive(false);
+        BuildFindFriendsPage(root.transform).SetActive(false);
         BuildSettingsPage(root.transform).SetActive(false);
         BuildBusyOverlay(root.transform).SetActive(false);
 
@@ -366,6 +455,7 @@ public static class TitleScreenPrefabBuilder
         Vector2 size = new Vector2(640f, MainButtonSize.y);
         column.Add(NewButton(column.Rect, "プライベートサーバーを探す", size, ButtonFontSize, TitleButtonAction.OpenFindPrivate));
         column.Add(NewButton(column.Rect, "パブリックサーバーを探す", size, ButtonFontSize, TitleButtonAction.OpenFindPublic));
+        column.Add(NewButton(column.Rect, "フレンドのサーバーを探す", size, ButtonFontSize, TitleButtonAction.OpenFindFriends));
         column.Add(NewButton(column.Rect, "LANのサーバーに参加する", size, ButtonFontSize, TitleButtonAction.OpenFindLan));
         column.Finish();
 
@@ -444,6 +534,61 @@ public static class TitleScreenPrefabBuilder
 
         TitleMenuButton join = NewButton(card.transform, "参加する", new Vector2(740f, 64f), FontSize, TitleButtonAction.JoinListedServer);
         Place((RectTransform)join.transform, new Vector2(0.5f, 0f), new Vector2(0f, 14f), new Vector2(740f, 64f), new Vector2(0.5f, 0f));
+    }
+
+    /// <summary>
+    /// 「フレンドのサーバーを探す」（Steam。2026/10/6）。Steam のフレンドのうち、このゲームで部屋に入っている人を並べる。
+    /// </summary>
+    private static GameObject BuildFindFriendsPage(Transform root)
+    {
+        GameObject page = NewPage("FindFriendsPage", root, TitlePartRole.PageFindFriends);
+
+        // 左：名前・パスワード・更新
+        Column left = new Column("Left", page.transform, 640f, 14f,
+            new Vector2(0f, 1f), new Vector2(120f, -80f), new Vector2(0f, 1f));
+        AddNameInput(left);
+        AddLabel(left, "パスワード", "（パスワードあり）の部屋に入るとき");
+        AddInput(left, "パスワードなし", TitleInputKind.JoinPassword);
+        left.Add(NewButton(left.Rect, "フレンドのサーバーを更新", new Vector2(640f, 70f), FontSize + 2, TitleButtonAction.RefreshFriends));
+        Text note = NewText("Note", left.Rect,
+            "Steam のフレンドのうち、このゲームで部屋に入っている人が出ます。Steam を起動しておく必要があります。",
+            FontSize - 8, NoteColor, TextAnchor.UpperLeft);
+        note.rectTransform.sizeDelta = new Vector2(640f, 70f);
+        left.Add(note.rectTransform);
+        left.Finish();
+
+        // 右：フレンドの部屋の一覧
+        Text resultsTitle = NewText("ResultsTitle", page.transform, "フレンドのサーバー", FontSize + 6, TextColor, TextAnchor.LowerLeft);
+        Place(resultsTitle.rectTransform, new Vector2(1f, 1f), new Vector2(-920f, -60f), new Vector2(800f, 50f), new Vector2(0f, 1f));
+
+        Image listBox = NewImage("ListBox", page.transform, PanelColor);
+        Place(listBox.rectTransform, new Vector2(1f, 1f), new Vector2(-920f, -120f), new Vector2(820f, 760f), new Vector2(0f, 1f));
+
+        RectTransform content = NewScrollList(listBox.transform);
+        Mark(content, TitlePartRole.FriendListContent);
+
+        // フレンドの部屋1つぶんのカードの見本（再生すると隠れ、見つかった数だけ複製される）
+        Image card = NewImage("FriendCardTemplate", content, AccentColor);
+        SetLayoutSize(card.gameObject, 780f, 150f);
+        Mark(card, TitlePartRole.FriendCardTemplate);
+
+        Text name = NewText("Name", card.transform, "フレンドの名前 の部屋", FontSize + 2, TextColor, TextAnchor.UpperLeft);
+        Place(name.rectTransform, new Vector2(0f, 1f), new Vector2(20f, -12f), new Vector2(740f, 40f), new Vector2(0f, 1f));
+        Mark(name, TitlePartRole.FriendCardName);
+
+        Text info = NewText("Info", card.transform, "部屋の名前　1/4", FontSize - 4, NoteColor, TextAnchor.UpperLeft);
+        Place(info.rectTransform, new Vector2(0f, 1f), new Vector2(20f, -50f), new Vector2(740f, 30f), new Vector2(0f, 1f));
+        Mark(info, TitlePartRole.FriendCardInfo);
+
+        TitleMenuButton join = NewButton(card.transform, "参加する", new Vector2(740f, 56f), FontSize, TitleButtonAction.JoinFriendServer);
+        Place((RectTransform)join.transform, new Vector2(0.5f, 0f), new Vector2(0f, 12f), new Vector2(740f, 56f), new Vector2(0.5f, 0f));
+
+        Text message = NewText("Message", listBox.transform, string.Empty, FontSize - 2, TextColor, TextAnchor.UpperCenter);
+        Place(message.rectTransform, new Vector2(0.5f, 1f), new Vector2(0f, -20f), new Vector2(780f, 120f), new Vector2(0.5f, 1f));
+        Mark(message, TitlePartRole.FriendListMessage);
+
+        AddBackButton(page.transform);
+        return page;
     }
 
     private static GameObject BuildFindLanPage(Transform root)
