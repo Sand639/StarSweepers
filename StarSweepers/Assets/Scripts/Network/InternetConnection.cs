@@ -1,4 +1,5 @@
 using System;
+using System.Collections.Generic;
 using System.IO;
 using System.Threading.Tasks;
 using Unity.Netcode;
@@ -194,6 +195,110 @@ public class InternetConnection : MonoBehaviour
         catch (Exception error)
         {
             Fail("部屋に入れませんでした。合言葉が違うか、部屋が閉じられています", error);
+        }
+    }
+
+    // ------------------------------------------------------------
+    // タイトル画面から使う入口（2026/10/6）
+    // ------------------------------------------------------------
+
+    /// <summary>
+    /// **部屋の名前・最大人数・非公開かを決めて、部屋を作る。** タイトル画面の「サーバーを作成」から呼ぶ。
+    /// 非公開にすると、パブリックサーバーの一覧に出ない（合言葉を知っている人だけが入れる）。
+    /// </summary>
+    public void HostGame(string roomName, int players, bool privateRoom)
+    {
+        if (IsBusy)
+        {
+            return;
+        }
+
+        if (!string.IsNullOrWhiteSpace(roomName))
+        {
+            sessionName = roomName.Trim();
+        }
+
+        maxPlayers = Mathf.Clamp(players, 2, 8);
+        isPrivate = privateRoom;
+        HostGame();
+    }
+
+    /// <summary>
+    /// **公開されている部屋の一覧を取る。** タイトル画面の「パブリックサーバーを探す」から呼ぶ。
+    /// 失敗したときは null（理由は <see cref="Message"/>）。
+    /// </summary>
+    public async Task<List<ISessionInfo>> QueryPublicSessionsAsync()
+    {
+        if (IsBusy)
+        {
+            return null;
+        }
+
+        if (!await PrepareAsync())
+        {
+            return null;
+        }
+
+        Message = "サーバーを探しています…";
+
+        try
+        {
+            QuerySessionsResults results = await MultiplayerService.Instance.QuerySessionsAsync(new QuerySessionsOptions());
+            State = Phase.Idle;
+            Message = string.Empty;
+            return results != null && results.Sessions != null
+                ? new List<ISessionInfo>(results.Sessions)
+                : new List<ISessionInfo>();
+        }
+        catch (Exception error)
+        {
+            Fail("サーバーの一覧を取れませんでした", error);
+            return null;
+        }
+    }
+
+    /// <summary>**一覧で選んだ部屋に入る。** タイトル画面のパブリックサーバーの一覧から呼ぶ。</summary>
+    public async void JoinGameById(string sessionId)
+    {
+        if (IsBusy || string.IsNullOrEmpty(sessionId))
+        {
+            return;
+        }
+
+        if (!await PrepareAsync())
+        {
+            return;
+        }
+
+        // 前の部屋から抜け損ねていたら、先に抜ける
+        await LeaveStaleSessionsAsync();
+
+        State = Phase.Joining;
+        Message = "部屋に入ろうとしています…";
+
+        try
+        {
+            session = await MultiplayerService.Instance.JoinSessionByIdAsync(sessionId);
+
+            JoinCode = session.Code;
+            State = Phase.Connected;
+            Message = "つながりました。";
+
+            Debug.Log($"[NET] 一覧から部屋に入りました。合言葉：{JoinCode}");
+        }
+        catch (Exception error)
+        {
+            Fail("部屋に入れませんでした。満員か、部屋が閉じられています", error);
+        }
+    }
+
+    /// <summary>失敗の表示を消して、何もしていない状態に戻す（タイトル画面で「戻る」を押したとき）。</summary>
+    public void ClearFailure()
+    {
+        if (State == Phase.Failed)
+        {
+            State = Phase.Idle;
+            Message = string.Empty;
         }
     }
 

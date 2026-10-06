@@ -174,6 +174,16 @@ public class PauseMenu : MonoBehaviour
 
     private void Update()
     {
+        // タイトル画面が出ている間は開かない（Esc はタイトル画面の「戻る」に使う。2026/10/6）
+        if (TitleScreen.IsVisible)
+        {
+            if (IsOpen)
+            {
+                Close();
+            }
+            return;
+        }
+
         Keyboard keyboard = Keyboard.current;
 
         if ((keyboard != null && keyboard[pauseKey].wasPressedThisFrame) || GamepadInput.WasPressed(pauseButton))

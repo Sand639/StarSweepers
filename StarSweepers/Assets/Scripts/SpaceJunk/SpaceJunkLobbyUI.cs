@@ -114,7 +114,8 @@ public class SpaceJunkLobbyUI : MonoBehaviour
         // 隠さないとプレイ画面に「ホストとして動作中／切断する」が出っぱなしになる
         if (connectionUi != null)
         {
-            connectionUi.enabled = SpaceJunkRound.Current == null;
+            // タイトル画面が出ている間も隠す（タイトル画面からつなぐため。2026/10/6）
+            connectionUi.enabled = SpaceJunkRound.Current == null && !TitleScreen.IsVisible;
         }
     }
 
