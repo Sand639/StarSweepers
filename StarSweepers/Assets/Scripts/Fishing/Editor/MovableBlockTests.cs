@@ -5,7 +5,17 @@ using UnityEngine;
 public class MovableBlockTests
 {
     private const string PrefabPath = "Assets/Scenes/Test/Sou/MovableBlock.prefab";
-    private const string PullAblePlatePrefabPath = "Assets/Prefabs/SpaceJunk/Gimmick/PullAblePlate.prefab";
+
+    [Test]
+    public void BlockEnumsContainOnlyTheTwoModesAndFourSides()
+    {
+        Assert.That(
+            System.Enum.GetNames(typeof(MovableBlockMoveMode)),
+            Is.EqualTo(new[] { "TowardPlayer", "FourDirections" }));
+        Assert.That(
+            System.Enum.GetNames(typeof(MovableBlockPullSide)),
+            Is.EqualTo(new[] { "Front", "Back", "Left", "Right" }));
+    }
 
     [Test]
     public void PlayerAwarePullableRejectsOnlyThePlayerItDisallows()
@@ -116,26 +126,6 @@ public class MovableBlockTests
             Vector3.back);
 
         Assert.That(Vector3.Distance(direction, Vector3.right), Is.LessThan(0.0001f));
-    }
-
-    [TestCase(MovableBlockPullSide.FrontLeft, -1f, 1f)]
-    [TestCase(MovableBlockPullSide.FrontRight, 1f, 1f)]
-    [TestCase(MovableBlockPullSide.BackLeft, -1f, -1f)]
-    [TestCase(MovableBlockPullSide.BackRight, 1f, -1f)]
-    public void FourCornersUsesNamedLocalCorner(
-        MovableBlockPullSide side,
-        float expectedX,
-        float expectedZ)
-    {
-        Vector3 direction = MovableBlock.CalculateMoveDirection(
-            MovableBlockMoveMode.FourCorners,
-            Quaternion.identity,
-            side,
-            Vector3.zero,
-            new Vector3(-20f, 5f, -20f));
-
-        Vector3 expected = new Vector3(expectedX, 0f, expectedZ).normalized;
-        Assert.That(Vector3.Distance(direction, expected), Is.LessThan(0.0001f));
     }
 
     [Test]
@@ -250,31 +240,6 @@ public class MovableBlockTests
         AssertPullPoint(prefab.transform, "Back", MovableBlockPullSide.Back);
         AssertPullPoint(prefab.transform, "Left", MovableBlockPullSide.Left);
         AssertPullPoint(prefab.transform, "Right", MovableBlockPullSide.Right);
-    }
-
-    [Test]
-    public void PullAblePlatePrefabHasFourNamedCornerTriggerPullPoints()
-    {
-        GameObject prefab = AssetDatabase.LoadAssetAtPath<GameObject>(PullAblePlatePrefabPath);
-
-        Assert.That(prefab, Is.Not.Null);
-
-        MovableBlock block = prefab.GetComponent<MovableBlock>();
-        Assert.That(block, Is.Not.Null);
-        SerializedObject serializedBlock = new SerializedObject(block);
-        Assert.That(
-            serializedBlock.FindProperty("moveMode").enumValueIndex,
-            Is.EqualTo((int)MovableBlockMoveMode.FourCorners));
-
-        Rigidbody body = prefab.GetComponent<Rigidbody>();
-        Assert.That(body, Is.Not.Null);
-        Assert.That(body.isKinematic, Is.True);
-        Assert.That(body.useGravity, Is.False);
-
-        AssertPullPoint(prefab.transform, "FrontLeft", MovableBlockPullSide.FrontLeft);
-        AssertPullPoint(prefab.transform, "FrontRight", MovableBlockPullSide.FrontRight);
-        AssertPullPoint(prefab.transform, "BackLeft", MovableBlockPullSide.BackLeft);
-        AssertPullPoint(prefab.transform, "BackRight", MovableBlockPullSide.BackRight);
     }
 
     private static void AssertPullPoint(Transform root, string childName, MovableBlockPullSide expectedSide)
