@@ -51,8 +51,11 @@ public class SpaceJunkDisconnectWatcher : MonoBehaviour
     private void Update()
     {
         NetworkManager manager = NetworkManager.Singleton;
+
+        // 試合中だけでなく、**ロビーにいる間も見張る**（2026/10/6。ホストが「タイトルにもどる」を選ぶと、
+        // 参加者はホストとの通信が切れるので、ここで全員をタイトルへ戻す）
         bool clientInMatch = manager != null && manager.IsConnectedClient && !manager.IsServer &&
-                             SpaceJunkRound.Current != null;
+                             SceneManager.GetActiveScene().name != TitleSceneName;
 
         if (clientInMatch)
         {
@@ -60,7 +63,7 @@ public class SpaceJunkDisconnectWatcher : MonoBehaviour
         }
         else if (wasClientInMatch && !LeavingOnPurpose && (manager == null || !manager.IsConnectedClient))
         {
-            // つながっていたのに切れた（試合のマップのまま）
+            // つながっていたのに切れた（試合のマップ・ロビーのまま）
             OnLostConnection(manager);
         }
 
@@ -69,9 +72,9 @@ public class SpaceJunkDisconnectWatcher : MonoBehaviour
 
     private async void OnLostConnection(NetworkManager manager)
     {
-        Debug.LogWarning("[NET] 試合中にホストとの接続が切れました。タイトルに戻ります。");
+        Debug.LogWarning("[NET] ホストとの接続が切れました（ホストがタイトルにもどった・回線が切れた など）。タイトルに戻ります。");
 
-        message = "ホストとの接続が切れたので、タイトルに戻りました";
+        message = "ホストがゲームを抜けたか、接続が切れたので、タイトルに戻りました";
         messageUntil = Time.unscaledTime + MessageSeconds;
 
         // ポーズ画面を開いたまま切れたときに、止まったままにならないよう閉じる

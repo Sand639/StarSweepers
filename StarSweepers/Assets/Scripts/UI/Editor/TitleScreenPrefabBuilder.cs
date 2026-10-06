@@ -50,15 +50,36 @@ public static class TitleScreenPrefabBuilder
     {
         EditorApplication.delayCall += () =>
         {
-            if (EditorApplication.isPlayingOrWillChangePlaymode || File.Exists(PrefabPath))
+            if (EditorApplication.isPlayingOrWillChangePlaymode)
             {
                 return;
             }
 
-            Debug.Log("[UI] タイトル画面のプレハブが無いので作ります（初回だけ）。");
-            Build();
+            if (!File.Exists(PrefabPath))
+            {
+                Debug.Log("[UI] タイトル画面のプレハブが無いので作ります（初回だけ）。");
+                Build();
+                return;
+            }
+
+            // **作りが大きく変わったときだけ、作り直す**（パスワードの欄を足した など）。
+            // 手で直した配置は消えるので、むやみに番号を上げないこと
+            TitleScreen existing = AssetDatabase.LoadAssetAtPath<TitleScreen>(PrefabPath);
+            if (existing != null && existing.PrefabVersion < PrefabVersion)
+            {
+                Debug.LogWarning($"[UI] タイトル画面のプレハブの作りが古い（{existing.PrefabVersion} → {PrefabVersion}）ので、作り直しました。" +
+                                 "手で動かした配置や、変えた画像・色は消えています。");
+                Build();
+            }
         };
     }
+
+    /// <summary>
+    /// **プレハブの作りの版。** 作りが大きく変わったとき（部品を足したなど）だけ上げる。
+    /// 上げると、古い版のプレハブは Unity を開いたときに自動で作り直される（**手で直した配置は消える**）。
+    /// 1：最初の版 ／ 2：パスワードの欄 ／ 3：パブリック・プライベートの2つのチェック（2026/10/6）
+    /// </summary>
+    public const int PrefabVersion = 3;
 
     [MenuItem("Tools/StarSweepers/タイトル画面のプレハブを作り直す")]
     private static void BuildFromMenu()
@@ -189,7 +210,7 @@ public static class TitleScreenPrefabBuilder
         scaler.referenceResolution = new Vector2(1920f, 1080f);
         scaler.matchWidthOrHeight = 0.5f;
 
-        root.AddComponent<TitleScreen>();
+        root.AddComponent<TitleScreen>().EditorSetPrefabVersion(PrefabVersion);
 
         BuildBackground(root.transform);
         BuildMainPage(root.transform);
@@ -260,8 +281,8 @@ public static class TitleScreenPrefabBuilder
     {
         GameObject page = NewPage("CreatePage", root, TitlePartRole.PageCreate);
 
-        Column column = new Column("Column", page.transform, 1100f, 14f,
-            new Vector2(0.5f, 1f), new Vector2(0f, -60f), new Vector2(0.5f, 1f));
+        Column column = new Column("Column", page.transform, 1100f, 10f,
+            new Vector2(0.5f, 1f), new Vector2(0f, -36f), new Vector2(0.5f, 1f));
 
         AddNameInput(column);
 
@@ -281,24 +302,40 @@ public static class TitleScreenPrefabBuilder
         AddLabel(column, "サーバーの名前を入力", "パブリックサーバーの一覧に出る名前。空なら「（名前）のサーバー」");
         AddInput(column, "テキストを入力", TitleInputKind.ServerName);
 
+        // パスワード（インターネットのときだけ。LAN のときは隠す）
+        Column passwordGroup = new Column("PasswordRow", column.Rect, column.Width, 6f,
+            new Vector2(0f, 1f), Vector2.zero, new Vector2(0f, 1f));
+        AddLabel(passwordGroup, "パスワード",
+            $"空ならパスワードなし。{InternetConnection.PasswordMinLength}〜{InternetConnection.PasswordMaxLength}文字。入る人に伝える");
+        AddInput(passwordGroup, "パスワードなし", TitleInputKind.CreatePassword);
+        passwordGroup.Finish();
+        column.Add(passwordGroup.Rect);
+        Mark(passwordGroup.Rect, TitlePartRole.PasswordRow);
+
         // つなぎかた
         AddLabel(column, "つなぎかた", "展示会場では LAN（同じネットワークのPC同士）");
         Row mode = new Row(column, 64f, 12f);
         mode.Add(NewButton(mode.Rect, "インターネット", new Vector2(360f, 60f), FontSize, TitleButtonAction.UseInternet));
         mode.Add(NewButton(mode.Rect, "LAN", new Vector2(360f, 60f), FontSize, TitleButtonAction.UseLan));
 
-        // プライベートサーバー（LAN のときは隠す）
-        Row privateRow = new Row(column, 60f, 16f, "PrivateRow");
+        // パブリック／プライベート（片方を押すと、もう片方のチェックが外れる。LAN のときは隠す。2026/10/6）
+        Row privateRow = new Row(column, 60f, 12f, "PrivateRow");
         Mark(privateRow.Rect, TitlePartRole.PrivateRow);
-        TitleMenuButton check = NewButton(privateRow.Rect, "□", new Vector2(64f, 56f), FontSize + 6, TitleButtonAction.TogglePrivate);
+        TitleMenuButton publicCheck = NewButton(privateRow.Rect, "■", new Vector2(64f, 56f), FontSize + 6, TitleButtonAction.SetPublic);
+        Mark(publicCheck.Label, TitlePartRole.PublicCheckText);
+        privateRow.Add(publicCheck);
+        Text publicLabel = NewText("PublicLabel", privateRow.Rect, "パブリック", FontSize, TextColor, TextAnchor.MiddleLeft);
+        publicLabel.rectTransform.sizeDelta = new Vector2(150f, 56f);
+        privateRow.Add(publicLabel.rectTransform);
+        TitleMenuButton check = NewButton(privateRow.Rect, "□", new Vector2(64f, 56f), FontSize + 6, TitleButtonAction.SetPrivate);
         Mark(check.Label, TitlePartRole.PrivateCheckText);
         privateRow.Add(check);
-        Text privateLabel = NewText("Label", privateRow.Rect, "プライベートサーバー", FontSize, TextColor, TextAnchor.MiddleLeft);
-        privateLabel.rectTransform.sizeDelta = new Vector2(300f, 56f);
+        Text privateLabel = NewText("Label", privateRow.Rect, "プライベート", FontSize, TextColor, TextAnchor.MiddleLeft);
+        privateLabel.rectTransform.sizeDelta = new Vector2(170f, 56f);
         privateRow.Add(privateLabel.rectTransform);
-        Text privateNote = NewText("Note", privateRow.Rect, "ON：パブリックの一覧に出ない（参加コードを知っている人だけ入れる）",
+        Text privateNote = NewText("Note", privateRow.Rect, "パブリック：一覧に出る ／ プライベート：参加コードを知っている人だけ",
             FontSize - 8, NoteColor, TextAnchor.MiddleLeft);
-        privateNote.rectTransform.sizeDelta = new Vector2(680f, 56f);
+        privateNote.rectTransform.sizeDelta = new Vector2(560f, 56f);
         privateRow.Add(privateNote.rectTransform);
 
         // 参加コードの枠
@@ -345,6 +382,8 @@ public static class TitleScreenPrefabBuilder
         AddNameInput(column);
         AddLabel(column, "参加コードを入力", "サーバーを作った人に教えてもらう");
         AddInput(column, "例：6FJBMH", TitleInputKind.PrivateCode);
+        AddLabel(column, "パスワード", "パスワードの付いた部屋に入るときだけ");
+        AddInput(column, "パスワードなし", TitleInputKind.JoinPassword);
         column.Add(NewButton(column.Rect, "参加する", new Vector2(1000f, 70f), ButtonFontSize, TitleButtonAction.JoinPrivate));
         column.Finish();
 
@@ -360,6 +399,8 @@ public static class TitleScreenPrefabBuilder
         Column left = new Column("Left", page.transform, 640f, 14f,
             new Vector2(0f, 1f), new Vector2(120f, -80f), new Vector2(0f, 1f));
         AddNameInput(left);
+        AddLabel(left, "パスワード", "（パスワードあり）の部屋に入るとき");
+        AddInput(left, "パスワードなし", TitleInputKind.JoinPassword);
         left.Add(NewButton(left.Rect, "パブリックサーバーを検索", new Vector2(640f, 70f), FontSize + 2, TitleButtonAction.SearchPublic));
         Text note = NewText("Note", left.Rect, "プライベートサーバーは一覧に出ません（参加コードで入る）。LAN のサーバーも出ません。",
             FontSize - 8, NoteColor, TextAnchor.UpperLeft);

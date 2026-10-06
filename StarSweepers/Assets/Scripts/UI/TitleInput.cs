@@ -8,6 +8,10 @@ public enum TitleInputKind
     ServerName = 1,
     PrivateCode = 2,
     LanAddress = 3,
+
+    // パスワード（2026/10/6）。空ならパスワードなし。8〜64文字
+    CreatePassword = 4,
+    JoinPassword = 5,
 }
 
 /// <summary>

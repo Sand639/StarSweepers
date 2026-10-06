@@ -12,6 +12,7 @@ using UnityEngine.UI;
 /// | **ゲームをつづける** | 画面を閉じて、続きから遊ぶ |
 /// | **設定** | 音量とマウス感度を変える画面へ |
 /// | **ロビーに戻る** | **宇宙ごみの試合中だけ出る。** 確かめてから試合を抜けてロビーへ（ホストなら全員で戻る）。`SpaceJunkLeaveMatch` |
+/// | **タイトルにもどる** | **つながっている間（ロビーでも）出る。** 確かめてからタイトルへ（ホストなら全員がタイトルへ）。`SpaceJunkLeaveMatch` |
 /// | **ゲームをやめる** | 確かめてから、ゲームを終了する（エディタでは再生を止める） |
 ///
 /// **マウスで選ぶ。** 項目に重なると**色が変わり、少し大きくなり、左に「▶」が出る**
@@ -108,6 +109,15 @@ public class PauseMenu : MonoBehaviour
     /// <summary>「ロビーに戻る」を決定したときに呼ぶ処理。遊びの側が入れる。</summary>
     public static System.Action ReturnToLobby;
 
+    /// <summary>
+    /// **「タイトルにもどる」を出してよいか。** 遊びの側が入れる差し込み口（2026/10/6・大槻さん）。
+    /// 宇宙ごみは <c>SpaceJunkLeaveMatch</c> が入れている（つながっていてタイトル以外にいるとき。ロビーでも出る）。
+    /// </summary>
+    public static System.Func<bool> CanReturnToTitle;
+
+    /// <summary>「タイトルにもどる」を決定したときに呼ぶ処理。ホストなら全員がタイトルに戻る。</summary>
+    public static System.Action ReturnToTitle;
+
     private GameObject root;
     private GameObject mainPage;
     private GameObject settingsPage;
@@ -175,7 +185,8 @@ public class PauseMenu : MonoBehaviour
     private void Update()
     {
         // タイトル画面が出ている間は開かない（Esc はタイトル画面の「戻る」に使う。2026/10/6）
-        if (TitleScreen.IsVisible)
+        // ロビーの設定画面が開いている間（と閉じたフレーム）も開かない（Esc・B は設定画面の「戻る」に使う。2026/10/6）
+        if (TitleScreen.IsVisible || SpaceJunkLobbyScreen.BlocksEscape)
         {
             if (IsOpen)
             {
@@ -382,6 +393,28 @@ public class PauseMenu : MonoBehaviour
             QuitGame);
     }
 
+    /// <summary>「タイトルにもどる」を押したとき。確かめてから戻る。</summary>
+    private void ConfirmReturnToTitle()
+    {
+        ShowConfirm(
+            IsInMatch() ? "試合から抜けてタイトル画面に戻ります" : "ロビーから抜けてタイトル画面に戻ります",
+            "※ホストの場合は全員がタイトル画面に戻されます",
+            "ゲームをつづける",
+            "タイトルにもどる",
+            () =>
+            {
+                // 止めた時間やカーソルを元に戻してから移る
+                Close();
+                ReturnToTitle?.Invoke();
+            });
+    }
+
+    /// <summary>いま「タイトルにもどる」を出せる場面か。</summary>
+    private static bool CanGoToTitle()
+    {
+        return CanReturnToTitle != null && ReturnToTitle != null && CanReturnToTitle();
+    }
+
     /// <summary>いま「ロビーに戻る」を出せる場面（試合中）か。</summary>
     private static bool IsInMatch()
     {
@@ -492,6 +525,13 @@ public class PauseMenu : MonoBehaviour
         {
             y -= ItemHeight + ItemGap;
             CreateMenuItem(mainPage.transform, "ロビーに戻る", y, ConfirmReturnToLobby);
+        }
+
+        // つながっている間は「タイトルにもどる」を出す（ロビーでも、ホスト以外でも出る。2026/10/6）
+        if (CanGoToTitle())
+        {
+            y -= ItemHeight + ItemGap;
+            CreateMenuItem(mainPage.transform, "タイトルにもどる", y, ConfirmReturnToTitle);
         }
 
         y -= ItemHeight + ItemGap;

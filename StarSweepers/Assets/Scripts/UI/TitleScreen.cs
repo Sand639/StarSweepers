@@ -93,6 +93,19 @@ public class TitleScreen : MonoBehaviour
     [Tooltip("ON：再生したときに、文字をパソコンの日本語フォントに差し替える（日本語が四角にならないように）")]
     [SerializeField] private bool useOsJapaneseFont = true;
 
+    /// <summary>プレハブの作りの版（作るツールが入れる。古ければツールが作り直す）。</summary>
+    [SerializeField, HideInInspector] private int prefabVersion;
+
+    public int PrefabVersion => prefabVersion;
+
+#if UNITY_EDITOR
+    /// <summary>プレハブを作るツールが版を入れる。</summary>
+    public void EditorSetPrefabVersion(int value)
+    {
+        prefabVersion = value;
+    }
+#endif
+
     // 部品
     private readonly Dictionary<TitlePartRole, TitlePart> parts = new Dictionary<TitlePartRole, TitlePart>();
     private readonly Dictionary<Page, GameObject> pages = new Dictionary<Page, GameObject>();
@@ -111,8 +124,14 @@ public class TitleScreen : MonoBehaviour
     private bool createPrivate = true;
     private string createServerName = string.Empty;
 
+    /// <summary>作る部屋のパスワード（空ならなし。8〜64文字）。保存はしない。</summary>
+    private string createPassword = string.Empty;
+
     // サーバーを探す
     private string privateCode = string.Empty;
+
+    /// <summary>入る部屋のパスワード（パスワードの付いた部屋だけ要る）。</summary>
+    private string joinPassword = string.Empty;
     private string lanAddress = string.Empty;
     private bool searching;
 
@@ -304,25 +323,56 @@ public class TitleScreen : MonoBehaviour
             TitleInputKind kind = input.Kind;
             Text counter = input.Counter;
 
-            field.characterLimit = MaxLengthOf(kind);
+            field.characterLimit = InputLimitOf(kind);
             field.text = ValueOf(kind);
 
             field.onValueChanged.AddListener(value =>
             {
                 SetValue(kind, value);
-                UpdateCounter(counter, value, field.characterLimit);
+                UpdateCounter(kind, counter, value);
             });
 
-            UpdateCounter(counter, field.text, field.characterLimit);
+            UpdateCounter(kind, counter, field.text);
         }
     }
 
-    private static void UpdateCounter(Text counter, string value, int maxLength)
+    private static bool IsPassword(TitleInputKind kind)
     {
-        if (counter != null)
+        return kind == TitleInputKind.CreatePassword || kind == TitleInputKind.JoinPassword;
+    }
+
+    /// <summary>
+    /// 入力欄に打てる文字数。パスワードは 32 文字を超えたことを知らせたいので、少し多めに打てるようにする。
+    /// </summary>
+    private static int InputLimitOf(TitleInputKind kind)
+    {
+        return IsPassword(kind) ? InternetConnection.PasswordInputLimit : MaxLengthOf(kind);
+    }
+
+    /// <summary>「いま何文字か」の文字の、プレハブで決めた色（32文字を超えて赤くしたあと、戻すため）。</summary>
+    private readonly Dictionary<Text, Color> counterColors = new Dictionary<Text, Color>();
+
+    /// <summary>右端の「いま何文字か」。パスワードが 32 文字を超えたら「パスワードは32文字までです」を出す。</summary>
+    private void UpdateCounter(TitleInputKind kind, Text counter, string value)
+    {
+        if (counter == null)
         {
-            counter.text = $"{value.Length}/{maxLength}";
+            return;
         }
+
+        if (!counterColors.TryGetValue(counter, out Color normal))
+        {
+            normal = counter.color;
+            counterColors[counter] = normal;
+        }
+
+        int max = MaxLengthOf(kind);
+        bool tooLong = IsPassword(kind) && value.Length > max;
+
+        // 長い文が切れないように、左へはみ出して出せるようにしておく
+        counter.horizontalOverflow = HorizontalWrapMode.Overflow;
+        counter.text = tooLong ? InternetConnection.PasswordTooLongMessage : $"{value.Length}/{max}";
+        counter.color = tooLong ? new Color(1f, 0.45f, 0.4f, 1f) : normal;
     }
 
     private static int MaxLengthOf(TitleInputKind kind)
@@ -335,6 +385,9 @@ public class TitleScreen : MonoBehaviour
                 return ServerNameMaxLength;
             case TitleInputKind.PrivateCode:
                 return PrivateCodeMaxLength;
+            case TitleInputKind.CreatePassword:
+            case TitleInputKind.JoinPassword:
+                return InternetConnection.PasswordMaxLength;
             default:
                 return LanAddressMaxLength;
         }
@@ -350,6 +403,10 @@ public class TitleScreen : MonoBehaviour
                 return createServerName;
             case TitleInputKind.PrivateCode:
                 return privateCode;
+            case TitleInputKind.CreatePassword:
+                return createPassword;
+            case TitleInputKind.JoinPassword:
+                return joinPassword;
             default:
                 return lanAddress;
         }
@@ -368,9 +425,32 @@ public class TitleScreen : MonoBehaviour
             case TitleInputKind.PrivateCode:
                 privateCode = value;
                 break;
+            case TitleInputKind.CreatePassword:
+                createPassword = value;
+                break;
+            case TitleInputKind.JoinPassword:
+                joinPassword = value;
+                break;
             default:
                 lanAddress = value;
                 break;
+        }
+    }
+
+    /// <summary>
+    /// その画面の入力欄に、いまの値を入れ直す（同じ値を入れる欄が別の画面にもあるため。
+    /// 例：パスワードは「プライベートサーバー」と「パブリックサーバー」の両方の画面にある）。
+    /// </summary>
+    private void RefreshInputs(GameObject page)
+    {
+        foreach (TitleInput input in page.GetComponentsInChildren<TitleInput>(true))
+        {
+            string value = ValueOf(input.Kind);
+            if (input.Field.text != value)
+            {
+                input.Field.SetTextWithoutNotify(value);
+                UpdateCounter(input.Kind, input.Counter, value);
+            }
         }
     }
 
@@ -410,6 +490,8 @@ public class TitleScreen : MonoBehaviour
             case TitleButtonAction.UseInternet: SetCreateLan(false); break;
             case TitleButtonAction.UseLan: SetCreateLan(true); break;
             case TitleButtonAction.TogglePrivate: TogglePrivate(); break;
+            case TitleButtonAction.SetPublic: SetCreatePrivate(false); break;
+            case TitleButtonAction.SetPrivate: SetCreatePrivate(true); break;
 
             case TitleButtonAction.OpenFindPrivate: ShowPage(Page.FindPrivate); break;
             case TitleButtonAction.OpenFindPublic: ShowPage(Page.FindPublic); break;
@@ -468,6 +550,7 @@ public class TitleScreen : MonoBehaviour
 
         if (pages.TryGetValue(page, out GameObject shown))
         {
+            RefreshInputs(shown);
             SelectFirstForGamepad(shown);
         }
     }
@@ -502,12 +585,23 @@ public class TitleScreen : MonoBehaviour
         SetText(TitlePartRole.MaxPlayersText, $"{createMaxPlayers} 人");
         SetSelectedLook(TitleButtonAction.UseInternet, !createLan);
         SetSelectedLook(TitleButtonAction.UseLan, createLan);
+        // パブリック／プライベートは、どちらか片方だけにチェックが付く（2026/10/6）
         SetText(TitlePartRole.PrivateCheckText, createPrivate ? "■" : "□");
+        SetText(TitlePartRole.PublicCheckText, createPrivate ? "□" : "■");
+        SetSelectedLook(TitleButtonAction.SetPrivate, createPrivate);
+        SetSelectedLook(TitleButtonAction.SetPublic, !createPrivate);
 
         GameObject privateRow = PartObject(TitlePartRole.PrivateRow);
         if (privateRow != null)
         {
             privateRow.SetActive(!createLan);
+        }
+
+        // パスワードはインターネットの部屋だけ（LAN では使わない）
+        GameObject passwordRow = PartObject(TitlePartRole.PasswordRow);
+        if (passwordRow != null)
+        {
+            passwordRow.SetActive(!createLan);
         }
 
         if (createLan)
@@ -519,7 +613,7 @@ public class TitleScreen : MonoBehaviour
         {
             SetText(TitlePartRole.CodeBoxTitle, "参加コード");
             SetText(TitlePartRole.CodeBoxBody,
-                "サーバーを作成すると発行されます（ロビーの左上の「接続」に出ます）\n参加する人は「サーバーを探す → プライベートサーバー」で入れる");
+                "サーバーを作成すると発行されます（ロビーの左上に出ます）\n参加する人は「サーバーを探す → プライベートサーバー」で入れる");
         }
     }
 
@@ -538,6 +632,13 @@ public class TitleScreen : MonoBehaviour
     private void TogglePrivate()
     {
         createPrivate = !createPrivate;
+        RefreshCreatePage();
+    }
+
+    /// <summary>パブリック（false）かプライベート（true）かを決める。押したほうにだけチェックが付く。</summary>
+    private void SetCreatePrivate(bool value)
+    {
+        createPrivate = value;
         RefreshCreatePage();
     }
 
@@ -587,7 +688,7 @@ public class TitleScreen : MonoBehaviour
             ? (string.IsNullOrWhiteSpace(GameSettings.PlayerName) ? "StarSweepers" : $"{GameSettings.PlayerName} のサーバー")
             : createServerName;
 
-        internet.HostGame(serverName, createMaxPlayers, createPrivate);
+        internet.HostGame(serverName, createMaxPlayers, createPrivate, createPassword.Trim());
     }
 
     /// <summary>LAN（同じ場所のPC同士）のホストになる。1人で練習するときも同じ（ほかの人が入ってこないだけ）。</summary>
@@ -606,7 +707,7 @@ public class TitleScreen : MonoBehaviour
         InternetConnection internet = Internet();
         if (internet != null && !string.IsNullOrWhiteSpace(privateCode))
         {
-            internet.JoinGame(privateCode.Trim());
+            internet.JoinGame(privateCode.Trim(), joinPassword.Trim());
         }
     }
 
@@ -718,7 +819,8 @@ public class TitleScreen : MonoBehaviour
 
             if (part.Role == TitlePartRole.ServerCardName)
             {
-                text.text = string.IsNullOrEmpty(info.Name) ? "（名前なし）" : info.Name;
+                text.text = (string.IsNullOrEmpty(info.Name) ? "（名前なし）" : info.Name) +
+                            (info.HasPassword ? "（パスワードあり）" : string.Empty);
             }
             else if (part.Role == TitlePartRole.ServerCardPlayers)
             {
@@ -750,7 +852,7 @@ public class TitleScreen : MonoBehaviour
                 InternetConnection internet = Internet();
                 if (internet != null && !full)
                 {
-                    internet.JoinGameById(sessionId);
+                    internet.JoinGameById(sessionId, joinPassword.Trim());
                 }
             });
         }
@@ -788,7 +890,8 @@ public class TitleScreen : MonoBehaviour
         {
             message = string.IsNullOrEmpty(internet.Message) ? "つないでいます…" : internet.Message;
         }
-        else if (internet != null && internet.State == InternetConnection.Phase.Failed && current != Page.FindPublic)
+        // 失敗はどの画面でも出す（一覧から入るときに、パスワードが違うと分かるように。一覧の検索の失敗は、一覧の中に出してすぐ消す）
+        else if (internet != null && internet.State == InternetConnection.Phase.Failed)
         {
             message = internet.Message;
             buttonLabel = "戻る";

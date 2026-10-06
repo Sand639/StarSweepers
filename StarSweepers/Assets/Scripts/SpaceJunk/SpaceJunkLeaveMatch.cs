@@ -26,6 +26,38 @@ public static class SpaceJunkLeaveMatch
     {
         PauseMenu.CanReturnToLobby = () => SpaceJunkRound.Current != null;
         PauseMenu.ReturnToLobby = ReturnToLobby;
+
+        // つながっていて、タイトル以外（ロビー・試合）にいる間は「タイトルにもどる」を出す（2026/10/6）
+        PauseMenu.CanReturnToTitle = () =>
+        {
+            NetworkManager manager = NetworkManager.Singleton;
+            return manager != null && manager.IsListening && SceneManager.GetActiveScene().name != TitleSceneName;
+        };
+        PauseMenu.ReturnToTitle = ReturnToTitle;
+    }
+
+    /// <summary>
+    /// **タイトルにもどる。**（ポーズ画面の「タイトルにもどる」。2026/10/6・大槻さん）
+    ///
+    /// ・参加者：自分だけ通信を切って部屋から抜け、タイトルへ。ほかの人は続く
+    /// ・ホスト：通信を止めて（部屋も閉じる）タイトルへ。**参加者はホストとの通信が切れるので、
+    ///   見張り役（<see cref="SpaceJunkDisconnectWatcher"/>）が全員をタイトルへ戻す**
+    /// </summary>
+    public static async void ReturnToTitle()
+    {
+        NetworkManager manager = NetworkManager.Singleton;
+        if (manager != null && manager.IsListening)
+        {
+            Debug.Log(manager.IsServer
+                ? "[JUNK] ホストがタイトルにもどります。参加者も全員タイトルに戻ります。"
+                : "[JUNK] 部屋から抜けて、タイトルにもどります。");
+
+            // 自分で抜けるので、「通信が切れた」の見張り役には反応させない
+            SpaceJunkDisconnectWatcher.LeavingOnPurpose = true;
+            await Disconnect(manager);
+        }
+
+        SceneManager.LoadScene(TitleSceneName, LoadSceneMode.Single);
     }
 
     /// <summary>試合から抜けて、ロビーへ戻る。</summary>
