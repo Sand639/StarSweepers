@@ -61,7 +61,8 @@ public class TitleScreen : MonoBehaviour
     /// <summary>いまタイトル画面が出ているか。ポーズ画面やロビーの画面が、これを見て自分を隠す。</summary>
     public static bool IsVisible { get; private set; }
 
-    private enum Page
+    /// <summary>画面の種類（<see cref="TitleScreenPreview"/> で、見本に出す画面を選ぶのにも使う）。</summary>
+    public enum Page
     {
         Main,
         Create,
@@ -120,8 +121,8 @@ public class TitleScreen : MonoBehaviour
     private int resolutionIndex;
     private FullScreenMode pendingScreenMode;
 
-    private CursorLockMode cursorLockBefore;
-    private bool cursorVisibleBefore;
+    /// <summary>編集中に Scene・Game ビューへ出す見本か（<see cref="TitleScreenPreview"/> が作る）。見本は数えない。</summary>
+    private bool isPreview;
 
     // ------------------------------------------------------------
     // 作る・出し入れ
@@ -130,9 +131,13 @@ public class TitleScreen : MonoBehaviour
     [RuntimeInitializeOnLoadMethod(RuntimeInitializeLoadType.AfterSceneLoad)]
     private static void AutoCreate()
     {
-        if (FindFirstObjectByType<TitleScreen>(FindObjectsInactive.Include) != null)
+        foreach (TitleScreen existing in FindObjectsByType<TitleScreen>(FindObjectsInactive.Include, FindObjectsSortMode.None))
         {
-            return;
+            // 編集中の見本（TitleScreenPreview）が万一残っていても、本物は作る
+            if (!existing.isPreview)
+            {
+                return;
+            }
         }
 
         GameObject created = new GameObject("TitleScreen (自動)");
@@ -257,16 +262,15 @@ public class TitleScreen : MonoBehaviour
 
         if (visible)
         {
-            cursorLockBefore = Cursor.lockState;
-            cursorVisibleBefore = Cursor.visible;
             EnsureEventSystem();
             ShowPage(Page.Main);
         }
-        else
-        {
-            Cursor.lockState = cursorLockBefore;
-            Cursor.visible = cursorVisibleBefore;
-        }
+
+        // **閉じたときも、カーソルは出したままにする。**（2026/10/6・大槻さん「ロビーでクリックするたびにカーソルが隠れる」）
+        // 以前は「開く前の状態に戻す」にしていたが、起動直後に閉じる（Awake）ときに、まだ覚えていない値＝「隠す」に戻してしまい、
+        // ロビーでカーソルが消えていた（エディタでは、Game ビューをクリックするたびに隠れる）
+        Cursor.lockState = CursorLockMode.None;
+        Cursor.visible = true;
     }
 
     private void ShowPage(Page page)
@@ -529,6 +533,52 @@ public class TitleScreen : MonoBehaviour
 
         BuildBusyOverlay();
     }
+
+#if UNITY_EDITOR
+    /// <summary>
+    /// **編集中に Scene・Game ビューへ出す見本を組み立てる。**（<see cref="TitleScreenPreview"/> から呼ぶ）
+    /// 再生したときと同じ組み立て方で作るので、見た目は本物と同じ。ボタンを押しても何も起きない（通信やシーンの移動はしない）。
+    /// </summary>
+    public void BuildPreview(TitleScreenTheme previewTheme, Page page)
+    {
+        isPreview = true;
+
+        theme = previewTheme;
+        if (theme == null)
+        {
+            theme = ScriptableObject.CreateInstance<TitleScreenTheme>();
+            theme.hideFlags = HideFlags.DontSave;
+        }
+
+        font = UiFont.Find(theme.fontSize);
+        lanAddress = PlayerPrefs.GetString(LastLanAddressKey, "127.0.0.1");
+
+        Build();
+
+        current = page;
+        foreach (KeyValuePair<Page, GameObject> pair in pages)
+        {
+            pair.Value.SetActive(pair.Key == page);
+        }
+
+        // ShowPage と同じ中身の更新（パブリックの一覧の検索だけは、通信するのでしない）
+        switch (page)
+        {
+            case Page.Main:
+                RefreshMainName();
+                break;
+            case Page.Create:
+                RefreshCreatePage();
+                break;
+            case Page.FindPublic:
+                publicListMessage.text = "（見本）ここに、公開されているサーバーの一覧が出ます";
+                break;
+            case Page.Settings:
+                ShowSettingsTab(settingsTab);
+                break;
+        }
+    }
+#endif
 
     private void BuildBackground()
     {

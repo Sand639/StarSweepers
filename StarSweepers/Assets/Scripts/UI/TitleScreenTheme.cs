@@ -89,4 +89,14 @@ public class TitleScreenTheme : ScriptableObject
     [Header("大きさ（1920×1080 を基準にした値）")]
     [Tooltip("メインのボタンの大きさ")]
     public Vector2 mainButtonSize = new Vector2(420f, 76f);
+
+#if UNITY_EDITOR
+    /// <summary>インスペクターで値が変わったとき（編集中の見本 <see cref="TitleScreenPreview"/> を描き直すのに使う）。</summary>
+    public static event System.Action EditorChanged;
+
+    private void OnValidate()
+    {
+        EditorChanged?.Invoke();
+    }
+#endif
 }
