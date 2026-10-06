@@ -18,6 +18,8 @@ public enum PullAblePlateDirection
 [RequireComponent(typeof(Rigidbody))]
 public class PullAblePlate : MonoBehaviour
 {
+    private static readonly HashSet<PullAblePlate> EnabledPlates = new();
+
     [Header("拉扯移動")]
     [Min(0f)]
     [SerializeField] private float moveDistance = 2f;
@@ -57,7 +59,14 @@ public class PullAblePlate : MonoBehaviour
 
     private void OnEnable()
     {
+        EnabledPlates.Add(this);
         RefreshPullPointStates();
+    }
+
+    private void OnDisable()
+    {
+        EnabledPlates.Remove(this);
+        passengers.Clear();
     }
 
     private void OnValidate()
@@ -84,6 +93,7 @@ public class PullAblePlate : MonoBehaviour
             return;
         }
 
+        EnabledPlates.Add(this);
         passengers[playerRoot] = controller;
     }
 
@@ -98,6 +108,24 @@ public class PullAblePlate : MonoBehaviour
     public bool IsPlayerOnPlate(Transform playerRoot)
     {
         return playerRoot != null && passengers.ContainsKey(playerRoot);
+    }
+
+    public static PullAblePlate FindPlateCarrying(Transform playerRoot)
+    {
+        if (playerRoot == null)
+        {
+            return null;
+        }
+
+        foreach (PullAblePlate plate in EnabledPlates)
+        {
+            if (plate != null && plate.isActiveAndEnabled && plate.IsPlayerOnPlate(playerRoot))
+            {
+                return plate;
+            }
+        }
+
+        return null;
     }
 
     public bool IsDirectionActive(PullAblePlateDirection direction)

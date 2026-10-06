@@ -118,6 +118,111 @@ public class PullAblePlateTests
         }
     }
 
+    [Test]
+    public void AnchorCanOnlyBeHookedByAPlayerRidingAPlate()
+    {
+        GameObject plateObject = CreatePlate(out PullAblePlate plate);
+        GameObject passenger = CreatePlayer("Passenger", out CharacterController passengerController);
+        GameObject outsider = CreatePlayer("Outsider", out _);
+        GameObject anchorObject = CreateAnchor(new Vector3(10f, 0f, 0f), out PullAblePlateAnchor anchor);
+
+        try
+        {
+            Assert.That(anchor.CanBeHookedBy(passenger.transform), Is.False);
+
+            plate.RegisterPassenger(passenger.transform, passengerController);
+
+            Assert.That(anchor.CanBeHookedBy(passenger.transform), Is.True);
+            Assert.That(anchor.CanBeHookedBy(outsider.transform), Is.False);
+        }
+        finally
+        {
+            Object.DestroyImmediate(plateObject);
+            Object.DestroyImmediate(passenger);
+            Object.DestroyImmediate(outsider);
+            Object.DestroyImmediate(anchorObject);
+        }
+    }
+
+    [Test]
+    public void AnchorCompletionMovesPlateAndPassengerTowardAnchor()
+    {
+        GameObject plateObject = CreatePlate(out PullAblePlate plate);
+        GameObject passenger = CreatePlayer("Passenger", out CharacterController controller);
+        GameObject anchorObject = CreateAnchor(new Vector3(10f, 4f, 0f), out PullAblePlateAnchor anchor);
+
+        try
+        {
+            passenger.transform.position = new Vector3(0f, 1f, 0f);
+            Physics.SyncTransforms();
+            Vector3 passengerStart = passenger.transform.position;
+            plate.RegisterPassenger(passenger.transform, controller);
+
+            anchor.SetHooked(true);
+            anchor.CompletePull(new HookPullContext(passengerStart, 1f, passenger.transform));
+
+            Vector3 expectedDelta = new Vector3(2f, 0f, 0f);
+            Assert.That(Vector3.Distance(plateObject.transform.position, expectedDelta), Is.LessThan(0.0001f));
+            Assert.That(Vector3.Distance(passenger.transform.position, passengerStart + expectedDelta), Is.LessThan(0.0001f));
+        }
+        finally
+        {
+            Object.DestroyImmediate(plateObject);
+            Object.DestroyImmediate(passenger);
+            Object.DestroyImmediate(anchorObject);
+        }
+    }
+
+    [Test]
+    public void AnchorCompletionDoesNothingAfterPlayerLeavesThePlate()
+    {
+        GameObject plateObject = CreatePlate(out PullAblePlate plate);
+        GameObject passenger = CreatePlayer("Passenger", out CharacterController controller);
+        GameObject anchorObject = CreateAnchor(new Vector3(10f, 0f, 0f), out PullAblePlateAnchor anchor);
+
+        try
+        {
+            plate.RegisterPassenger(passenger.transform, controller);
+            Assert.That(anchor.CanBeHookedBy(passenger.transform), Is.True);
+            anchor.SetHooked(true);
+            plate.UnregisterPassenger(passenger.transform);
+
+            anchor.CompletePull(new HookPullContext(passenger.transform.position, 1f, passenger.transform));
+
+            Assert.That(plateObject.transform.position, Is.EqualTo(Vector3.zero));
+        }
+        finally
+        {
+            Object.DestroyImmediate(plateObject);
+            Object.DestroyImmediate(passenger);
+            Object.DestroyImmediate(anchorObject);
+        }
+    }
+
+    [Test]
+    public void AnchorAtTheSameHorizontalPositionDoesNotMoveThePlate()
+    {
+        GameObject plateObject = CreatePlate(out PullAblePlate plate);
+        GameObject passenger = CreatePlayer("Passenger", out CharacterController controller);
+        GameObject anchorObject = CreateAnchor(new Vector3(0f, 10f, 0f), out PullAblePlateAnchor anchor);
+
+        try
+        {
+            plate.RegisterPassenger(passenger.transform, controller);
+            anchor.SetHooked(true);
+
+            anchor.CompletePull(new HookPullContext(passenger.transform.position, 1f, passenger.transform));
+
+            Assert.That(plateObject.transform.position, Is.EqualTo(Vector3.zero));
+        }
+        finally
+        {
+            Object.DestroyImmediate(plateObject);
+            Object.DestroyImmediate(passenger);
+            Object.DestroyImmediate(anchorObject);
+        }
+    }
+
     private static GameObject CreatePlate(out PullAblePlate plate)
     {
         GameObject plateObject = new GameObject("PullAblePlate");
@@ -150,5 +255,15 @@ public class PullAblePlateTests
         serializedPoint.FindProperty("direction").enumValueIndex = (int)direction;
         serializedPoint.ApplyModifiedPropertiesWithoutUndo();
         return pointObject;
+    }
+
+    private static GameObject CreateAnchor(Vector3 position, out PullAblePlateAnchor anchor)
+    {
+        GameObject anchorObject = new GameObject("PullAblePlateAnchor");
+        anchorObject.transform.position = position;
+        BoxCollider trigger = anchorObject.AddComponent<BoxCollider>();
+        trigger.isTrigger = true;
+        anchor = anchorObject.AddComponent<PullAblePlateAnchor>();
+        return anchorObject;
     }
 }
