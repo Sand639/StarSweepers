@@ -4,6 +4,9 @@ using UnityEngine;
 
 public class PullAblePlateTests
 {
+    private const string PlatePrefabPath = "Assets/Prefabs/SpaceJunk/Gimmick/PullAblePlate.prefab";
+    private const string AnchorPrefabPath = "Assets/Prefabs/SpaceJunk/Gimmick/PullAblePlateAnchor.prefab";
+
     [TestCase(PullAblePlateDirection.Front, 0f, 1f)]
     [TestCase(PullAblePlateDirection.FrontRight, 1f, 1f)]
     [TestCase(PullAblePlateDirection.Right, 1f, 0f)]
@@ -290,6 +293,72 @@ public class PullAblePlateTests
         }
     }
 
+    [Test]
+    public void PlatePrefabUsesDedicatedComponentsAndEightActivePullPoints()
+    {
+        GameObject prefab = AssetDatabase.LoadAssetAtPath<GameObject>(PlatePrefabPath);
+
+        Assert.That(prefab, Is.Not.Null);
+        PullAblePlate plate = prefab.GetComponent<PullAblePlate>();
+        Assert.That(plate, Is.Not.Null);
+        Assert.That(prefab.GetComponent<MovableBlock>(), Is.Null);
+
+        Rigidbody body = prefab.GetComponent<Rigidbody>();
+        Assert.That(body, Is.Not.Null);
+        Assert.That(body.isKinematic, Is.True);
+        Assert.That(body.useGravity, Is.False);
+
+        MeshCollider floor = prefab.GetComponent<MeshCollider>();
+        Assert.That(floor, Is.Not.Null);
+        Assert.That(floor.sharedMesh, Is.Not.Null);
+
+        AssertPlatePullPoint(prefab.transform, "Front", PullAblePlateDirection.Front);
+        AssertPlatePullPoint(prefab.transform, "FrontRight", PullAblePlateDirection.FrontRight);
+        AssertPlatePullPoint(prefab.transform, "Right", PullAblePlateDirection.Right);
+        AssertPlatePullPoint(prefab.transform, "BackRight", PullAblePlateDirection.BackRight);
+        AssertPlatePullPoint(prefab.transform, "Back", PullAblePlateDirection.Back);
+        AssertPlatePullPoint(prefab.transform, "BackLeft", PullAblePlateDirection.BackLeft);
+        AssertPlatePullPoint(prefab.transform, "Left", PullAblePlateDirection.Left);
+        AssertPlatePullPoint(prefab.transform, "FrontLeft", PullAblePlateDirection.FrontLeft);
+
+        Transform passengerArea = prefab.transform.Find("PassengerArea");
+        Assert.That(passengerArea, Is.Not.Null);
+        Collider passengerTrigger = passengerArea.GetComponent<Collider>();
+        Assert.That(passengerTrigger, Is.Not.Null);
+        Assert.That(passengerTrigger.isTrigger, Is.True);
+        Assert.That(passengerArea.GetComponent<PullAblePlatePassengerArea>(), Is.Not.Null);
+
+        SerializedObject serializedPlate = new SerializedObject(plate);
+        string[] activeProperties =
+        {
+            "frontActive",
+            "frontRightActive",
+            "rightActive",
+            "backRightActive",
+            "backActive",
+            "backLeftActive",
+            "leftActive",
+            "frontLeftActive"
+        };
+        foreach (string propertyName in activeProperties)
+        {
+            Assert.That(serializedPlate.FindProperty(propertyName).boolValue, Is.True, propertyName);
+        }
+    }
+
+    [Test]
+    public void AnchorPrefabIsVisibleAndHookableThroughATrigger()
+    {
+        GameObject prefab = AssetDatabase.LoadAssetAtPath<GameObject>(AnchorPrefabPath);
+
+        Assert.That(prefab, Is.Not.Null);
+        Assert.That(prefab.GetComponent<PullAblePlateAnchor>(), Is.Not.Null);
+        Assert.That(prefab.GetComponent<MeshRenderer>(), Is.Not.Null);
+        Collider trigger = prefab.GetComponent<Collider>();
+        Assert.That(trigger, Is.Not.Null);
+        Assert.That(trigger.isTrigger, Is.True);
+    }
+
     private static GameObject CreatePlate(out PullAblePlate plate)
     {
         GameObject plateObject = new GameObject("PullAblePlate");
@@ -332,5 +401,23 @@ public class PullAblePlateTests
         trigger.isTrigger = true;
         anchor = anchorObject.AddComponent<PullAblePlateAnchor>();
         return anchorObject;
+    }
+
+    private static void AssertPlatePullPoint(
+        Transform root,
+        string childName,
+        PullAblePlateDirection expectedDirection)
+    {
+        Transform child = root.Find(childName);
+        Assert.That(child, Is.Not.Null, $"{childName} 拉點不存在");
+        Assert.That(child.gameObject.activeSelf, Is.True, $"{childName} 必須預設啟用");
+
+        Collider trigger = child.GetComponent<Collider>();
+        Assert.That(trigger, Is.Not.Null, $"{childName} 沒有 Collider");
+        Assert.That(trigger.isTrigger, Is.True, $"{childName} 的 Collider 必須是 Trigger");
+
+        PullAblePlatePullPoint pullPoint = child.GetComponent<PullAblePlatePullPoint>();
+        Assert.That(pullPoint, Is.Not.Null, $"{childName} 沒有 PullAblePlatePullPoint");
+        Assert.That(pullPoint.Direction, Is.EqualTo(expectedDirection));
     }
 }
