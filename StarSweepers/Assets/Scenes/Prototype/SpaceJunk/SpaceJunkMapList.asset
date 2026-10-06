@@ -63,13 +63,7 @@ MonoBehaviour:
     goalMask: 10
   - scene: {fileID: 102900000, guid: 6bcb86547aa4af447a8edab30a767437, type: 3}
     showInLobby: 1
-    displayName: "ベルトコンベアA"
-    sceneName: STAGE_06_A
-    scenePath: Assets/Scenes/Prototype/SpaceJunk/Stage/STAGE_06_A.unity
-    goalMask: 10
-  - scene: {fileID: 102900000, guid: 9fb8e44e6679f6743af0164ba16b56fd, type: 3}
-    showInLobby: 1
-    displayName: "ベルトコンベアB"
-    sceneName: STAGE_06_B
-    scenePath: Assets/Scenes/Prototype/SpaceJunk/Stage/STAGE_06_B.unity
+    displayName: "\u30D9\u30EB\u30C8\u30B3\u30F3\u30D9\u30A2A"
+    sceneName: STAGE_06
+    scenePath: Assets/Scenes/Prototype/SpaceJunk/Stage/STAGE_06.unity
     goalMask: 10
