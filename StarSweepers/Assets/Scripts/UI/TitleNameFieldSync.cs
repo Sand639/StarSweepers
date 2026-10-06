@@ -1,21 +1,10 @@
 using UnityEngine;
-using UnityEngine.UI;
 
-/// <summary>名前の入力欄が開くたびに、保存されている名前を入れ直す（別の画面で変えた名前に合わせる）。</summary>
+/// <summary>
+/// **使わなくなった。**（2026/10/6。名前の入力欄を開くたびに入れ直す働きは <see cref="TitleInput"/> に移した）
+/// Unity の Project ウィンドウで、このファイルを削除してよい（OS のエクスプローラーでは消さないこと）。
+/// </summary>
+[AddComponentMenu("")]
 public class TitleNameFieldSync : MonoBehaviour
 {
-    private InputField field;
-
-    public void Setup(InputField target)
-    {
-        field = target;
-    }
-
-    private void OnEnable()
-    {
-        if (field != null && field.text != GameSettings.PlayerName)
-        {
-            field.text = GameSettings.PlayerName;
-        }
-    }
 }

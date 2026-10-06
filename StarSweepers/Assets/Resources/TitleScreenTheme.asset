@@ -12,25 +12,10 @@ MonoBehaviour:
   m_Script: {fileID: 11500000, guid: f66bec690b03425baf784f154965b951, type: 3}
   m_Name: TitleScreenTheme
   m_EditorClassIdentifier: Assembly-CSharp::TitleScreenTheme
-  background: {fileID: 21300000, guid: 0051ed586d64b7a409d1a5f3f40e6713, type: 3}
-  logo: {fileID: 0}
   button: {fileID: 0}
   buttonHover: {fileID: 0}
-  panel: {fileID: 0}
-  accentPanel: {fileID: 0}
-  titleText: Star Sweepers
-  versionText: 
-  buttonFontSize: 30
-  fontSize: 24
-  backgroundTint: {r: 0, g: 0, b: 0, a: 0.25}
   buttonColor: {r: 0.1, g: 0.12, b: 0.12, a: 0.92}
   buttonHoverColor: {r: 0.12, g: 0.2, b: 0.14, a: 0.96}
   buttonOutlineColor: {r: 0.2, g: 0.95, b: 0.35, a: 1}
   buttonTextColor: {r: 1, g: 1, b: 1, a: 1}
   buttonHoverTextColor: {r: 0.3, g: 1, b: 0.45, a: 1}
-  panelColor: {r: 0.08, g: 0.08, b: 0.1, a: 0.75}
-  accentColor: {r: 0.58, g: 0.1, b: 0.95, a: 0.95}
-  textColor: {r: 1, g: 1, b: 1, a: 1}
-  noteColor: {r: 1, g: 0.85, b: 0.25, a: 1}
-  titleColor: {r: 1, g: 0.95, b: 0.55, a: 1}
-  mainButtonSize: {x: 420, y: 76}
