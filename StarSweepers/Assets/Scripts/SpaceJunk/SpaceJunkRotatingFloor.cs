@@ -129,24 +129,54 @@ public class SpaceJunkRotatingFloor : MonoBehaviour
 
         for (int i = 0; i < count; i++)
         {
-            FishingPlayerController player = overlapBuffer[i].GetComponentInParent<FishingPlayerController>();
-            if (player == null || !player.isActiveAndEnabled)
+            CharacterController controller = overlapBuffer[i] as CharacterController;
+            if (controller == null || !controller.enabled || controller.GetComponent<FishingPlayerController>() == null)
             {
                 continue;
             }
 
-            CharacterController controller = player.GetComponent<CharacterController>();
-            if (controller == null || !controller.enabled || controller != overlapBuffer[i])
+            // **そのプレイヤーを動かしているPCだけが運ぶ。**（2026/10/6 見直し）
+            // オンラインでは、プレイヤーの位置は本人のPCが決めて全員に配る（NetworkTransform は「動きは本人」）。
+            // ホストもクライアントも、自分の画面で回っている床に合わせて**自分のぶんだけ**を運ぶので、全員が一緒に回る。
+            // 以前は「操作の部品が有効か」で見分けていたが、復活待ちなどで操作が止まっている間に運ばれなくなるので、
+            // 持ち主かどうかで見分けるようにした
+            NetworkObject networkObject = controller.GetComponent<NetworkObject>();
+            if (networkObject != null && networkObject.IsSpawned && !networkObject.IsOwner)
             {
                 continue;
             }
 
             // 床の中心を軸に、回ったぶんだけ位置をずらす
-            Vector3 offset = player.transform.position - transform.position;
+            Vector3 offset = controller.transform.position - transform.position;
             Vector3 moved = delta * offset - offset;
             moved.y = 0f;
             controller.Move(moved);
+
+            LogCarry(networkObject);
         }
+    }
+
+    /// <summary>直前に「運んだ」ログを出した時刻。</summary>
+    private float lastCarryLogTime = -10f;
+
+    /// <summary>
+    /// 運んだことをログに出す（1回の回転につき1回まで）。**ホスト以外のPCでも運べているか**を確かめるため。
+    /// </summary>
+    private void LogCarry(NetworkObject networkObject)
+    {
+        if (Time.time - lastCarryLogTime < intervalSeconds * 0.5f)
+        {
+            return;
+        }
+
+        lastCarryLogTime = Time.time;
+
+        NetworkManager network = NetworkManager.Singleton;
+        string who = network == null || !network.IsListening
+            ? "1人用"
+            : (network.IsServer ? "ホスト" : "クライアント") + $"（接続番号 {network.LocalClientId}）";
+        Debug.Log($"[回転床] {who}のPCで、自分のプレイヤーを {name} と一緒に回しました" +
+                  (networkObject != null ? $"（プレイヤー {networkObject.OwnerClientId}）" : string.Empty));
     }
 
     private void OnDrawGizmosSelected()
