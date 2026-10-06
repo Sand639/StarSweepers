@@ -93,9 +93,21 @@ public class InternetConnection : MonoBehaviour
     /// <summary>いまの部屋にパスワードが付いているか（ホストのPCで使う）。</summary>
     public bool HasPassword => !string.IsNullOrEmpty(CurrentPassword);
 
-    /// <summary>パスワードの文字数の下限・上限（中継サーバーの決まり）。</summary>
-    public const int PasswordMinLength = 8;
-    public const int PasswordMaxLength = 64;
+    /// <summary>
+    /// **パスワードの文字数**（遊ぶ人が入れる文字数。2026/10/6・大槻さんの決まり：1〜32文字）。
+    /// 中継サーバーは 8〜64 文字しか受け付けないので、8文字に足りないときは<see cref="ToSessionPassword"/> で後ろに a を足して渡す。
+    /// </summary>
+    public const int PasswordMinLength = 1;
+    public const int PasswordMaxLength = 32;
+
+    /// <summary>入力欄に打てる文字数。32文字を超えたことを知らせられるよう、少し多めに打てるようにしておく。</summary>
+    public const int PasswordInputLimit = 64;
+
+    /// <summary>中継サーバーが受け付ける、いちばん短いパスワード。</summary>
+    private const int SessionPasswordMinLength = 8;
+
+    /// <summary>32文字を超えたときに出す文。</summary>
+    public const string PasswordTooLongMessage = "パスワードは32文字までです";
 
     /// <summary>次に作る部屋のパスワード（空ならなし）。</summary>
     private string password = string.Empty;
@@ -110,15 +122,29 @@ public class InternetConnection : MonoBehaviour
             return null;
         }
 
-        return value.Length < PasswordMinLength || value.Length > PasswordMaxLength
-            ? $"パスワードは {PasswordMinLength}〜{PasswordMaxLength} 文字にしてください（空ならパスワードなし）。"
-            : null;
+        return value.Length > PasswordMaxLength ? PasswordTooLongMessage : null;
+    }
+
+    /// <summary>
+    /// **中継サーバーに渡すパスワードにする。** 8文字に足りなければ、足りない数だけ後ろに「a」を足す
+    /// （例：「B」→「Baaaaaaa」）。作る側も入る側も同じ足し方をするので、遊ぶ人は「B」と入れるだけでよい。空なら null（パスワードなし）。
+    /// </summary>
+    private static string ToSessionPassword(string value)
+    {
+        if (string.IsNullOrEmpty(value))
+        {
+            return null;
+        }
+
+        return value.Length < SessionPasswordMinLength
+            ? value + new string('a', SessionPasswordMinLength - value.Length)
+            : value;
     }
 
     /// <summary>入る側のパスワードの設定（空なら付けない）。</summary>
     private static JoinSessionOptions JoinOptions(string joinPassword)
     {
-        return string.IsNullOrEmpty(joinPassword) ? null : new JoinSessionOptions { Password = joinPassword };
+        return string.IsNullOrEmpty(joinPassword) ? null : new JoinSessionOptions { Password = ToSessionPassword(joinPassword) };
     }
 
     /// <summary>
@@ -151,7 +177,7 @@ public class InternetConnection : MonoBehaviour
         try
         {
             IHostSession host = session.AsHost();
-            host.Password = newPassword;
+            host.Password = ToSessionPassword(newPassword);
             await host.SavePropertiesAsync();
             CurrentPassword = newPassword;
             Debug.Log("[NET] 部屋のパスワードを変えました。");
@@ -200,7 +226,7 @@ public class InternetConnection : MonoBehaviour
             return;
         }
 
-        // パスワードは 8〜64 文字（空ならなし）。だめなら作る前に止める
+        // パスワードは 32 文字まで（空ならなし）。だめなら作る前に止める
         string passwordProblem = PasswordProblem(password);
         if (passwordProblem != null)
         {
@@ -228,7 +254,7 @@ public class InternetConnection : MonoBehaviour
                 Name = sessionName,
                 MaxPlayers = maxPlayers,
                 IsPrivate = isPrivate,
-                Password = string.IsNullOrEmpty(password) ? null : password,
+                Password = ToSessionPassword(password),
             }.WithRelayNetwork(string.IsNullOrWhiteSpace(region) ? null : region.Trim());
 
             // 部屋ができると、通信の開始（ホストとしての待ち受け）まで自動で行われる
@@ -252,6 +278,13 @@ public class InternetConnection : MonoBehaviour
     {
         if (IsBusy)
         {
+            return;
+        }
+
+        if (PasswordProblem(joinPassword) != null)
+        {
+            State = Phase.Failed;
+            Message = PasswordProblem(joinPassword);
             return;
         }
 
@@ -355,6 +388,13 @@ public class InternetConnection : MonoBehaviour
     {
         if (IsBusy || string.IsNullOrEmpty(sessionId))
         {
+            return;
+        }
+
+        if (PasswordProblem(joinPassword) != null)
+        {
+            State = Phase.Failed;
+            Message = PasswordProblem(joinPassword);
             return;
         }
 

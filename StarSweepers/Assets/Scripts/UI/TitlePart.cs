@@ -26,6 +26,7 @@ public enum TitlePartRole
     PrivateCheckText = 25,
     PrivateRow = 26,
     PasswordRow = 27,
+    PublicCheckText = 28,
 
     // パブリックサーバーの一覧
     PublicListContent = 30,

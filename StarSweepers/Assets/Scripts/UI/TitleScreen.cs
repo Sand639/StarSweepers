@@ -323,25 +323,56 @@ public class TitleScreen : MonoBehaviour
             TitleInputKind kind = input.Kind;
             Text counter = input.Counter;
 
-            field.characterLimit = MaxLengthOf(kind);
+            field.characterLimit = InputLimitOf(kind);
             field.text = ValueOf(kind);
 
             field.onValueChanged.AddListener(value =>
             {
                 SetValue(kind, value);
-                UpdateCounter(counter, value, field.characterLimit);
+                UpdateCounter(kind, counter, value);
             });
 
-            UpdateCounter(counter, field.text, field.characterLimit);
+            UpdateCounter(kind, counter, field.text);
         }
     }
 
-    private static void UpdateCounter(Text counter, string value, int maxLength)
+    private static bool IsPassword(TitleInputKind kind)
     {
-        if (counter != null)
+        return kind == TitleInputKind.CreatePassword || kind == TitleInputKind.JoinPassword;
+    }
+
+    /// <summary>
+    /// 入力欄に打てる文字数。パスワードは 32 文字を超えたことを知らせたいので、少し多めに打てるようにする。
+    /// </summary>
+    private static int InputLimitOf(TitleInputKind kind)
+    {
+        return IsPassword(kind) ? InternetConnection.PasswordInputLimit : MaxLengthOf(kind);
+    }
+
+    /// <summary>「いま何文字か」の文字の、プレハブで決めた色（32文字を超えて赤くしたあと、戻すため）。</summary>
+    private readonly Dictionary<Text, Color> counterColors = new Dictionary<Text, Color>();
+
+    /// <summary>右端の「いま何文字か」。パスワードが 32 文字を超えたら「パスワードは32文字までです」を出す。</summary>
+    private void UpdateCounter(TitleInputKind kind, Text counter, string value)
+    {
+        if (counter == null)
         {
-            counter.text = $"{value.Length}/{maxLength}";
+            return;
         }
+
+        if (!counterColors.TryGetValue(counter, out Color normal))
+        {
+            normal = counter.color;
+            counterColors[counter] = normal;
+        }
+
+        int max = MaxLengthOf(kind);
+        bool tooLong = IsPassword(kind) && value.Length > max;
+
+        // 長い文が切れないように、左へはみ出して出せるようにしておく
+        counter.horizontalOverflow = HorizontalWrapMode.Overflow;
+        counter.text = tooLong ? InternetConnection.PasswordTooLongMessage : $"{value.Length}/{max}";
+        counter.color = tooLong ? new Color(1f, 0.45f, 0.4f, 1f) : normal;
     }
 
     private static int MaxLengthOf(TitleInputKind kind)
@@ -418,7 +449,7 @@ public class TitleScreen : MonoBehaviour
             if (input.Field.text != value)
             {
                 input.Field.SetTextWithoutNotify(value);
-                UpdateCounter(input.Counter, value, input.Field.characterLimit);
+                UpdateCounter(input.Kind, input.Counter, value);
             }
         }
     }
@@ -459,6 +490,8 @@ public class TitleScreen : MonoBehaviour
             case TitleButtonAction.UseInternet: SetCreateLan(false); break;
             case TitleButtonAction.UseLan: SetCreateLan(true); break;
             case TitleButtonAction.TogglePrivate: TogglePrivate(); break;
+            case TitleButtonAction.SetPublic: SetCreatePrivate(false); break;
+            case TitleButtonAction.SetPrivate: SetCreatePrivate(true); break;
 
             case TitleButtonAction.OpenFindPrivate: ShowPage(Page.FindPrivate); break;
             case TitleButtonAction.OpenFindPublic: ShowPage(Page.FindPublic); break;
@@ -552,7 +585,11 @@ public class TitleScreen : MonoBehaviour
         SetText(TitlePartRole.MaxPlayersText, $"{createMaxPlayers} 人");
         SetSelectedLook(TitleButtonAction.UseInternet, !createLan);
         SetSelectedLook(TitleButtonAction.UseLan, createLan);
+        // パブリック／プライベートは、どちらか片方だけにチェックが付く（2026/10/6）
         SetText(TitlePartRole.PrivateCheckText, createPrivate ? "■" : "□");
+        SetText(TitlePartRole.PublicCheckText, createPrivate ? "□" : "■");
+        SetSelectedLook(TitleButtonAction.SetPrivate, createPrivate);
+        SetSelectedLook(TitleButtonAction.SetPublic, !createPrivate);
 
         GameObject privateRow = PartObject(TitlePartRole.PrivateRow);
         if (privateRow != null)
@@ -576,7 +613,7 @@ public class TitleScreen : MonoBehaviour
         {
             SetText(TitlePartRole.CodeBoxTitle, "参加コード");
             SetText(TitlePartRole.CodeBoxBody,
-                "サーバーを作成すると発行されます（ロビーの左上の「接続」に出ます）\n参加する人は「サーバーを探す → プライベートサーバー」で入れる");
+                "サーバーを作成すると発行されます（ロビーの左上に出ます）\n参加する人は「サーバーを探す → プライベートサーバー」で入れる");
         }
     }
 
@@ -595,6 +632,13 @@ public class TitleScreen : MonoBehaviour
     private void TogglePrivate()
     {
         createPrivate = !createPrivate;
+        RefreshCreatePage();
+    }
+
+    /// <summary>パブリック（false）かプライベート（true）かを決める。押したほうにだけチェックが付く。</summary>
+    private void SetCreatePrivate(bool value)
+    {
+        createPrivate = value;
         RefreshCreatePage();
     }
 

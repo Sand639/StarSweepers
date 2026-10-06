@@ -86,7 +86,8 @@ public class SpaceJunkLobbyUI : MonoBehaviour
         // タイトル画面が出ている間・ロビーのゲーム設定を開いている間も隠す（2026/10/6）
         if (connectionUi != null)
         {
-            connectionUi.enabled = SpaceJunkRound.Current == null && !TitleScreen.IsVisible && !SpaceJunkLobbyScreen.IsSettingsOpen;
+            // 古い「接続」の窓は使わない（つなぐのはタイトル画面。別の合言葉が出て紛らわしいため。2026/10/6）
+            connectionUi.enabled = false;
         }
 
         if (statusHud != null)

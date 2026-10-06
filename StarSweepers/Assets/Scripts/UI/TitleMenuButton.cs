@@ -24,6 +24,8 @@ public enum TitleButtonAction
     UseInternet = 14,
     UseLan = 15,
     TogglePrivate = 16,
+    SetPublic = 17,
+    SetPrivate = 18,
 
     // サーバーを探す
     OpenFindPrivate = 20,
