@@ -46,6 +46,27 @@ public class SpaceJunkLobbyScreen : MonoBehaviour
     [Tooltip("左上の案内を書き直す間隔（秒）")]
     [SerializeField] private float hudRefreshSeconds = 0.2f;
 
+    /// <summary>プレハブの作りの版（作るツールが入れる。古ければツールが作り直す）。</summary>
+    [SerializeField, HideInInspector] private int prefabVersion;
+
+    public int PrefabVersion => prefabVersion;
+
+#if UNITY_EDITOR
+    /// <summary>プレハブを作るツールが版を入れる。</summary>
+    public void EditorSetPrefabVersion(int value)
+    {
+        prefabVersion = value;
+    }
+#endif
+
+    /// <summary>
+    /// **ゲーム設定の入力欄に数字を打ち込んでいる最中か。** 打ち込み中は、E（設定端末）や Esc（閉じる）を読まない。
+    /// </summary>
+    public static bool IsTyping { get; private set; }
+
+    /// <summary>前のフレームで打ち込み中だったか。入力欄を Esc で抜けたフレームに、画面まで閉じないようにするため。</summary>
+    private static bool wasTyping;
+
     /// <summary>ゲーム設定の画面が開いているか。開いている間は、ほかの操作（R で戻る など）を止める。</summary>
     public static bool IsSettingsOpen { get; private set; }
 
@@ -108,10 +129,15 @@ public class SpaceJunkLobbyScreen : MonoBehaviour
     private void OnDisable()
     {
         IsSettingsOpen = false;
+        IsTyping = false;
+        wasTyping = false;
     }
 
     private void Update()
     {
+        wasTyping = IsTyping;
+        IsTyping = IsSettingsOpen && IsInputFocused();
+
         NetworkManager manager = NetworkManager.Singleton;
         bool connected = manager != null && (manager.IsServer || manager.IsConnectedClient);
         bool inLobby = connected && SpaceJunkRound.Current == null;
@@ -160,7 +186,8 @@ public class SpaceJunkLobbyScreen : MonoBehaviour
     /// <summary>Esc（キーボード）か B（コントローラー）が押されたか。ポーズ画面が開いている間は見ない。</summary>
     private static bool WasBackPressed()
     {
-        if (GamePause.BlocksInput)
+        // 打ち込み中の Esc は「入力をやめる」に使う（画面までは閉じない）
+        if (GamePause.BlocksInput || IsTyping || wasTyping)
         {
             return false;
         }
@@ -209,6 +236,131 @@ public class SpaceJunkLobbyScreen : MonoBehaviour
         }
 
         valueRows.AddRange(GetComponentsInChildren<SpaceJunkLobbyValueRow>(true));
+        WireInputs();
+    }
+
+    // ------------------------------------------------------------
+    // 数字の入力欄（めっちゃカメレオンと同じく、± のボタンのほかに打ち込める。2026/10/6）
+    // ------------------------------------------------------------
+
+    private void WireInputs()
+    {
+        foreach (SpaceJunkLobbyValueRow row in valueRows)
+        {
+            InputField input = row.Input;
+            if (input == null)
+            {
+                continue;
+            }
+
+            SpaceJunkLobbyValueRow target = row;
+            input.contentType = InputField.ContentType.Standard;
+            input.lineType = InputField.LineType.SingleLine;
+            input.characterLimit = 3;
+
+            // **全角数字は半角に直し、数字以外は受け付けない**
+            input.onValidateInput = (text, index, c) => ToHalfWidthDigit(c);
+
+            // Enter か、入力欄から外れたときに反映する（1文字ごとに反映すると「120」の途中の「1」が一瞬入るため）
+            input.onEndEdit.AddListener(value => ApplyTyped(target, value));
+        }
+    }
+
+    /// <summary>半角数字はそのまま、全角数字（０〜９）は半角に直す。それ以外は受け付けない（'\0' を返す）。</summary>
+    public static char ToHalfWidthDigit(char c)
+    {
+        if (c >= '0' && c <= '9')
+        {
+            return c;
+        }
+
+        if (c >= '０' && c <= '９')
+        {
+            return (char)('0' + (c - '０'));
+        }
+
+        return '\0';
+    }
+
+    /// <summary>文字列の中の全角数字を半角に直し、数字だけを残す（貼り付けなどで入ってきたとき用）。</summary>
+    public static string ToHalfWidthDigits(string text)
+    {
+        if (string.IsNullOrEmpty(text))
+        {
+            return string.Empty;
+        }
+
+        StringBuilder digits = new StringBuilder(text.Length);
+        foreach (char c in text)
+        {
+            char converted = ToHalfWidthDigit(c);
+            if (converted != '\0')
+            {
+                digits.Append(converted);
+            }
+        }
+
+        return digits.ToString();
+    }
+
+    /// <summary>打ち込んだ数字を、範囲に収めてホストの設定に入れる。空・数字でなければ元の値に戻す。</summary>
+    private void ApplyTyped(SpaceJunkLobbyValueRow row, string typed)
+    {
+        SpaceJunkSession session = SpaceJunkSession.Current;
+        if (session == null || !session.IsServer)
+        {
+            return;
+        }
+
+        string digits = ToHalfWidthDigits(typed);
+        if (int.TryParse(digits, out int value))
+        {
+            switch (row.Kind)
+            {
+                case SpaceJunkLobbyValueKind.TeamCount:
+                    session.ServerSetTeamCount(Mathf.Clamp(value, 1, SpaceJunkTeams.MaxTeams));
+                    break;
+                case SpaceJunkLobbyValueKind.RoundsToWin:
+                    session.ServerSetRoundsToWin(value);
+                    break;
+                case SpaceJunkLobbyValueKind.RoundSeconds:
+                    session.ServerSetRoundSeconds(value);
+                    break;
+            }
+        }
+
+        // 範囲に収めた値・元の値を出し直す
+        if (row.Input != null)
+        {
+            row.Input.SetTextWithoutNotify(ValueOf(session, row.Kind).ToString());
+        }
+    }
+
+    private static int ValueOf(SpaceJunkSession session, SpaceJunkLobbyValueKind kind)
+    {
+        switch (kind)
+        {
+            case SpaceJunkLobbyValueKind.TeamCount:
+                return session.TeamCount;
+            case SpaceJunkLobbyValueKind.RoundsToWin:
+                return session.RoundsToWin;
+            default:
+                return Mathf.RoundToInt(session.RoundSeconds);
+        }
+    }
+
+    /// <summary>いま入力欄に打ち込んでいるか。</summary>
+    private bool IsInputFocused()
+    {
+        foreach (SpaceJunkLobbyValueRow row in valueRows)
+        {
+            if (row.Input != null && row.Input.isFocused)
+            {
+                return true;
+            }
+        }
+
+        return false;
     }
 
     private bool IsInsideTemplate(Transform target)
@@ -295,6 +447,17 @@ public class SpaceJunkLobbyScreen : MonoBehaviour
     {
         foreach (SpaceJunkLobbyValueRow row in valueRows)
         {
+            // 入力欄があれば、打ち込み中でないときだけ、いまの値を入れ直す
+            if (row.Input != null)
+            {
+                string current = ValueOf(session, row.Kind).ToString();
+                if (!row.Input.isFocused && row.Input.text != current)
+                {
+                    row.Input.SetTextWithoutNotify(current);
+                }
+                continue;
+            }
+
             if (row.ValueText == null)
             {
                 continue;

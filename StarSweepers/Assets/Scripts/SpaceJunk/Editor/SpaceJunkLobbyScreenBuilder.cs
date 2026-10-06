@@ -45,15 +45,36 @@ public static class SpaceJunkLobbyScreenBuilder
     {
         EditorApplication.delayCall += () =>
         {
-            if (EditorApplication.isPlayingOrWillChangePlaymode || File.Exists(PrefabPath))
+            if (EditorApplication.isPlayingOrWillChangePlaymode)
             {
                 return;
             }
 
-            Debug.Log("[JUNK] ロビーの画面のプレハブが無いので作ります（初回だけ）。");
-            Build();
+            if (!File.Exists(PrefabPath))
+            {
+                Debug.Log("[JUNK] ロビーの画面のプレハブが無いので作ります（初回だけ）。");
+                Build();
+                return;
+            }
+
+            // **作りが大きく変わったときだけ、作り直す**（数字を打ち込める入力欄を足した など）。
+            // 手で直した配置は消えるので、むやみに番号を上げないこと
+            SpaceJunkLobbyScreen existing = AssetDatabase.LoadAssetAtPath<SpaceJunkLobbyScreen>(PrefabPath);
+            if (existing != null && existing.PrefabVersion < PrefabVersion)
+            {
+                Debug.LogWarning($"[JUNK] ロビーの画面のプレハブの作りが古い（{existing.PrefabVersion} → {PrefabVersion}）ので、作り直しました。" +
+                                 "手で動かした配置や、変えた画像・色は消えています。");
+                Build();
+            }
         };
     }
+
+    /// <summary>
+    /// **プレハブの作りの版。** 作りが大きく変わったとき（部品を足したなど）だけ上げる。
+    /// 上げると、古い版のプレハブは Unity を開いたときに自動で作り直される（**手で直した配置は消える**）。
+    /// 1：最初の版 ／ 2：数字を打ち込める入力欄（2026/10/6）
+    /// </summary>
+    public const int PrefabVersion = 2;
 
     [MenuItem("Tools/StarSweepers/ロビーの画面のプレハブを作り直す")]
     private static void BuildFromMenu()
@@ -169,7 +190,7 @@ public static class SpaceJunkLobbyScreenBuilder
         scaler.referenceResolution = new Vector2(1920f, 1080f);
         scaler.matchWidthOrHeight = 0.5f;
 
-        root.AddComponent<SpaceJunkLobbyScreen>();
+        root.AddComponent<SpaceJunkLobbyScreen>().EditorSetPrefabVersion(PrefabVersion);
 
         BuildHud(root.transform);
         BuildSettingsWindow(root.transform);
@@ -257,18 +278,18 @@ public static class SpaceJunkLobbyScreenBuilder
         // ---- 左の列：数の設定 ----
         Heading(p, "チーム数", new Vector2(40f, -100f), 520f);
         RectTransform teamRow = ValueRow(p, "TeamCount", new Vector2(40f, -150f), SpaceJunkLobbyValueKind.TeamCount,
-            new Vector2(90f, 0f), 340f, "2 チーム", "1〜4");
+            new Vector2(90f, 0f), 340f, "2", "チーム", "1〜4");
         ArrowButton(teamRow, "＜", new Vector2(0f, 0f), SpaceJunkLobbyAction.Step, -1);
         ArrowButton(teamRow, "＞", new Vector2(450f, 0f), SpaceJunkLobbyAction.Step, 1);
 
         Heading(p, "何本先取", new Vector2(40f, -250f), 520f);
         RectTransform winsRow = ValueRow(p, "RoundsToWin", new Vector2(40f, -300f), SpaceJunkLobbyValueKind.RoundsToWin,
-            Vector2.zero, 340f, "2 本先取", "1〜5");
+            Vector2.zero, 340f, "2", "本先取", "1〜5");
         StepButtons(winsRow, 350f, 1);
 
         Heading(p, "1ラウンドの最大時間（秒）", new Vector2(40f, -400f), 520f);
         RectTransform secondsRow = ValueRow(p, "RoundSeconds", new Vector2(40f, -450f), SpaceJunkLobbyValueKind.RoundSeconds,
-            Vector2.zero, 260f, "60", $"{SpaceJunkSession.MinRoundSeconds}〜{SpaceJunkSession.MaxRoundSeconds}");
+            Vector2.zero, 260f, "60", "秒", $"{SpaceJunkSession.MinRoundSeconds}〜{SpaceJunkSession.MaxRoundSeconds}");
         StepButtons(secondsRow, 270f, 1);
         StepButtons(secondsRow, 354f, 10);
         StepButtons(secondsRow, 438f, 50);
@@ -443,9 +464,12 @@ public static class SpaceJunkLobbyScreenBuilder
         Place(text.rectTransform, new Vector2(0f, 1f), position, new Vector2(width, 44f), new Vector2(0f, 1f));
     }
 
-    /// <summary>値の1行（入れ物）と、値を出す箱。ボタンはあとから入れ物に足す。</summary>
+    /// <summary>
+    /// 値の1行（入れ物）と、値を出す箱。**箱は数字を打ち込める入力欄**（めっちゃカメレオンと同じ。2026/10/6）。
+    /// ボタンはあとから入れ物に足す。
+    /// </summary>
     private static RectTransform ValueRow(Transform parent, string name, Vector2 position, SpaceJunkLobbyValueKind kind,
-        Vector2 boxPosition, float boxWidth, string sample, string range)
+        Vector2 boxPosition, float boxWidth, string sample, string unit, string range)
     {
         RectTransform row = NewRect(name, parent);
         Place(row, new Vector2(0f, 1f), position, new Vector2(520f, 70f), new Vector2(0f, 1f));
@@ -455,13 +479,29 @@ public static class SpaceJunkLobbyScreenBuilder
 
         Text value = NewText("Value", box.transform, sample, 36, TextColor, TextAnchor.MiddleCenter);
         Stretch(value.rectTransform);
+        value.rectTransform.offsetMax = new Vector2(-84f, 0f);
 
-        Text rangeText = NewText("Range", box.transform, range, 16, NoteColor, TextAnchor.LowerRight);
+        Text placeholder = NewText("Placeholder", box.transform, "数字", 28, new Color(1f, 1f, 1f, 0.3f), TextAnchor.MiddleCenter);
+        Stretch(placeholder.rectTransform);
+        placeholder.rectTransform.offsetMax = new Vector2(-84f, 0f);
+
+        Text unitText = NewText("Unit", box.transform, unit, 22, TextColor, TextAnchor.MiddleRight);
+        Stretch(unitText.rectTransform);
+        unitText.rectTransform.offsetMax = new Vector2(-12f, 0f);
+
+        Text rangeText = NewText("Range", box.transform, range, 14, NoteColor, TextAnchor.LowerLeft);
         Stretch(rangeText.rectTransform);
-        rangeText.rectTransform.offsetMin = new Vector2(8f, 6f);
-        rangeText.rectTransform.offsetMax = new Vector2(-10f, -6f);
+        rangeText.rectTransform.offsetMin = new Vector2(8f, 4f);
+        rangeText.rectTransform.offsetMax = new Vector2(-10f, -4f);
 
-        row.gameObject.AddComponent<SpaceJunkLobbyValueRow>().EditorSetup(kind, value);
+        InputField field = box.gameObject.AddComponent<InputField>();
+        field.textComponent = value;
+        field.placeholder = placeholder;
+        field.targetGraphic = box;
+        field.characterLimit = 3;
+        field.text = sample;
+
+        row.gameObject.AddComponent<SpaceJunkLobbyValueRow>().EditorSetup(kind, value, field);
         return row;
     }
 

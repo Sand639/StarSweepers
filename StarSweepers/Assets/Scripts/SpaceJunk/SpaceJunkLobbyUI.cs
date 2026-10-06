@@ -1,5 +1,6 @@
 using System.Collections.Generic;
 using System.IO;
+using Unity.Netcode;
 using UnityEngine;
 using UnityEngine.SceneManagement;
 
@@ -30,8 +31,22 @@ public class SpaceJunkLobbyUI : MonoBehaviour
              "名前がこれで始まるシーンを候補に並べる")]
     [SerializeField] private string mapScenePrefix = "SpaceJunkMap";
 
-    /// <summary>NetworkManager に付いている、いまの裏方。</summary>
-    public static SpaceJunkLobbyUI Current { get; private set; }
+    /// <summary>
+    /// **いま使われている NetworkManager に付いている裏方。**
+    ///
+    /// NetworkManager はタイトルとロビーの両方に置いてあり、あとから読み込んだほう（ロビーの NetworkManager）は
+    /// 重複として消される（NetworkManagerCleanup）。消える側の Awake で「いまの裏方」を覚えてしまうと、
+    /// 消えたあとに空になって**マップの候補が読めなくなっていた**（2026/10/6）。そこで、生き残った NetworkManager から引く。
+    /// </summary>
+    public static SpaceJunkLobbyUI Current
+    {
+        get
+        {
+            NetworkManager manager = NetworkManager.Singleton;
+            SpaceJunkLobbyUI found = manager != null ? manager.GetComponent<SpaceJunkLobbyUI>() : null;
+            return found != null ? found : FindFirstObjectByType<SpaceJunkLobbyUI>();
+        }
+    }
 
     /// <summary>マップの一覧（画像や表示名を引くのに使う）。無ければ null。</summary>
     public SpaceJunkMapList MapList => mapList;
@@ -39,15 +54,17 @@ public class SpaceJunkLobbyUI : MonoBehaviour
     /// <summary>つなぐ画面。試合が始まったら隠すために持っておく。</summary>
     private LanConnectionUi connectionUi;
 
+    /// <summary>通信の様子の窓。ゲーム設定を開いている間は隠す（重なって読めないため）。</summary>
+    private NetworkStatusHud statusHud;
+
     private void Awake()
     {
-        Current = this;
         connectionUi = GetComponent<LanConnectionUi>();
+        statusHud = GetComponent<NetworkStatusHud>();
     }
 
     private void OnEnable()
     {
-        Current = this;
         SceneManager.sceneLoaded += OnSceneLoaded;
     }
 
@@ -66,10 +83,15 @@ public class SpaceJunkLobbyUI : MonoBehaviour
         // **ラウンドが始まったら、つなぐ画面も隠す。**
         // NetworkManager はシーンをまたいで生き残るため、
         // 隠さないとプレイ画面に「ホストとして動作中／切断する」が出っぱなしになる
+        // タイトル画面が出ている間・ロビーのゲーム設定を開いている間も隠す（2026/10/6）
         if (connectionUi != null)
         {
-            // タイトル画面が出ている間も隠す（タイトル画面からつなぐため。2026/10/6）
-            connectionUi.enabled = SpaceJunkRound.Current == null && !TitleScreen.IsVisible;
+            connectionUi.enabled = SpaceJunkRound.Current == null && !TitleScreen.IsVisible && !SpaceJunkLobbyScreen.IsSettingsOpen;
+        }
+
+        if (statusHud != null)
+        {
+            statusHud.enabled = !SpaceJunkLobbyScreen.IsSettingsOpen;
         }
     }
 

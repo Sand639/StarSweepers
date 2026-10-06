@@ -91,7 +91,8 @@ public class SpaceJunkLobbyTerminal : MonoBehaviour
         // 読んでしまうと、ポーズを Escape で閉じた瞬間に、同じ Escape で
         // 詳細設定まで閉じてしまう（申し送り 2026/9/8・2026/9/16 と同じ取り合い）。
         // `BlocksInput` は「切り替わったフレーム」も含むので、これだけで防げる
-        bool inputBlocked = GamePause.BlocksInput;
+        // 設定の入力欄に打ち込んでいる最中も、E を読まない（打った拍子に設定が閉じないように）
+        bool inputBlocked = GamePause.BlocksInput || SpaceJunkLobbyScreen.IsTyping;
 
         // **開いている間は、コントローラーの A では閉じない。**（2026/10/6 から設定画面はボタンを A で押すため。
         // 閉じるのは B／Esc／「戻る」。<see cref="SpaceJunkLobbyScreen"/> が受け持つ）
