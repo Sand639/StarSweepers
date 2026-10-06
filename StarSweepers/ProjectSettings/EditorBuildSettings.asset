@@ -69,8 +69,8 @@ EditorBuildSettings:
     path: Assets/Scenes/Prototype/SpaceJunk/Stage/STAGE_06.unity
     guid: 6bcb86547aa4af447a8edab30a767437
   - enabled: 1
-    path: Assets/Scenes/Prototype/SpaceJunk/Stage/STAGE_06_B.unity
-    guid: 9fb8e44e6679f6743af0164ba16b56fd
+    path: Assets/Scenes/Prototype/SpaceJunk/Stage/STAGE_07.unity
+    guid: 4abeb5a4636b30647b8382ab0a48e395
   m_configObjects:
     com.unity.input.settings.actions: {fileID: -944628639613478452, guid: 052faaac586de48259a63d0c4782560b, type: 3}
   m_UseUCBPForAssetBundles: 0
