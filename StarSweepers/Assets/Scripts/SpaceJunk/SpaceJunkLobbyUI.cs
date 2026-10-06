@@ -707,6 +707,12 @@ public class SpaceJunkLobbyUI : MonoBehaviour
     /// <summary>その接続番号の人の、画面に出す名前。</summary>
     private static string NameOf(ulong clientId)
     {
+        // タイトル画面で入れた名前があればそれ（2026/10/6）。無ければ「プレイヤー1」など
+        if (SpaceJunkSession.Current != null)
+        {
+            return SpaceJunkSession.Current.NameOf(clientId);
+        }
+
         foreach (FishingNetPlayer player in FishingNetPlayer.All)
         {
             if (player != null && player.OwnerClientId == clientId)
