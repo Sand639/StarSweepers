@@ -183,6 +183,9 @@ public class HookController : MonoBehaviour
     /// <summary>プレイヤーがスタン中か。<see cref="ThrowController"/> も参照する。</summary>
     public bool IsStunned => stun != null && stun.IsStunned;
 
+    /// <summary>いま引っ掛けている物資（無ければ null）。答え合わせ（<c>SpaceJunkLocalStateCheck</c>）が使う。</summary>
+    public HookableObject AttachedItem => attached;
+
     /// <summary>
     /// **オンラインとして動いているか。**
     /// 通信部品が入っていて、実際に同期が始まっているときだけ true。
@@ -593,7 +596,8 @@ public class HookController : MonoBehaviour
 
             if (netSupply != null)
             {
-                if (netSupply.IsClaimed)
+                // 引っ掛け中なのが**自分**なら（離したのがまだ届いていない など）、ふつうにつかみ直す（2026/10/6）
+                if (netSupply.IsClaimed && netSupply.HookedByPlayerIndex != LocalPlayerIndex)
                 {
                     // **宇宙ごみ式では、ほかの人がつかんでいる物資にフックが当たったら、その人の引っ掛けを外す**
                     // （2026/9/22・大槻さん）。こちらのフックは引っ掛けずに戻る。

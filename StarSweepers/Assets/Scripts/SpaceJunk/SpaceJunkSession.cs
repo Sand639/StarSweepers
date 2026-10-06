@@ -341,6 +341,124 @@ public class SpaceJunkSession : NetworkBehaviour
         AddSlot(clientId);
     }
 
+    // ------------------------------------------------------------
+    // 席の答え合わせ（ホストだけ。2026/10/6）
+    // ------------------------------------------------------------
+
+    /// <summary>席の答え合わせの間隔（秒）。</summary>
+    private const float SlotCheckInterval = 1f;
+
+    private float slotCheckTimer;
+
+    /// <summary>「席とつながっている人が食い違う」が何回続いたか。</summary>
+    private int slotMismatchCount;
+
+    private void Update()
+    {
+        if (!IsSpawned || !IsServer || NetworkManager == null)
+        {
+            return;
+        }
+
+        slotCheckTimer += Time.unscaledDeltaTime;
+        if (slotCheckTimer < SlotCheckInterval)
+        {
+            return;
+        }
+        slotCheckTimer = 0f;
+
+        ServerCheckSlots();
+    }
+
+    /// <summary>
+    /// **席の一覧と、実際につながっている人の一覧を比べて合わせる。**
+    /// 入ってきた／抜けたの知らせ（OnClientConnected / OnClientDisconnected）を取りこぼしても、
+    /// 「抜けた人の席が残る（そのチームが誰もいないのに数えられる）」「席の無い人がいる（チームの色が付かない）」
+    /// のまま残らないようにする。入ってきた直後は一瞬食い違うので、続けて食い違ったときだけ直す。
+    /// </summary>
+    private void ServerCheckSlots()
+    {
+        IReadOnlyList<ulong> connected = NetworkManager.ConnectedClientsIds;
+
+        bool mismatch = false;
+        foreach (SpaceJunkPlayerSlot slot in slots)
+        {
+            if (!ContainsId(connected, slot.ClientId))
+            {
+                mismatch = true;
+                break;
+            }
+        }
+
+        if (!mismatch)
+        {
+            foreach (ulong clientId in connected)
+            {
+                if (TeamSlotIndex(clientId) < 0)
+                {
+                    mismatch = true;
+                    break;
+                }
+            }
+        }
+
+        if (!mismatch)
+        {
+            slotMismatchCount = 0;
+            return;
+        }
+
+        slotMismatchCount++;
+        if (slotMismatchCount < 2)
+        {
+            return;
+        }
+        slotMismatchCount = 0;
+
+        for (int i = slots.Count - 1; i >= 0; i--)
+        {
+            if (!ContainsId(connected, slots[i].ClientId))
+            {
+                Debug.LogWarning($"[NET][答え合わせ] もうつながっていない人（{slots[i].ClientId}）の席が残っていたので消しました。");
+                slots.RemoveAt(i);
+            }
+        }
+
+        foreach (ulong clientId in connected)
+        {
+            if (TeamSlotIndex(clientId) < 0)
+            {
+                Debug.LogWarning($"[NET][答え合わせ] 席の無い人（{clientId}）がいたので、席を作りました。");
+                AddSlot(clientId);
+            }
+        }
+    }
+
+    private static bool ContainsId(IReadOnlyList<ulong> ids, ulong id)
+    {
+        for (int i = 0; i < ids.Count; i++)
+        {
+            if (ids[i] == id)
+            {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    /// <summary>その人の席の番号（無ければ -1）。</summary>
+    private int TeamSlotIndex(ulong clientId)
+    {
+        for (int i = 0; i < slots.Count; i++)
+        {
+            if (slots[i].ClientId == clientId)
+            {
+                return i;
+            }
+        }
+        return -1;
+    }
+
     private void OnClientDisconnected(ulong clientId)
     {
         for (int i = slots.Count - 1; i >= 0; i--)

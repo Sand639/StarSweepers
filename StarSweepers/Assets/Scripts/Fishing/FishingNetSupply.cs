@@ -37,6 +37,9 @@ public class FishingNetSupply : NetworkBehaviour
     /// <summary>いま誰かに引っ掛けられているか。</summary>
     public bool IsClaimed => hookedByPlayerIndex.Value >= 0;
 
+    /// <summary>いま引っ掛けている人の参加番号（ホストの記録）。誰も掛けていなければ -1。</summary>
+    public int HookedByPlayerIndex => hookedByPlayerIndex.Value;
+
     /// <summary>最後に投げた人の参加番号。誰も投げていなければ -1。</summary>
     public int LastThrownByPlayerIndex => lastThrownByPlayerIndex.Value;
 
@@ -111,7 +114,12 @@ public class FishingNetSupply : NetworkBehaviour
     private void RequestClaimServerRpc(int playerIndex, uint claimRevision, uint claimAttempt,
         ServerRpcParams rpcParams = default)
     {
-        if (claimRevision != explosionRevision.Value || IsClaimed || hookable.IsVanished)
+        // **同じ人からの掛け直しは受け付ける**（2026/10/6）。
+        // 遅れて「離した」が届く前に同じ人がもう一度引っ掛けた場合や、
+        // ホストの記録が「その人が引っ掛け中」のまま残っていた場合に、本人までつかめなくなっていた
+        bool takenByOther = IsClaimed && hookedByPlayerIndex.Value != playerIndex;
+
+        if (claimRevision != explosionRevision.Value || takenByOther || hookable.IsVanished)
         {
             // すでに誰かが掛けている。頼んできた人に断りを返す
             DenyClaimClientRpc(claimRevision, claimAttempt, RpcToSender(rpcParams));
@@ -305,6 +313,130 @@ public class FishingNetSupply : NetworkBehaviour
         }
 
         ApplyPhysicsAuthority();
+    }
+
+    // ------------------------------------------------------------
+    // 答え合わせ（遅延で知らせを取りこぼしても、ずれたまま残らないように。2026/10/6）
+    // ------------------------------------------------------------
+
+    /// <summary>
+    /// **答え合わせで「ホストの記録では自分が引っ掛け中なのに、手に持っていない」と分かったとき**に、本人のPCから呼ぶ。
+    /// 普通の「離した」（<see cref="RequestRelease"/>）と違い、爆発の回数（revision）が食い違っていても受け付ける
+    /// （食い違っていたせいで「離した」が捨てられ、ずれたまま残ったときの立て直し用）。
+    /// </summary>
+    public void RequestReconcileRelease(int playerIndex)
+    {
+        RequestReconcileReleaseServerRpc(playerIndex);
+    }
+
+    [ServerRpc(RequireOwnership = false)]
+    private void RequestReconcileReleaseServerRpc(int playerIndex, ServerRpcParams rpcParams = default)
+    {
+        if (hookedByPlayerIndex.Value != playerIndex)
+        {
+            return;
+        }
+
+        // **頼んできた人が、本当にその参加番号の人か**を確かめる（ほかの人の引っ掛けを外させない）
+        FishingNetPlayer sender = FindPlayerByClient(rpcParams.Receive.SenderClientId);
+        if (sender == null || sender.PlayerIndex != playerIndex)
+        {
+            return;
+        }
+
+        Debug.LogWarning($"[NET][答え合わせ] {name}：参加番号 {playerIndex} の人は持っていないのに、" +
+                         "ホストの記録では引っ掛け中のままでした。外しました。");
+
+        hookedByPlayerIndex.Value = -1;
+        TakeBackOwnership();
+    }
+
+    /// <summary>ホストが答え合わせをする間隔（秒）。</summary>
+    private const float ServerCheckInterval = 1f;
+
+    private float serverCheckTimer;
+
+    /// <summary>「持ち主と引っ掛けた人が食い違う」が何回続いたか。</summary>
+    private int ownerMismatchCount;
+
+    private void Update()
+    {
+        if (!IsSpawned || !IsServer || !IsClaimed || despawnScheduled)
+        {
+            ownerMismatchCount = 0;
+            return;
+        }
+
+        serverCheckTimer += Time.unscaledDeltaTime;
+        if (serverCheckTimer < ServerCheckInterval)
+        {
+            return;
+        }
+        serverCheckTimer = 0f;
+
+        ServerCheckClaim();
+    }
+
+    /// <summary>
+    /// **ホストの答え合わせ。** 引っ掛け中の記録がおかしくないかを見る。
+    /// ・引っ掛けた人がもういない → 外す（誰もつかめないまま残らないように）
+    /// ・物の持ち主（物理を動かす人）と、引っ掛けた人が続けて食い違う → 引っ掛けた人を持ち主にする
+    /// </summary>
+    private void ServerCheckClaim()
+    {
+        FishingNetPlayer claimer = FindPlayerByIndex(hookedByPlayerIndex.Value);
+
+        if (claimer == null)
+        {
+            Debug.LogWarning($"[NET][答え合わせ] {name}：引っ掛けていた参加番号 {hookedByPlayerIndex.Value} の人が" +
+                             "もういないので、引っ掛けを外しました。");
+            hookedByPlayerIndex.Value = -1;
+            TakeBackOwnership();
+            ownerMismatchCount = 0;
+            return;
+        }
+
+        if (NetworkObject.OwnerClientId == claimer.OwnerClientId)
+        {
+            ownerMismatchCount = 0;
+            return;
+        }
+
+        // 引っ掛けた直後は、持ち主が移る途中のことがあるので、続けて食い違ったときだけ直す
+        ownerMismatchCount++;
+        if (ownerMismatchCount < 2)
+        {
+            return;
+        }
+
+        Debug.LogWarning($"[NET][答え合わせ] {name}：引っ掛けた人（参加番号 {claimer.PlayerIndex}）と" +
+                         "物の持ち主が食い違っていたので、引っ掛けた人を持ち主にしました。");
+        NetworkObject.ChangeOwnership(claimer.OwnerClientId);
+        ownerMismatchCount = 0;
+    }
+
+    private static FishingNetPlayer FindPlayerByIndex(int playerIndex)
+    {
+        foreach (FishingNetPlayer player in FishingNetPlayer.All)
+        {
+            if (player != null && player.IsSpawned && player.PlayerIndex == playerIndex)
+            {
+                return player;
+            }
+        }
+        return null;
+    }
+
+    private static FishingNetPlayer FindPlayerByClient(ulong clientId)
+    {
+        foreach (FishingNetPlayer player in FishingNetPlayer.All)
+        {
+            if (player != null && player.IsSpawned && player.OwnerClientId == clientId)
+            {
+                return player;
+            }
+        }
+        return null;
     }
 
     // ------------------------------------------------------------
