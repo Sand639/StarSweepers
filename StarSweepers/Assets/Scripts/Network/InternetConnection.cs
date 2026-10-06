@@ -84,6 +84,86 @@ public class InternetConnection : MonoBehaviour
     /// <summary>画面に出す説明。失敗したときは理由が入る。</summary>
     public string Message { get; private set; } = string.Empty;
 
+    /// <summary>
+    /// **ホストが部屋に付けたパスワード。** 空ならパスワードなし（2026/10/6・大槻さん）。
+    /// ホストのPCでだけ分かる（中継サーバーからは読めないため、作ったときに控えておく）。
+    /// </summary>
+    public string CurrentPassword { get; private set; } = string.Empty;
+
+    /// <summary>いまの部屋にパスワードが付いているか（ホストのPCで使う）。</summary>
+    public bool HasPassword => !string.IsNullOrEmpty(CurrentPassword);
+
+    /// <summary>パスワードの文字数の下限・上限（中継サーバーの決まり）。</summary>
+    public const int PasswordMinLength = 8;
+    public const int PasswordMaxLength = 64;
+
+    /// <summary>次に作る部屋のパスワード（空ならなし）。</summary>
+    private string password = string.Empty;
+
+    /// <summary>
+    /// パスワードとして使えない理由。使えるなら null。**空は「パスワードなし」なので使える。**
+    /// </summary>
+    public static string PasswordProblem(string value)
+    {
+        if (string.IsNullOrEmpty(value))
+        {
+            return null;
+        }
+
+        return value.Length < PasswordMinLength || value.Length > PasswordMaxLength
+            ? $"パスワードは {PasswordMinLength}〜{PasswordMaxLength} 文字にしてください（空ならパスワードなし）。"
+            : null;
+    }
+
+    /// <summary>入る側のパスワードの設定（空なら付けない）。</summary>
+    private static JoinSessionOptions JoinOptions(string joinPassword)
+    {
+        return string.IsNullOrEmpty(joinPassword) ? null : new JoinSessionOptions { Password = joinPassword };
+    }
+
+    /// <summary>
+    /// **部屋のパスワードを変える**（ホストだけ。ロビーのゲーム設定から呼ぶ）。
+    /// うまくいけば null、だめなら理由を返す。パスワードなしで作った部屋には付けられない（付け外しは部屋を作るときに決める）。
+    /// </summary>
+    public async Task<string> ChangePasswordAsync(string newPassword)
+    {
+        if (session == null || !session.IsHost || State != Phase.Connected)
+        {
+            return "インターネットの部屋のホストのときだけ変えられます。";
+        }
+
+        if (!HasPassword)
+        {
+            return "パスワードなしで作った部屋なので、パスワードは付けられません。";
+        }
+
+        if (string.IsNullOrEmpty(newPassword))
+        {
+            return "新しいパスワードを入れてください。";
+        }
+
+        string problem = PasswordProblem(newPassword);
+        if (problem != null)
+        {
+            return problem;
+        }
+
+        try
+        {
+            IHostSession host = session.AsHost();
+            host.Password = newPassword;
+            await host.SavePropertiesAsync();
+            CurrentPassword = newPassword;
+            Debug.Log("[NET] 部屋のパスワードを変えました。");
+            return null;
+        }
+        catch (Exception error)
+        {
+            Debug.LogWarning($"[NET] パスワードを変えられませんでした：{error.Message}");
+            return "パスワードを変えられませんでした（通信を確かめてください）。";
+        }
+    }
+
     /// <summary>いま作業中か。ボタンを押せなくするのに使う。</summary>
     public bool IsBusy =>
         State == Phase.Preparing || State == Phase.Creating || State == Phase.Joining;
@@ -120,6 +200,15 @@ public class InternetConnection : MonoBehaviour
             return;
         }
 
+        // パスワードは 8〜64 文字（空ならなし）。だめなら作る前に止める
+        string passwordProblem = PasswordProblem(password);
+        if (passwordProblem != null)
+        {
+            State = Phase.Failed;
+            Message = passwordProblem;
+            return;
+        }
+
         if (!await PrepareAsync())
         {
             return;
@@ -139,11 +228,13 @@ public class InternetConnection : MonoBehaviour
                 Name = sessionName,
                 MaxPlayers = maxPlayers,
                 IsPrivate = isPrivate,
+                Password = string.IsNullOrEmpty(password) ? null : password,
             }.WithRelayNetwork(string.IsNullOrWhiteSpace(region) ? null : region.Trim());
 
             // 部屋ができると、通信の開始（ホストとしての待ち受け）まで自動で行われる
             session = await MultiplayerService.Instance.CreateSessionAsync(options);
 
+            CurrentPassword = password;
             JoinCode = session.Code;
             State = Phase.Connected;
             Message = "部屋ができました。合言葉を相手に伝えてください。";
@@ -156,8 +247,8 @@ public class InternetConnection : MonoBehaviour
         }
     }
 
-    /// <summary>合言葉を使って、他の人の部屋に入る。</summary>
-    public async void JoinGame(string code)
+    /// <summary>合言葉を使って、他の人の部屋に入る。パスワードの付いた部屋なら <paramref name="joinPassword"/> も要る。</summary>
+    public async void JoinGame(string code, string joinPassword = "")
     {
         if (IsBusy)
         {
@@ -184,8 +275,9 @@ public class InternetConnection : MonoBehaviour
 
         try
         {
-            session = await MultiplayerService.Instance.JoinSessionByCodeAsync(code.Trim());
+            session = await MultiplayerService.Instance.JoinSessionByCodeAsync(code.Trim(), JoinOptions(joinPassword));
 
+            CurrentPassword = string.Empty;
             JoinCode = session.Code;
             State = Phase.Connected;
             Message = "つながりました。";
@@ -194,7 +286,7 @@ public class InternetConnection : MonoBehaviour
         }
         catch (Exception error)
         {
-            Fail("部屋に入れませんでした。合言葉が違うか、部屋が閉じられています", error);
+            Fail("部屋に入れませんでした。合言葉かパスワードが違うか、部屋が閉じられています", error);
         }
     }
 
@@ -206,7 +298,7 @@ public class InternetConnection : MonoBehaviour
     /// **部屋の名前・最大人数・非公開かを決めて、部屋を作る。** タイトル画面の「サーバーを作成」から呼ぶ。
     /// 非公開にすると、パブリックサーバーの一覧に出ない（合言葉を知っている人だけが入れる）。
     /// </summary>
-    public void HostGame(string roomName, int players, bool privateRoom)
+    public void HostGame(string roomName, int players, bool privateRoom, string roomPassword = "")
     {
         if (IsBusy)
         {
@@ -220,6 +312,7 @@ public class InternetConnection : MonoBehaviour
 
         maxPlayers = Mathf.Clamp(players, 2, 8);
         isPrivate = privateRoom;
+        password = roomPassword ?? string.Empty;
         HostGame();
     }
 
@@ -258,7 +351,7 @@ public class InternetConnection : MonoBehaviour
     }
 
     /// <summary>**一覧で選んだ部屋に入る。** タイトル画面のパブリックサーバーの一覧から呼ぶ。</summary>
-    public async void JoinGameById(string sessionId)
+    public async void JoinGameById(string sessionId, string joinPassword = "")
     {
         if (IsBusy || string.IsNullOrEmpty(sessionId))
         {
@@ -278,8 +371,9 @@ public class InternetConnection : MonoBehaviour
 
         try
         {
-            session = await MultiplayerService.Instance.JoinSessionByIdAsync(sessionId);
+            session = await MultiplayerService.Instance.JoinSessionByIdAsync(sessionId, JoinOptions(joinPassword));
 
+            CurrentPassword = string.Empty;
             JoinCode = session.Code;
             State = Phase.Connected;
             Message = "つながりました。";
@@ -288,7 +382,7 @@ public class InternetConnection : MonoBehaviour
         }
         catch (Exception error)
         {
-            Fail("部屋に入れませんでした。満員か、部屋が閉じられています", error);
+            Fail("部屋に入れませんでした。パスワードが違うか、満員か、部屋が閉じられています", error);
         }
     }
 
@@ -330,6 +424,7 @@ public class InternetConnection : MonoBehaviour
         {
             session = null;
             JoinCode = string.Empty;
+            CurrentPassword = string.Empty;
             State = Phase.Idle;
             Message = string.Empty;
 

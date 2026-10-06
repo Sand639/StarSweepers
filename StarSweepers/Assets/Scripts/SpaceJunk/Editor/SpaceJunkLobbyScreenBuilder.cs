@@ -72,9 +72,9 @@ public static class SpaceJunkLobbyScreenBuilder
     /// <summary>
     /// **プレハブの作りの版。** 作りが大きく変わったとき（部品を足したなど）だけ上げる。
     /// 上げると、古い版のプレハブは Unity を開いたときに自動で作り直される（**手で直した配置は消える**）。
-    /// 1：最初の版 ／ 2：数字を打ち込める入力欄（2026/10/6）
+    /// 1：最初の版 ／ 2：数字を打ち込める入力欄 ／ 3：数字を真ん中に・パスワードの欄（2026/10/6）
     /// </summary>
-    public const int PrefabVersion = 2;
+    public const int PrefabVersion = 3;
 
     [MenuItem("Tools/StarSweepers/ロビーの画面のプレハブを作り直す")]
     private static void BuildFromMenu()
@@ -296,8 +296,43 @@ public static class SpaceJunkLobbyScreenBuilder
 
         Heading(p, "ルール", new Vector2(40f, -560f), 520f);
         Text rule = NewText("Rule", p, "得点制：時間いっぱい宇宙ごみを集め、得点の高いチームがラウンドを取る。", 20, TextColor, TextAnchor.UpperLeft);
-        Place(rule.rectTransform, new Vector2(0f, 1f), new Vector2(40f, -610f), new Vector2(520f, 200f), new Vector2(0f, 1f));
+        Place(rule.rectTransform, new Vector2(0f, 1f), new Vector2(40f, -610f), new Vector2(520f, 110f), new Vector2(0f, 1f));
         Mark(rule, SpaceJunkLobbyPartRole.RuleText);
+
+        // ---- パスワード（パスワードありの部屋のときだけ出る。ホストが変えられる。2026/10/6） ----
+        RectTransform password = NewRect("PasswordSection", p);
+        Place(password, new Vector2(0f, 1f), new Vector2(40f, -730f), new Vector2(520f, 150f), new Vector2(0f, 1f));
+        Mark(password, SpaceJunkLobbyPartRole.PasswordSection);
+
+        Text passwordTitle = NewText("Title", password, "パスワード", 28, TextColor, TextAnchor.MiddleCenter);
+        Place(passwordTitle.rectTransform, new Vector2(0f, 1f), Vector2.zero, new Vector2(520f, 40f), new Vector2(0f, 1f));
+
+        Image inputBox = NewImage("Input", password, BoxColor);
+        Place(inputBox.rectTransform, new Vector2(0f, 1f), new Vector2(0f, -46f), new Vector2(370f, 56f), new Vector2(0f, 1f));
+        Text inputText = NewText("Text", inputBox.transform, string.Empty, 24, TextColor, TextAnchor.MiddleLeft);
+        Stretch(inputText.rectTransform);
+        inputText.rectTransform.offsetMin = new Vector2(12f, 0f);
+        inputText.rectTransform.offsetMax = new Vector2(-12f, 0f);
+        Text inputHint = NewText("Placeholder", inputBox.transform, "新しいパスワード", 22, new Color(1f, 1f, 1f, 0.3f), TextAnchor.MiddleLeft);
+        Stretch(inputHint.rectTransform);
+        inputHint.rectTransform.offsetMin = new Vector2(12f, 0f);
+        inputHint.rectTransform.offsetMax = new Vector2(-12f, 0f);
+        InputField passwordField = inputBox.gameObject.AddComponent<InputField>();
+        passwordField.textComponent = inputText;
+        passwordField.placeholder = inputHint;
+        passwordField.targetGraphic = inputBox;
+        passwordField.characterLimit = InternetConnection.PasswordMaxLength;
+        Mark(inputBox, SpaceJunkLobbyPartRole.PasswordInput);
+
+        TitleMenuButton change = NewThemedButton(password, "変更する", new Vector2(140f, 56f), 22);
+        Place((RectTransform)change.transform, new Vector2(0f, 1f), new Vector2(380f, -46f), new Vector2(140f, 56f), new Vector2(0f, 1f));
+        AddAction(change, SpaceJunkLobbyAction.ChangePassword, 0);
+
+        Text passwordMessage = NewText("Message", password,
+            $"{InternetConnection.PasswordMinLength}〜{InternetConnection.PasswordMaxLength}文字。変えたら、入る人に伝えてください",
+            16, NoteColor, TextAnchor.UpperLeft);
+        Place(passwordMessage.rectTransform, new Vector2(0f, 1f), new Vector2(0f, -108f), new Vector2(520f, 40f), new Vector2(0f, 1f));
+        Mark(passwordMessage, SpaceJunkLobbyPartRole.PasswordMessage);
 
         // ---- 右の列：チーム分け ----
         Text teamsTitle = NewText("TeamsTitle", p, "チーム分け", 28, TextColor, TextAnchor.MiddleLeft);
@@ -479,11 +514,9 @@ public static class SpaceJunkLobbyScreenBuilder
 
         Text value = NewText("Value", box.transform, sample, 36, TextColor, TextAnchor.MiddleCenter);
         Stretch(value.rectTransform);
-        value.rectTransform.offsetMax = new Vector2(-84f, 0f);
 
         Text placeholder = NewText("Placeholder", box.transform, "数字", 28, new Color(1f, 1f, 1f, 0.3f), TextAnchor.MiddleCenter);
         Stretch(placeholder.rectTransform);
-        placeholder.rectTransform.offsetMax = new Vector2(-84f, 0f);
 
         Text unitText = NewText("Unit", box.transform, unit, 22, TextColor, TextAnchor.MiddleRight);
         Stretch(unitText.rectTransform);

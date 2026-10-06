@@ -166,6 +166,7 @@ public class SpaceJunkLobbyScreen : MonoBehaviour
                 EnsureEventSystem();
                 playerRowsSignature = string.Empty;
                 mapRowsSignature = string.Empty;
+                ResetPasswordSection();
                 SelectFirstForGamepad();
             }
         }
@@ -349,7 +350,7 @@ public class SpaceJunkLobbyScreen : MonoBehaviour
         }
     }
 
-    /// <summary>いま入力欄に打ち込んでいるか。</summary>
+    /// <summary>いま入力欄に打ち込んでいるか（数字の欄・パスワードの欄）。</summary>
     private bool IsInputFocused()
     {
         foreach (SpaceJunkLobbyValueRow row in valueRows)
@@ -360,7 +361,67 @@ public class SpaceJunkLobbyScreen : MonoBehaviour
             }
         }
 
-        return false;
+        InputField password = PartComponent<InputField>(SpaceJunkLobbyPartRole.PasswordInput);
+        return password != null && password.isFocused;
+    }
+
+    // ------------------------------------------------------------
+    // パスワード（パスワードありの部屋だけ。ホストが変える。2026/10/6）
+    // ------------------------------------------------------------
+
+    private static InternetConnection Internet()
+    {
+        NetworkManager manager = NetworkManager.Singleton;
+        return manager != null ? manager.GetComponent<InternetConnection>() : null;
+    }
+
+    /// <summary>ゲーム設定を開いたとき：パスワードの欄に、いまのパスワードを入れておく。</summary>
+    private void ResetPasswordSection()
+    {
+        InternetConnection internet = Internet();
+        InputField field = PartComponent<InputField>(SpaceJunkLobbyPartRole.PasswordInput);
+
+        if (field != null && internet != null)
+        {
+            field.SetTextWithoutNotify(internet.CurrentPassword);
+        }
+
+        SetText(SpaceJunkLobbyPartRole.PasswordMessage,
+            $"いまのパスワードです。{InternetConnection.PasswordMinLength}〜{InternetConnection.PasswordMaxLength}文字。変えたら、入る人に伝えてください");
+    }
+
+    /// <summary>パスワードの欄は、パスワードを付けて作った部屋のときだけ出す。</summary>
+    private void RefreshPasswordSection()
+    {
+        InternetConnection internet = Internet();
+        SetActive(SpaceJunkLobbyPartRole.PasswordSection, internet != null && internet.HasPassword);
+    }
+
+    /// <summary>「変更する」を押したとき。</summary>
+    private async void ChangePassword()
+    {
+        InternetConnection internet = Internet();
+        InputField field = PartComponent<InputField>(SpaceJunkLobbyPartRole.PasswordInput);
+        if (internet == null || field == null)
+        {
+            return;
+        }
+
+        string newPassword = field.text.Trim();
+        SetText(SpaceJunkLobbyPartRole.PasswordMessage, "パスワードを変えています…");
+
+        string problem = await internet.ChangePasswordAsync(newPassword);
+
+        if (this == null)
+        {
+            return;
+        }
+
+        SetText(SpaceJunkLobbyPartRole.PasswordMessage, problem ?? $"パスワードを「{newPassword}」に変えました。入る人に伝えてください");
+        if (problem != null)
+        {
+            field.SetTextWithoutNotify(internet.CurrentPassword);
+        }
     }
 
     private bool IsInsideTemplate(Transform target)
@@ -411,6 +472,10 @@ public class SpaceJunkLobbyScreen : MonoBehaviour
 
             case SpaceJunkLobbyAction.SelectRandomMap:
                 session.ServerSetFixedMap(string.Empty);
+                break;
+
+            case SpaceJunkLobbyAction.ChangePassword:
+                ChangePassword();
                 break;
 
             case SpaceJunkLobbyAction.Step:
@@ -480,6 +545,7 @@ public class SpaceJunkLobbyScreen : MonoBehaviour
         RefreshPlayerRows(session);
         RefreshMapRows(session);
         RefreshStart(session);
+        RefreshPasswordSection();
 
         SetText(SpaceJunkLobbyPartRole.RuleText, session.WinRule == SpaceJunkWinRule.Score
             ? $"得点制：時間いっぱい宇宙ごみを集め、得点の高いチームがラウンドを取る（1個 {SpaceJunkRound.PointPerItem} 点）。" +

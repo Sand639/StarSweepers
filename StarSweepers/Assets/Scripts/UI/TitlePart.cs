@@ -25,6 +25,7 @@ public enum TitlePartRole
     CodeBoxBody = 24,
     PrivateCheckText = 25,
     PrivateRow = 26,
+    PasswordRow = 27,
 
     // パブリックサーバーの一覧
     PublicListContent = 30,

@@ -14,6 +14,7 @@ public enum SpaceJunkLobbyAction
     ToggleMapCheck = 7,
     TeamPrevious = 8,
     TeamNext = 9,
+    ChangePassword = 10,
 }
 
 /// <summary>

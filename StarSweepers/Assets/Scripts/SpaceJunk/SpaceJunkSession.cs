@@ -350,7 +350,56 @@ public class SpaceJunkSession : NetworkBehaviour
 
             NetworkManager.OnClientConnectedCallback += OnClientConnected;
             NetworkManager.OnClientDisconnectCallback += OnClientDisconnected;
+
+            // 前回ホストをしたときのマップの選び方（チェックと「このマップで遊ぶ」）を読み込む
+            LoadSavedMapChoice();
         }
+    }
+
+    // ------------------------------------------------------------
+    // マップの選び方を覚えておく（2026/10/6・大槻さん「チェックしたかは前回の設定を読み込んでほしい」）
+    // ------------------------------------------------------------
+
+    /// <summary>チェックしたマップ（シーン名を改行でつないだもの）を保存する鍵。</summary>
+    private const string SavedMapsKey = "StarSweepers.SpaceJunk.SelectedMaps";
+
+    /// <summary>「このマップで遊ぶ」で選んだマップ（空ならランダム）を保存する鍵。</summary>
+    private const string SavedFixedMapKey = "StarSweepers.SpaceJunk.FixedMap";
+
+    /// <summary>
+    /// 前回のマップの選び方を読み込む（ホストだけ）。**ビルドの一覧に無くなったマップは読み込まない**
+    /// （名前を変えた・消したマップがチェックの数に入ってしまわないように）。
+    /// </summary>
+    private void LoadSavedMapChoice()
+    {
+        selectedMaps.Clear();
+
+        string saved = PlayerPrefs.GetString(SavedMapsKey, string.Empty);
+        foreach (string name in saved.Split('\n'))
+        {
+            if (!string.IsNullOrEmpty(name) && SpaceJunkLobbyUI.IsSceneInBuildList(name) && !IsMapSelected(name))
+            {
+                selectedMaps.Add(new FixedString64Bytes(name));
+            }
+        }
+
+        string fixedName = PlayerPrefs.GetString(SavedFixedMapKey, string.Empty);
+        fixedMap.Value = SpaceJunkLobbyUI.IsSceneInBuildList(fixedName)
+            ? new FixedString64Bytes(fixedName)
+            : default;
+
+        if (selectedMaps.Count > 0 || !IsRandomMap)
+        {
+            Debug.Log($"[JUNK] 前回のマップの選び方を読み込みました（チェック {selectedMaps.Count} 個／{(IsRandomMap ? "ランダム" : FixedMap)}）。");
+        }
+    }
+
+    /// <summary>いまのマップの選び方を保存する（ホストだけ）。</summary>
+    private void SaveMapChoice()
+    {
+        PlayerPrefs.SetString(SavedMapsKey, string.Join("\n", SelectedMaps));
+        PlayerPrefs.SetString(SavedFixedMapKey, FixedMap);
+        PlayerPrefs.Save();
     }
 
     public override void OnNetworkDespawn()
@@ -764,8 +813,12 @@ public class SpaceJunkSession : NetworkBehaviour
         }
     }
 
-    /// <summary>使うマップを、選ぶ／選ばないで切り替える。</summary>
-    public void ServerToggleMap(string sceneName)
+    /// <summary>
+    /// 使うマップを、選ぶ／選ばないで切り替える。
+    /// <paramref name="remember"/> が true なら、次にホストをしたときのために保存する
+    /// （チーム数に合わないマップを自動で外すときは false。チーム数を戻したら、またチェックが付いた状態で始められるように）。
+    /// </summary>
+    public void ServerToggleMap(string sceneName, bool remember = true)
     {
         if (!IsServer || string.IsNullOrEmpty(sceneName))
         {
@@ -773,23 +826,34 @@ public class SpaceJunkSession : NetworkBehaviour
         }
 
         FixedString64Bytes value = new FixedString64Bytes(sceneName);
+        bool removed = false;
 
         for (int i = 0; i < selectedMaps.Count; i++)
         {
             if (selectedMaps[i].Equals(value))
             {
                 selectedMaps.RemoveAt(i);
-                return;
+                removed = true;
+                break;
             }
         }
 
-        selectedMaps.Add(value);
+        if (!removed)
+        {
+            selectedMaps.Add(value);
+        }
+
+        if (remember)
+        {
+            SaveMapChoice();
+        }
     }
 
     /// <summary>
     /// 「このマップで遊ぶ」を決める。**空を渡すと「ランダム」**（チェックの付いたマップから、ラウンドごとに選ぶ）。
+    /// <paramref name="remember"/> は <see cref="ServerToggleMap"/> と同じ。
     /// </summary>
-    public void ServerSetFixedMap(string sceneName)
+    public void ServerSetFixedMap(string sceneName, bool remember = true)
     {
         if (!IsServer)
         {
@@ -797,6 +861,11 @@ public class SpaceJunkSession : NetworkBehaviour
         }
 
         fixedMap.Value = new FixedString64Bytes(sceneName ?? string.Empty);
+
+        if (remember)
+        {
+            SaveMapChoice();
+        }
     }
 
     // ------------------------------------------------------------

@@ -221,7 +221,7 @@ public class SpaceJunkLobbyUI : MonoBehaviour
             if (fixedEntry != null && !fixedEntry.SupportsTeamCount(session.TeamCount) && !playable.Contains(session.FixedMap))
             {
                 Debug.Log($"[JUNK] {session.FixedMap} は {session.TeamCount} チームでは遊べないので、マップを「ランダム」に戻しました。");
-                session.ServerSetFixedMap(string.Empty);
+                session.ServerSetFixedMap(string.Empty, remember: false);
             }
         }
 
@@ -240,7 +240,7 @@ public class SpaceJunkLobbyUI : MonoBehaviour
             // 一覧に無い・ロビーに出さないマップは、ここでは触らない（遊べるかどうかだけを見る）
             if (entry != null && !entry.SupportsTeamCount(session.TeamCount) && !playable.Contains(map))
             {
-                session.ServerToggleMap(map);
+                session.ServerToggleMap(map, remember: false);
                 Debug.Log($"[JUNK] {map} は {session.TeamCount} チームでは遊べない（ゴールが足りない）ので、使うマップから外しました。");
             }
         }

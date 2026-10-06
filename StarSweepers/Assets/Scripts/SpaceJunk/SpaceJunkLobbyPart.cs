@@ -18,6 +18,11 @@ public enum SpaceJunkLobbyPartRole
     StartMessage = 12,
     RuleText = 13,
 
+    // パスワード（ホストが変える。パスワードありの部屋だけ出す）
+    PasswordSection = 14,
+    PasswordInput = 15,
+    PasswordMessage = 16,
+
     // チーム分け
     PlayerListContent = 20,
     PlayerRowTemplate = 21,
