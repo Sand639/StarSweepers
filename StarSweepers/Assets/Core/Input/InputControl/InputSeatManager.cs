@@ -86,6 +86,34 @@ namespace ProjectEL4S.InputControl
 
         public static InputSeatManager Instance { get; private set; }
 
+        // CreatePersistent で作るときの席の数（Awake で読んで 0 に戻す）
+        private static int s_nextSeatCount;
+
+        /// <summary>
+        /// **シーンをまたいで残る管理役を作る**（1台で複数人のオンライン対戦用。<c>LocalMultiplayer</c> が呼ぶ）。
+        /// キーボード・マウスの台数も席の数にそろえる。画面のマウスカーソルは隠さない（ロビーの画面を押せるように）。
+        /// </summary>
+        public static InputSeatManager CreatePersistent(int seatCount)
+        {
+            seatCount = Mathf.Max(1, seatCount);
+
+            var go = new GameObject("InputSeats（1台で複数人）");
+            go.SetActive(false);
+            DontDestroyOnLoad(go);
+
+            var keyboards = go.AddComponent<MultiKeyboardManager>();
+            keyboards.MaxKeyboardsSetting = seatCount;
+            var mice = go.AddComponent<MultiMouseManager>();
+            mice.MaxPointersSetting = seatCount;
+            mice.HideSystemCursorSetting = false;
+
+            go.SetActive(true);   // ここでキーボード・マウスの管理役が起動する
+
+            s_nextSeatCount = seatCount;
+            // 起動した時点で、上のキーボード・マウスの管理役（Instance）につながる
+            return go.AddComponent<InputSeatManager>();
+        }
+
         public int SeatCount => _seats.Length;
         public IReadOnlyList<InputSeat> Seats => _seats;
         public MultiKeyboardManager KeyboardManager => _keyboards;
@@ -245,6 +273,12 @@ namespace ProjectEL4S.InputControl
                 return;
             }
             Instance = this;
+
+            if (s_nextSeatCount > 0)
+            {
+                _seatCount = s_nextSeatCount;
+                s_nextSeatCount = 0;
+            }
 
             // 管理役は DefaultExecutionOrder(-100) なので、ここより先に Awake が済んでいる
             if (_keyboards == null) _keyboards = MultiKeyboardManager.Instance;

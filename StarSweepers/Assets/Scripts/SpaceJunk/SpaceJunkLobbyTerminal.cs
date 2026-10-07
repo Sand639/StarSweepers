@@ -139,12 +139,12 @@ public class SpaceJunkLobbyTerminal : MonoBehaviour
         return keyboard != null && keyboard[key].wasPressedThisFrame;
     }
 
-    /// <summary>このPCで操作しているプレイヤーの位置。</summary>
+    /// <summary>このPCで操作しているプレイヤーの位置（1台で複数人なら、そのPCの1人目）。</summary>
     private static Transform FindLocalPlayer()
     {
         foreach (FishingNetPlayer player in FishingNetPlayer.All)
         {
-            if (player != null && player.IsOwner)
+            if (player != null && player.IsOwner && player.LocalSeat == 0)
             {
                 return player.transform;
             }

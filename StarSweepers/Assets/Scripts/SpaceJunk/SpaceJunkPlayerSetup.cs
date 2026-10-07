@@ -84,6 +84,7 @@ public class SpaceJunkPlayerSetup : MonoBehaviour
     private CharacterController characterController;
     private FishingPlayerController mover;
     private HookController hookController;
+    private PlayerInputSource input;
 
     /// <summary>復活までの残り秒数（自分のぶんだけ使う）。</summary>
     private float respawnRemaining;
@@ -100,6 +101,7 @@ public class SpaceJunkPlayerSetup : MonoBehaviour
         characterController = GetComponent<CharacterController>();
         mover = GetComponent<FishingPlayerController>();
         hookController = GetComponent<HookController>();
+        input = PlayerInputSource.Get(this);
     }
 
     private void Update()
@@ -112,9 +114,13 @@ public class SpaceJunkPlayerSetup : MonoBehaviour
             return;
         }
 
-        LocalResetKeyName = $"{resetKey}／{GamepadInput.Label(resetButton)}";
+        // 画面の案内とレーダーは1つしか無いので、そのPCの1人目のぶんだけ（1台で複数人のとき）
+        if (IsFirstLocalPlayer)
+        {
+            LocalResetKeyName = $"{resetKey}／{GamepadInput.Label(resetButton)}";
+            EnsureRadar();
+        }
 
-        EnsureRadar();
         EnsureLocalStateCheck();
 
         TickPlacement();
@@ -128,7 +134,10 @@ public class SpaceJunkPlayerSetup : MonoBehaviour
 
             // 新しいラウンドの始まり。前のラウンドの復活待ちが残っていても、ここで解く
             respawnRemaining = 0f;
-            LocalRespawnRemaining = 0f;
+            if (IsFirstLocalPlayer)
+            {
+                LocalRespawnRemaining = 0f;
+            }
 
             // 置き直しは、**自分のチームとゴールが届くまで待ってから**（TickPlacement）
             BeginPlacement();
@@ -379,15 +388,13 @@ public class SpaceJunkPlayerSetup : MonoBehaviour
             return;
         }
 
-        Keyboard keyboard = Keyboard.current;
-
         // 復活待ちの間は、もう一度押しても何もしない（押し続けて待ち時間を延ばせないように）
         if (respawnRemaining > 0f)
         {
             return;
         }
 
-        if ((keyboard != null && keyboard[resetKey].wasPressedThisFrame) || GamepadInput.WasPressed(resetButton))
+        if (input.WasPressed(resetKey, resetButton))
         {
             MoveToSpawnPoint();
             FollowWithCamera();
@@ -411,7 +418,10 @@ public class SpaceJunkPlayerSetup : MonoBehaviour
         }
 
         respawnRemaining = respawnLockSeconds;
-        LocalRespawnRemaining = respawnRemaining;
+        if (IsFirstLocalPlayer)
+        {
+            LocalRespawnRemaining = respawnRemaining;
+        }
         SetControlEnabled(false);
     }
 
@@ -423,7 +433,10 @@ public class SpaceJunkPlayerSetup : MonoBehaviour
         }
 
         respawnRemaining -= Time.deltaTime;
-        LocalRespawnRemaining = Mathf.Max(0f, respawnRemaining);
+        if (IsFirstLocalPlayer)
+        {
+            LocalRespawnRemaining = Mathf.Max(0f, respawnRemaining);
+        }
 
         if (respawnRemaining <= 0f)
         {
@@ -464,6 +477,9 @@ public class SpaceJunkPlayerSetup : MonoBehaviour
         radar.Setup(radarFrame, radarCompass, radarSelf);
     }
 
+    /// <summary>そのPCの1人目か（1台に1人なら常に true）。</summary>
+    private bool IsFirstLocalPlayer => netPlayer == null || netPlayer.LocalSeat == 0;
+
     /// <summary>このプレイヤーのチーム。係がいなければ 0。</summary>
     private int MyTeam()
     {
@@ -472,7 +488,8 @@ public class SpaceJunkPlayerSetup : MonoBehaviour
             return 0;
         }
 
-        return SpaceJunkSession.Current.TeamOf(netPlayer != null ? netPlayer.OwnerClientId : 0UL);
+        // 人ごとの番号で見る（1台で複数人のとき、同じPCの人でもチームが違うことがある）
+        return SpaceJunkSession.Current.TeamOf(netPlayer != null ? netPlayer.PlayerKey : 0UL);
     }
 
     /// <summary>ホストが決めたチームの色に塗り直す。</summary>
@@ -636,7 +653,8 @@ public class SpaceJunkPlayerSetup : MonoBehaviour
     /// </summary>
     private Vector3 FallbackSpawnPosition(Vector2 scatter)
     {
-        ulong id = netPlayer != null ? netPlayer.OwnerClientId : 0UL;
+        // 1台で複数人のときは、何人目かのぶんだけずらす（同じ場所に重ならないように）
+        ulong id = netPlayer != null ? netPlayer.OwnerClientId + (ulong)netPlayer.LocalSeat : 0UL;
         float angle = (id % (ulong)SpaceJunkTeams.MaxPlayers) * (360f / SpaceJunkTeams.MaxPlayers);
         Vector3 spot = Quaternion.Euler(0f, angle, 0f) * (Vector3.forward * fallbackRadius);
 
@@ -649,6 +667,18 @@ public class SpaceJunkPlayerSetup : MonoBehaviour
     /// </summary>
     private void FollowWithCamera()
     {
+        PlayerAimController aim = GetComponent<PlayerAimController>();
+        if (aim != null && Camera.main != null)
+        {
+            aim.SetCamera(Camera.main);
+        }
+
+        // カメラとゲージは画面に1つしか無いので、そのPCの1人目にだけ結びつける（1台で複数人のとき）
+        if (!IsFirstLocalPlayer)
+        {
+            return;
+        }
+
         TopDownCameraFollow follow = FindFirstObjectByType<TopDownCameraFollow>();
         if (follow != null)
         {
@@ -660,12 +690,6 @@ public class SpaceJunkPlayerSetup : MonoBehaviour
         if (teamCamera != null)
         {
             teamCamera.SetTarget(transform);
-        }
-
-        PlayerAimController aim = GetComponent<PlayerAimController>();
-        if (aim != null && Camera.main != null)
-        {
-            aim.SetCamera(Camera.main);
         }
 
         HookController hook = GetComponent<HookController>();

@@ -71,6 +71,12 @@ namespace ProjectEL4S.MultiMouse
 
         public static MultiMouseManager Instance { get; private set; }
 
+        /// <summary>台数を決める（Awake の前、GameObject を非アクティブにしている間だけ効く）。<see cref="InputControl.InputSeatManager.CreatePersistent"/> が使う。</summary>
+        internal int MaxPointersSetting { set => _maxPointers = value; }
+
+        /// <summary>画面のマウスカーソルを隠すか（有効にする前に決める）。</summary>
+        internal bool HideSystemCursorSetting { set => _hideSystemCursor = value; }
+
         /// <summary>Raw Input が動いているか。false のときは複数マウスを分離できていない。</summary>
         public bool RawInputAvailable => _reader != null && _reader.IsRunning;
         /// <summary>受信した WM_INPUT の総数（動作確認用）。</summary>

@@ -34,6 +34,9 @@ public class FishingNetSupply : NetworkBehaviour
     private uint localClaimRevision;
     private uint localClaimAttempt;
 
+    // 最後に引っ掛けを頼んだ人の参加番号（1台で複数人のとき、断りをその人のフックへ返すため）
+    private int localClaimPlayerIndex = -1;
+
     /// <summary>いま誰かに引っ掛けられているか。</summary>
     public bool IsClaimed => hookedByPlayerIndex.Value >= 0;
 
@@ -101,6 +104,7 @@ public class FishingNetSupply : NetworkBehaviour
     {
         localClaimRevision = explosionRevision.Value;
         localClaimAttempt += 1;
+        localClaimPlayerIndex = playerIndex;
         RequestClaimServerRpc(playerIndex, localClaimRevision, localClaimAttempt);
     }
 
@@ -145,7 +149,7 @@ public class FishingNetSupply : NetworkBehaviour
             return;
         }
 
-        HookController hook = FindLocalHookController();
+        HookController hook = FindLocalHookController(localClaimPlayerIndex);
         if (hook != null)
         {
             hook.CancelAttachBecauseTaken(hookable);
@@ -338,8 +342,9 @@ public class FishingNetSupply : NetworkBehaviour
         }
 
         // **頼んできた人が、本当にその参加番号の人か**を確かめる（ほかの人の引っ掛けを外させない）
-        FishingNetPlayer sender = FindPlayerByClient(rpcParams.Receive.SenderClientId);
-        if (sender == null || sender.PlayerIndex != playerIndex)
+        // 1台で複数人のときは、同じPCに何人もいるので「参加番号の人が、頼んできたPCの人か」で確かめる
+        FishingNetPlayer sender = FindPlayerByIndex(playerIndex);
+        if (sender == null || sender.OwnerClientId != rpcParams.Receive.SenderClientId)
         {
             return;
         }
@@ -427,18 +432,6 @@ public class FishingNetSupply : NetworkBehaviour
         return null;
     }
 
-    private static FishingNetPlayer FindPlayerByClient(ulong clientId)
-    {
-        foreach (FishingNetPlayer player in FishingNetPlayer.All)
-        {
-            if (player != null && player.IsSpawned && player.OwnerClientId == clientId)
-            {
-                return player;
-            }
-        }
-        return null;
-    }
-
     // ------------------------------------------------------------
     // 消す（ホスト → 全員）
     // ------------------------------------------------------------
@@ -515,9 +508,20 @@ public class FishingNetSupply : NetworkBehaviour
         };
     }
 
-    /// <summary>このPCで自分が操作しているプレイヤーの HookController を探す。</summary>
-    private static HookController FindLocalHookController()
+    /// <summary>
+    /// このPCで自分が操作しているプレイヤーの HookController を探す。
+    /// 1台で複数人のときは、参加番号 <paramref name="playerIndex"/> の人のもの（見つからなければ、このPCの誰か）。
+    /// </summary>
+    private static HookController FindLocalHookController(int playerIndex)
     {
+        foreach (FishingNetPlayer player in FishingNetPlayer.All)
+        {
+            if (player != null && player.IsOwner && player.PlayerIndex == playerIndex)
+            {
+                return player.GetComponent<HookController>();
+            }
+        }
+
         foreach (FishingNetPlayer player in FishingNetPlayer.All)
         {
             if (player != null && player.IsOwner)

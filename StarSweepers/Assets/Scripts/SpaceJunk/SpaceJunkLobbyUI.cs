@@ -1,5 +1,6 @@
 using System.Collections.Generic;
 using System.IO;
+using ProjectEL4S.InputControl;
 using Unity.Netcode;
 using UnityEngine;
 
@@ -99,6 +100,10 @@ public class SpaceJunkLobbyUI : MonoBehaviour
     /// <summary>つなぐ画面。試合が始まったら隠すために持っておく。</summary>
     private LanConnectionUi connectionUi;
 
+    /// <summary>「このPCで遊ぶ人数」を最後に伝えた試合の係と人数。変わったとき・係が新しくなったときだけ伝え直す。</summary>
+    private SpaceJunkSession sentLocalCountSession;
+    private int sentLocalCount;
+
     /// <summary>「ゲーム開始」を押した結果。うまくいかなかった理由を画面に出すために持つ。</summary>
     private string startMessage = string.Empty;
 
@@ -116,6 +121,39 @@ public class SpaceJunkLobbyUI : MonoBehaviour
         {
             connectionUi.enabled = SpaceJunkRound.Current == null;
         }
+
+        SyncLocalPlayerCount();
+    }
+
+    /// <summary>
+    /// **このPCで遊ぶ人数を、ホストへ伝える。** 人数を変えたときと、新しくつないだ（係が新しくなった）ときだけ。
+    /// ホストは足りないプレイヤーを出し、多すぎるぶんを消す（<see cref="SpaceJunkSession.RequestLocalPlayerCount"/>）。
+    /// </summary>
+    private void SyncLocalPlayerCount()
+    {
+        SpaceJunkSession session = SpaceJunkSession.Current;
+        if (session == null || !session.IsSpawned || session.State != SpaceJunkMatchState.Lobby)
+        {
+            return;
+        }
+
+        int count = LocalMultiplayer.PlayerCount;
+        if (session == sentLocalCountSession && count == sentLocalCount)
+        {
+            return;
+        }
+
+        // 1人のままで新しくつないだときは、伝えることが無い（ホストは最初から1人ぶん出している）
+        if (session != sentLocalCountSession && count == 1)
+        {
+            sentLocalCountSession = session;
+            sentLocalCount = count;
+            return;
+        }
+
+        session.RequestLocalPlayerCount(count);
+        sentLocalCountSession = session;
+        sentLocalCount = count;
     }
 
     private void OnGUI()
@@ -156,6 +194,8 @@ public class SpaceJunkLobbyUI : MonoBehaviour
             DrawRoster();
             GUILayout.Space(6f);
             DrawSummary();
+            GUILayout.Space(6f);
+            DrawLocalPlayers();
             GUILayout.Space(6f);
             DrawTerminalHint(manager);
         });
@@ -206,6 +246,81 @@ public class SpaceJunkLobbyUI : MonoBehaviour
 
             GUI.color = saved;
         }
+    }
+
+    /// <summary>
+    /// **このPCで遊ぶ人数（1台で複数人）。** 全員に出る（ホストも参加者も、自分のPCの人数を決める）。
+    /// 2人以上にすると、キーボード・マウス・コントローラを押した順に P1・P2… に分けて読む。
+    /// </summary>
+    private void DrawLocalPlayers()
+    {
+        if (SpaceJunkSession.Current == null)
+        {
+            return;
+        }
+
+        GUILayout.Label("■ このPCで遊ぶ人数", headerStyle);
+
+        GUILayout.BeginHorizontal();
+        if (GUILayout.Button("－", GUILayout.Width(32f)))
+        {
+            LocalMultiplayer.PlayerCount--;
+        }
+        GUILayout.Label($"　{LocalMultiplayer.PlayerCount} 人", labelStyle, GUILayout.Width(56f));
+        if (GUILayout.Button("＋", GUILayout.Width(32f)))
+        {
+            LocalMultiplayer.PlayerCount++;
+        }
+        GUILayout.EndHorizontal();
+
+        if (!LocalMultiplayer.IsActive)
+        {
+            GUILayout.Label("2人以上にすると、キーボード・マウス・コントローラを人ごとに分けて遊べます", labelStyle);
+            return;
+        }
+
+        InputSeatManager seats = InputSeatManager.Instance;
+        if (seats == null)
+        {
+            return;
+        }
+
+        if (seats.IsRegistering)
+        {
+            GUILayout.Label(seats.RegistrationPrompt, labelStyle);
+            if (GUILayout.Button("登録をやめる"))
+            {
+                seats.CancelRegistration();
+            }
+            return;
+        }
+
+        Color saved = GUI.color;
+        for (int i = 0; i < seats.SeatCount; i++)
+        {
+            InputSeat seat = seats.GetSeat(i);
+            GUI.color = seat.Color;
+            GUILayout.Label($"　P{i + 1}：キーボード {Mark(seat.HasKeyboard)}　マウス {Mark(seat.HasMouse)}　コントローラ {Mark(seat.HasGamepad)}", labelStyle);
+        }
+        GUI.color = saved;
+
+        GUILayout.Label("キーを押す／マウスを動かす／コントローラのボタンを押した順に P1・P2… に入ります", labelStyle);
+
+        GUILayout.BeginHorizontal();
+        if (GUILayout.Button("キーボード・マウスを登録"))
+        {
+            seats.BeginRegistration();
+        }
+        if (GUILayout.Button("割り当てをやり直す"))
+        {
+            seats.ResetAssignments();
+        }
+        GUILayout.EndHorizontal();
+    }
+
+    private static string Mark(bool connected)
+    {
+        return connected ? "○" : "－";
     }
 
     /// <summary>いまの設定の要約。参加者にも見える。</summary>
@@ -703,24 +818,27 @@ public class SpaceJunkLobbyUI : MonoBehaviour
     // 細かい道具
     // ------------------------------------------------------------
 
-    /// <summary>その接続番号の人の、画面に出す名前。</summary>
-    private static string NameOf(ulong clientId)
+    /// <summary>その人（席の番号＝人ごとの番号）の、画面に出す名前。</summary>
+    private static string NameOf(ulong key)
     {
+        int seat = LocalMultiplayer.SeatOf(key);
+        string suffix = seat > 0 ? $"（同じPCの{seat + 1}人目）" : string.Empty;
+
         foreach (FishingNetPlayer player in FishingNetPlayer.All)
         {
-            if (player != null && player.OwnerClientId == clientId)
+            if (player != null && player.IsSpawned && player.PlayerKey == key)
             {
-                return player.DisplayName;
+                return player.DisplayName + suffix;
             }
         }
 
-        return $"参加者 {clientId}";
+        return $"参加者 {LocalMultiplayer.ClientOf(key)}{suffix}";
     }
 
-    /// <summary>その人が、このPCで操作している人か。</summary>
-    private static bool IsLocalPlayer(ulong clientId)
+    /// <summary>その人が、このPCで操作している人か（1台で複数人なら、このPCの全員）。</summary>
+    private static bool IsLocalPlayer(ulong key)
     {
-        return NetworkManager.Singleton != null && NetworkManager.Singleton.LocalClientId == clientId;
+        return NetworkManager.Singleton != null && NetworkManager.Singleton.LocalClientId == LocalMultiplayer.ClientOf(key);
     }
 
     /// <summary>

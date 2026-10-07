@@ -1,6 +1,7 @@
 using ProjectEL4S.InputControl;
 using UnityEngine;
 using UnityEngine.InputSystem;
+using UnityEngine.InputSystem.LowLevel;
 
 /// <summary>
 /// **プレイヤー1人ぶんの操作の読み口（ラッパ）。**
@@ -32,8 +33,11 @@ public class PlayerInputSource : MonoBehaviour
         get => seatIndex;
         set
         {
-            seatIndex = value;
-            warnedNoSeat = false;
+            if (seatIndex != value)
+            {
+                seatIndex = value;
+                warnedNoSeat = false;
+            }
         }
     }
 
@@ -186,6 +190,29 @@ public class PlayerInputSource : MonoBehaviour
         ? SeatReleased(InputSeatButton.Aim)
         : (Mouse.current != null && Mouse.current.rightButton.wasReleasedThisFrame)
           || (Gamepad.current != null && Gamepad.current.rightTrigger.wasReleasedThisFrame);
+
+    /// <summary>
+    /// キーかコントローラのボタンが押された瞬間か（「戻る」など、Input Actions を使っていない操作用）。
+    /// 単体操作では `Keyboard.current` と `Gamepad.current`、席ではその席のキーボードとコントローラ。
+    /// </summary>
+    public bool WasPressed(Key key, GamepadButton button)
+    {
+        if (!UsesSeat)
+        {
+            Keyboard keyboard = Keyboard.current;
+            return (keyboard != null && keyboard[key].wasPressedThisFrame) || GamepadInput.WasPressed(button);
+        }
+
+        // コントローラは、席に入った瞬間のボタンを数えない（InputSeat と同じ決まり）
+        InputSeat seat = Seat;
+        if (seat == null)
+        {
+            return false;
+        }
+
+        return (seat.HasKeyboard && seat.Keyboard.WasPressedThisFrame(key))
+            || (seat.HasGamepad && seat.GamepadArmed && seat.Gamepad[button].wasPressedThisFrame);
+    }
 
     private bool SeatPressed(InputSeatButton button)
     {

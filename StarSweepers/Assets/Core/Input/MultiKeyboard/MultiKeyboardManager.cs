@@ -58,6 +58,9 @@ namespace ProjectEL4S.MultiKeyboard
 
         public static MultiKeyboardManager Instance { get; private set; }
 
+        /// <summary>台数を決める（Awake の前、GameObject を非アクティブにしている間だけ効く）。<see cref="InputControl.InputSeatManager.CreatePersistent"/> が使う。</summary>
+        internal int MaxKeyboardsSetting { set => _maxKeyboards = value; }
+
         /// <summary>Unity に登録を取られて取り戻した回数（動作確認用）。</summary>
         public int RegistrationRestoreCount => _reader?.RegistrationRestoreCount ?? 0;
 

@@ -51,6 +51,12 @@ public class FishingNetPlayer : NetworkBehaviour
     /// <summary>参加番号（0から）。**ホストが決める。**</summary>
     private readonly NetworkVariable<int> playerIndex = new NetworkVariable<int>(-1);
 
+    /// <summary>
+    /// **そのPCの何人目か（0から）。ホストが出すときに決める。**
+    /// ふつうは 0（1台に1人）。1台で複数人のとき、2人目以降はホストが追加で出し、1・2… が入る（<see cref="LocalMultiplayer"/>）。
+    /// </summary>
+    private readonly NetworkVariable<int> localSeat = new NetworkVariable<int>(0);
+
     // ---- 本人が送るもの（他の人が見るため） ----
 
     /// <summary>フックの先端の位置。**本人が送る。**</summary>
@@ -92,7 +98,7 @@ public class FishingNetPlayer : NetworkBehaviour
         {
             foreach (FishingNetPlayer player in All)
             {
-                if (player != null && player.OwnerClientId == NetworkManager.ServerClientId)
+                if (player != null && player.OwnerClientId == NetworkManager.ServerClientId && player.LocalSeat == 0)
                 {
                     return player.lobbyMapName.Value.ToString();
                 }
@@ -109,7 +115,7 @@ public class FishingNetPlayer : NetworkBehaviour
     {
         foreach (FishingNetPlayer player in All)
         {
-            if (player != null && player.IsServer && player.OwnerClientId == NetworkManager.ServerClientId)
+            if (player != null && player.IsServer && player.OwnerClientId == NetworkManager.ServerClientId && player.LocalSeat == 0)
             {
                 FixedString64Bytes value = new FixedString64Bytes(sceneName ?? string.Empty);
                 if (player.lobbyMapName.Value != value)
@@ -124,6 +130,21 @@ public class FishingNetPlayer : NetworkBehaviour
     /// <summary>参加番号（0から）。まだ決まっていなければ -1。</summary>
     public int PlayerIndex => playerIndex.Value;
 
+    /// <summary>そのPCの何人目か（0から）。1台に1人なら常に 0。</summary>
+    public int LocalSeat => localSeat.Value;
+
+    /// <summary>
+    /// **人ごとの番号。** チーム分け（SpaceJunkSession の席）はこれで見分ける。
+    /// 1人目は接続番号（OwnerClientId）そのままなので、1台に1人なら今までと同じ番号。
+    /// </summary>
+    public ulong PlayerKey => LocalMultiplayer.MakeKey(OwnerClientId, localSeat.Value);
+
+    /// <summary>そのPCの何人目かを決める。**ホストが、出す（Spawn）前に呼ぶ。**</summary>
+    public void ServerInitLocalSeat(int seat)
+    {
+        localSeat.Value = Mathf.Max(0, seat);
+    }
+
     /// <summary>所属チーム。</summary>
     public int TeamIndex => FishingTeams.TeamOf(playerIndex.Value);
 
@@ -132,10 +153,12 @@ public class FishingNetPlayer : NetworkBehaviour
         playerIndex.Value < 0 ? "参加中…" : $"プレイヤー{playerIndex.Value + 1}";
 
     private HookController hookController;
+    private PlayerInputSource input;
 
     private void Awake()
     {
         hookController = GetComponent<HookController>();
+        input = PlayerInputSource.Get(this);
 
         if (characterController == null)
         {
@@ -161,6 +184,7 @@ public class FishingNetPlayer : NetworkBehaviour
 
         if (IsOwner)
         {
+            input.SeatIndex = LocalMultiplayer.IsActive ? localSeat.Value : -1;
             MoveToSpawnPoint();
             FollowWithCamera();
         }
@@ -230,6 +254,9 @@ public class FishingNetPlayer : NetworkBehaviour
     {
         if (IsOwner)
         {
+            // 1台で複数人なら、そのPCの何人目かの席（P1・P2…）の機器だけで動かす。1人なら今までどおり
+            input.SeatIndex = LocalMultiplayer.IsActive ? localSeat.Value : -1;
+
             // **プレイヤーはシーンをまたいで生き続ける**（ロビーで生まれた本体がそのまま来る）ので、
             // 釣り会場に着いたことに気づいたら、そこで出てくる場所とカメラを合わせ直す。
             // ホストからの合図を待つ形にすると、読み込みの速さで順番が変わって取りこぼすため、
@@ -413,18 +440,24 @@ public class FishingNetPlayer : NetworkBehaviour
     /// </summary>
     private void FollowWithCamera()
     {
+        // 狙いの計算に使うカメラ（1台で複数人のときも、全員が同じ画面のカメラを使う）
+        PlayerAimController aim = GetComponent<PlayerAimController>();
+        if (aim != null && Camera.main != null)
+        {
+            aim.SetCamera(Camera.main);
+        }
+
+        // カメラとゲージは画面に1つしか無いので、そのPCの1人目にだけ結びつける
+        if (localSeat.Value != 0)
+        {
+            return;
+        }
+
         TopDownCameraFollow follow = FindFirstObjectByType<TopDownCameraFollow>();
 
         if (follow != null)
         {
             follow.SetTarget(transform);
-        }
-
-        // 狙いの計算に使うカメラ
-        PlayerAimController aim = GetComponent<PlayerAimController>();
-        if (aim != null && Camera.main != null)
-        {
-            aim.SetCamera(Camera.main);
         }
 
         // チャージ量とスキルチェックのゲージ

@@ -153,7 +153,7 @@ public class SpaceJunkRadar : MonoBehaviour
                 continue;
             }
 
-            int team = session != null ? session.TeamOf(player.OwnerClientId) : 0;
+            int team = session != null ? session.TeamOf(player.PlayerKey) : 0;
             Color color = SpaceJunkTeams.TeamColor(team);
 
             bool inside = ToRadar(player.transform.position, heading, dotRadius, true, out Vector2 offset);

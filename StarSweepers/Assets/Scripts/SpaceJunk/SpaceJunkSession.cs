@@ -24,7 +24,11 @@ public enum SpaceJunkMatchState
 /// </summary>
 public struct SpaceJunkPlayerSlot : INetworkSerializable, IEquatable<SpaceJunkPlayerSlot>
 {
-    /// <summary>その人の接続番号。</summary>
+    /// <summary>
+    /// その人の番号。**1台に1人なら接続番号（ClientId）そのもの。**
+    /// 1台で複数人のときの2人目以降は、接続番号に「何人目か」を足した人ごとの番号（<see cref="LocalMultiplayer.MakeKey"/>）。
+    /// 接続番号に戻すときは <see cref="LocalMultiplayer.ClientOf"/>。
+    /// </summary>
     public ulong ClientId;
 
     /// <summary>所属チーム（0から）。</summary>
@@ -383,7 +387,7 @@ public class SpaceJunkSession : NetworkBehaviour
         bool mismatch = false;
         foreach (SpaceJunkPlayerSlot slot in slots)
         {
-            if (!ContainsId(connected, slot.ClientId))
+            if (!SlotStillValid(connected, slot.ClientId))
             {
                 mismatch = true;
                 break;
@@ -395,6 +399,19 @@ public class SpaceJunkSession : NetworkBehaviour
             foreach (ulong clientId in connected)
             {
                 if (TeamSlotIndex(clientId) < 0)
+                {
+                    mismatch = true;
+                    break;
+                }
+            }
+        }
+
+        // 1台で複数人のときの2人目以降（ホストが追加で出したプレイヤー）にも、席があるか
+        if (!mismatch)
+        {
+            foreach (FishingNetPlayer player in FishingNetPlayer.All)
+            {
+                if (IsExtraLocalPlayer(player) && TeamSlotIndex(player.PlayerKey) < 0)
                 {
                     mismatch = true;
                     break;
@@ -417,7 +434,7 @@ public class SpaceJunkSession : NetworkBehaviour
 
         for (int i = slots.Count - 1; i >= 0; i--)
         {
-            if (!ContainsId(connected, slots[i].ClientId))
+            if (!SlotStillValid(connected, slots[i].ClientId))
             {
                 Debug.LogWarning($"[NET][答え合わせ] もうつながっていない人（{slots[i].ClientId}）の席が残っていたので消しました。");
                 slots.RemoveAt(i);
@@ -432,6 +449,15 @@ public class SpaceJunkSession : NetworkBehaviour
                 AddSlot(clientId);
             }
         }
+
+        foreach (FishingNetPlayer player in FishingNetPlayer.All)
+        {
+            if (IsExtraLocalPlayer(player) && TeamSlotIndex(player.PlayerKey) < 0)
+            {
+                Debug.LogWarning($"[NET][答え合わせ] 席の無い人（{player.PlayerKey}）がいたので、席を作りました。");
+                AddSlot(player.PlayerKey);
+            }
+        }
     }
 
     private static bool ContainsId(IReadOnlyList<ulong> ids, ulong id)
@@ -444,6 +470,151 @@ public class SpaceJunkSession : NetworkBehaviour
             }
         }
         return false;
+    }
+
+    /// <summary>
+    /// その席がまだ有効か。1人目（接続番号そのまま）は、そのPCがつながっていれば有効。
+    /// 1台で複数人の2人目以降は、そのプレイヤーがまだいれば有効。
+    /// </summary>
+    private static bool SlotStillValid(IReadOnlyList<ulong> connected, ulong key)
+    {
+        if (!ContainsId(connected, LocalMultiplayer.ClientOf(key)))
+        {
+            return false;
+        }
+
+        return LocalMultiplayer.SeatOf(key) == 0 || FindPlayerByKey(key) != null;
+    }
+
+    /// <summary>1台で複数人のときに、ホストが追加で出した2人目以降のプレイヤーか。</summary>
+    private static bool IsExtraLocalPlayer(FishingNetPlayer player)
+    {
+        return player != null && player.IsSpawned && player.LocalSeat > 0;
+    }
+
+    private static FishingNetPlayer FindPlayerByKey(ulong key)
+    {
+        foreach (FishingNetPlayer player in FishingNetPlayer.All)
+        {
+            if (player != null && player.IsSpawned && player.PlayerKey == key)
+            {
+                return player;
+            }
+        }
+        return null;
+    }
+
+    // ------------------------------------------------------------
+    // 1台のPCで複数人（2026/10/7）
+    // ------------------------------------------------------------
+    //
+    // ふつうはつないだPC1台につき1人（NetworkManager の Player Prefab）が出る。
+    // 1台で複数人のときは、2人目以降を**ホストが同じプレハブから出し、そのPCを持ち主にする**。
+    // 持ち主が同じなので、そのPCで動かせる。誰がどの席（P1・P2…）の機器で動くかは LocalSeat で決まる。
+    // チーム分けの席は、人ごとの番号（FishingNetPlayer.PlayerKey）で作る。
+
+    /// <summary>
+    /// **このPCで遊ぶ人数をホストへ伝える。** 足りなければ出してもらい、多ければ消してもらう。
+    /// ロビーにいる間だけ効く。ホストのPCからも参加者のPCからも呼んでよい。
+    /// </summary>
+    public void RequestLocalPlayerCount(int count)
+    {
+        if (!IsSpawned)
+        {
+            return;
+        }
+
+        if (IsServer)
+        {
+            ServerApplyLocalPlayerCount(NetworkManager.LocalClientId, count);
+        }
+        else
+        {
+            RequestLocalPlayerCountServerRpc(count);
+        }
+    }
+
+    [ServerRpc(RequireOwnership = false)]
+    private void RequestLocalPlayerCountServerRpc(int count, ServerRpcParams rpcParams = default)
+    {
+        ServerApplyLocalPlayerCount(rpcParams.Receive.SenderClientId, count);
+    }
+
+    private void ServerApplyLocalPlayerCount(ulong clientId, int count)
+    {
+        if (state.Value != SpaceJunkMatchState.Lobby)
+        {
+            Debug.LogWarning($"[JUNK] 1台で遊ぶ人数は、ロビーにいる間しか変えられません（接続番号 {clientId}）。");
+            return;
+        }
+
+        count = Mathf.Clamp(count, 1, LocalMultiplayer.MaxLocalPlayers);
+
+        // 多すぎるぶんを消す（後ろから。消すと FishingNetPlayer.All から抜けるため）
+        for (int i = FishingNetPlayer.All.Count - 1; i >= 0; i--)
+        {
+            FishingNetPlayer player = FishingNetPlayer.All[i];
+            if (!IsExtraLocalPlayer(player) || player.OwnerClientId != clientId || player.LocalSeat < count)
+            {
+                continue;
+            }
+
+            RemoveSlot(player.PlayerKey);
+            Debug.Log($"[JUNK] 1台で複数人：接続番号 {clientId} の {player.LocalSeat + 1} 人目を消しました。");
+            player.NetworkObject.Despawn(true);
+        }
+
+        // 足りないぶんを出す
+        GameObject prefab = NetworkManager.NetworkConfig.PlayerPrefab;
+        if (prefab == null)
+        {
+            Debug.LogError("[JUNK] NetworkManager に Player Prefab が入っていないので、2人目以降を出せません。");
+            return;
+        }
+
+        for (int seat = 1; seat < count; seat++)
+        {
+            ulong key = LocalMultiplayer.MakeKey(clientId, seat);
+            if (FindPlayerByKey(key) != null)
+            {
+                continue;
+            }
+
+            if (slots.Count >= SpaceJunkTeams.MaxPlayers)
+            {
+                Debug.LogWarning($"[JUNK] 定員（{SpaceJunkTeams.MaxPlayers}人）なので、接続番号 {clientId} の {seat + 1} 人目は出しませんでした。");
+                break;
+            }
+
+            GameObject spawned = Instantiate(prefab);
+            FishingNetPlayer netPlayer = spawned.GetComponent<FishingNetPlayer>();
+            NetworkObject networkObject = spawned.GetComponent<NetworkObject>();
+            if (netPlayer == null || networkObject == null)
+            {
+                Debug.LogError("[JUNK] Player Prefab に FishingNetPlayer か NetworkObject がありません。2人目以降を出せません。");
+                Destroy(spawned);
+                return;
+            }
+
+            // 出す前に「何人目か」を決める（出したときに全員へ一緒に届く）。
+            // シーンを切り替えても消えないように出す（1人目と同じ。マップへそのまま付いていく）
+            netPlayer.ServerInitLocalSeat(seat);
+            networkObject.SpawnWithOwnership(clientId, false);
+            AddSlot(key);
+
+            Debug.Log($"[JUNK] 1台で複数人：接続番号 {clientId} の {seat + 1} 人目を出しました。");
+        }
+    }
+
+    private void RemoveSlot(ulong key)
+    {
+        for (int i = slots.Count - 1; i >= 0; i--)
+        {
+            if (slots[i].ClientId == key)
+            {
+                slots.RemoveAt(i);
+            }
+        }
     }
 
     /// <summary>その人の席の番号（無ければ -1）。</summary>
@@ -463,7 +634,7 @@ public class SpaceJunkSession : NetworkBehaviour
     {
         for (int i = slots.Count - 1; i >= 0; i--)
         {
-            if (slots[i].ClientId == clientId)
+            if (LocalMultiplayer.ClientOf(slots[i].ClientId) == clientId)
             {
                 slots.RemoveAt(i);
             }
