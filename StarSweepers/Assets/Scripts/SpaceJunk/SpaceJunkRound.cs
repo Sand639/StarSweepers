@@ -68,6 +68,53 @@ public partial class SpaceJunkRound : NetworkBehaviour
              "**ふだんはホストがロビーで決めた値が使われる**ので、ここは効かない")]
     [SerializeField] private float fallbackSeconds = 60f;
 
+    [Header("始まりの演出（2026/10/7。スプラトゥーンのようにマップを見せてから 3・2・1・START）")]
+    [Tooltip("OFF にすると演出をせず、すぐに始まる")]
+    [SerializeField] private bool playIntro = true;
+
+    [Tooltip("全員の読み込みを待つ秒数（演出の前）。遅いPCでも最初から見られるように")]
+    [Min(0f)]
+    [SerializeField] private float introLeadSeconds = 1.5f;
+
+    [Tooltip("マップをぐるっと見せる秒数")]
+    [Min(0f)]
+    [SerializeField] private float introFlyoverSeconds = 4f;
+
+    [Tooltip("自分のプレイヤーへカメラが寄る秒数")]
+    [Min(0f)]
+    [SerializeField] private float introZoomSeconds = 1.5f;
+
+    [Tooltip("3・2・1 のカウントダウンの秒数")]
+    [Min(0f)]
+    [SerializeField] private float introCountdownSeconds = 3f;
+
+    public float IntroFlyoverSeconds => introFlyoverSeconds;
+    public float IntroZoomSeconds => introZoomSeconds;
+    public float IntroCountdownSeconds => introCountdownSeconds;
+
+    /// <summary>
+    /// **動き出してよい時刻**（全員で同期された時計 ServerTime）。これより前は始まりの演出中で、誰も動けない。
+    /// 0 なら演出なし。
+    /// </summary>
+    private readonly NetworkVariable<double> playStartServerTime = new NetworkVariable<double>(0d);
+
+    /// <summary>動き出してよい時刻（ServerTime）。0 なら演出なし。</summary>
+    public double PlayStartServerTime => playStartServerTime.Value;
+
+    /// <summary>始まりの演出が始まる時刻（ServerTime）。</summary>
+    public double IntroStartServerTime =>
+        playStartServerTime.Value - introFlyoverSeconds - introZoomSeconds - introCountdownSeconds;
+
+    /// <summary>いまの時刻（全員で同期された時計）。</summary>
+    public double ServerNow => NetworkManager != null ? NetworkManager.ServerTime.Time : 0d;
+
+    /// <summary>**始まりの演出中か**（マップの紹介〜カウントダウン）。この間は誰も動けず、素材も出ない。</summary>
+    public bool IsIntro =>
+        phase.Value == SpaceJunkRoundPhase.Playing && playStartServerTime.Value > 0d && ServerNow < playStartServerTime.Value;
+
+    /// <summary>前のフレームで演出中だったか（演出が終わった瞬間に操作を戻すため）。</summary>
+    private bool wasIntro;
+
     /// <summary>
     /// チームごとの、集めた素材の種類。**1ビットが1種類**（装甲板=1 / 回路基板=2 / 燃料タンク=4）。
     /// 長さは常に <see cref="SpaceJunkTeams.MaxTeams"/>。
@@ -106,8 +153,8 @@ public partial class SpaceJunkRound : NetworkBehaviour
         return team >= 0 && team < scores.Count ? scores[team] : 0;
     }
 
-    /// <summary>集めている最中か。</summary>
-    public bool IsPlaying => phase.Value == SpaceJunkRoundPhase.Playing;
+    /// <summary>集めている最中か（始まりの演出中は false）。</summary>
+    public bool IsPlaying => phase.Value == SpaceJunkRoundPhase.Playing && !IsIntro;
 
     /// <summary>いまの段階。</summary>
     public SpaceJunkRoundPhase Phase => phase.Value;
@@ -215,16 +262,30 @@ public partial class SpaceJunkRound : NetworkBehaviour
                 ? SpaceJunkSession.Current.RoundSeconds
                 : fallbackSeconds;
 
-            endServerTime.Value = NetworkManager.ServerTime.Time + seconds;
+            // **始まりの演出のぶん、動き出す時刻を後ろにずらす。** 残り時間とイベントは、動き出してから数える
+            double now = NetworkManager.ServerTime.Time;
+            double playStart = playIntro
+                ? now + introLeadSeconds + introFlyoverSeconds + introZoomSeconds + introCountdownSeconds
+                : 0d;
+            playStartServerTime.Value = playStart;
+
+            endServerTime.Value = (playStart > 0d ? playStart : now) + seconds;
 
             ServerInitEvents(seconds);
         }
 
         phase.OnValueChanged += OnPhaseChanged;
 
-        // **前のラウンドで止めた操作を、ここで戻す。**
+        // **前のラウンドで止めた操作を、ここで戻す。**（演出中なら、まだ止めておく。演出が終わったら Update で戻す）
         // プレイヤーはシーンをまたいで生き続けるので、止めたままだと次のラウンドで動けなくなる
-        SetLocalPlayerControlEnabled(true);
+        wasIntro = IsIntro;
+        SetLocalPlayerControlEnabled(!wasIntro);
+
+        // 始まりの演出（カメラとカウントダウン）を、全員のPCで出す
+        if (GetComponent<SpaceJunkRoundIntro>() == null)
+        {
+            gameObject.AddComponent<SpaceJunkRoundIntro>();
+        }
 
         ApplyGoalOwners();
 
@@ -295,7 +356,15 @@ public partial class SpaceJunkRound : NetworkBehaviour
         // 重いデブリの見た目は、全員のPCで付け外しする
         UpdateHeavyMarks();
 
-        if (!IsServer || phase.Value != SpaceJunkRoundPhase.Playing)
+        // **始まりの演出が終わった瞬間に、操作を戻す**（全員のPC。START! の合図と同時に動ける）
+        bool intro = IsIntro;
+        if (wasIntro && !intro && phase.Value == SpaceJunkRoundPhase.Playing)
+        {
+            SetLocalPlayerControlEnabled(true);
+        }
+        wasIntro = intro;
+
+        if (!IsServer || phase.Value != SpaceJunkRoundPhase.Playing || intro)
         {
             return;
         }

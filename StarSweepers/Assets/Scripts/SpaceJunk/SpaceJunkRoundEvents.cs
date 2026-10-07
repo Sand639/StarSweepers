@@ -388,7 +388,9 @@ public partial class SpaceJunkRound
             return;
         }
 
-        eventServerTime.Value = NetworkManager.ServerTime.Time + settings.startSeconds;
+        // 動き出してから数える（始まりの演出があれば、その終わりから。2026/10/7）
+        double playStart = PlayStartServerTime > 0d ? PlayStartServerTime : NetworkManager.ServerTime.Time;
+        eventServerTime.Value = playStart + settings.startSeconds;
     }
 
     /// <summary>時間が来たらイベントを始め、続く秒数が過ぎたら終わらせる。<see cref="Update"/> から呼ぶ。</summary>
