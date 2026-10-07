@@ -11,6 +11,7 @@ namespace ProjectEL4S.MultiKeyboard
     /// 物理キーボードを Raw Input でデバイス別に読み、キーボードごとに独立した入力状態を持つ。
     /// OS 側では 2 台分のキー入力が合成されて 1 台に見えるので、こちらで台ごとに分ける。
     /// 割り当ては MultiMouseManager と同じく「最初にキーを押した順」。
+    /// <see cref="SetFixedDevices"/> で番号ごとのデバイスを決めておけば、押した順に関係なくその番号になる（固定登録）。
     ///
     /// Raw Input を登録すると Unity の Keyboard.current が止まるので、受け取った入力を
     /// <see cref="UnityKeyboardBridge"/> で Unity へ流し直す（既存のスクリプトがそのまま動く）。
@@ -45,6 +46,11 @@ namespace ProjectEL4S.MultiKeyboard
         private readonly Dictionary<IntPtr, int> _deviceToKeyboard = new Dictionary<IntPtr, int>();
         private readonly UnityKeyboardBridge _bridge = new UnityKeyboardBridge();
         private MultiKeyboardDevice[] _keyboards;
+        // 固定登録：番号ごとに使うデバイスの名前（Windows のデバイスパス）。空の番号は今までどおり押した順
+        private string[] _fixedDevices = Array.Empty<string>();
+        // 名前を取るのは Windows への問い合わせになるので、ハンドルごとに覚えておく
+        private readonly Dictionary<IntPtr, string> _deviceNames = new Dictionary<IntPtr, string>();
+        private readonly List<IntPtr> _connected = new List<IntPtr>();
         private RawInputKeyboard _reader;
         private int _seenRestoreCount;
         // onBeforeUpdate と Update の両方から呼ばれるので、1 フレームに 1 回だけ処理するための印
@@ -85,7 +91,10 @@ namespace ProjectEL4S.MultiKeyboard
             return _keyboards[index];
         }
 
-        /// <summary>デバイスと番号の割り当てをやり直す（次にキーを押したキーボードが 0 番になる）。</summary>
+        /// <summary>
+        /// デバイスと番号の割り当てをやり直す（次にキーを押したキーボードが 0 番になる）。
+        /// 固定登録がある番号は、つながっていればすぐ登録したキーボードに戻る。
+        /// </summary>
         public void ClearAssignments()
         {
             _deviceToKeyboard.Clear();
@@ -93,6 +102,44 @@ namespace ProjectEL4S.MultiKeyboard
             {
                 _keyboards[i].ResetAssignment();
             }
+            BindFixedDevices();
+        }
+
+        /// <summary>
+        /// 番号ごとに使うキーボードを決める（固定登録）。deviceNames[i] が i 番のデバイスの名前で、
+        /// <see cref="GetAssignedDeviceNames"/> で取ったものをそのまま渡せばよい。null・空の番号は押した順のまま。
+        /// 呼ぶと割り当てをやり直し、今つながっている登録済みのキーボードはキーを押す前から割り当てる。
+        /// </summary>
+        public void SetFixedDevices(IReadOnlyList<string> deviceNames)
+        {
+            _fixedDevices = new string[_keyboards.Length];
+            if (deviceNames != null)
+            {
+                for (int i = 0; i < _fixedDevices.Length && i < deviceNames.Count; i++)
+                {
+                    _fixedDevices[i] = deviceNames[i];
+                }
+            }
+            ClearAssignments();
+        }
+
+        /// <summary>番号ごとの、いま割り当たっているデバイスの名前（未割り当ては空文字）。固定登録の保存用。</summary>
+        public string[] GetAssignedDeviceNames()
+        {
+            var names = new string[_keyboards.Length];
+            for (int i = 0; i < _keyboards.Length; i++)
+            {
+                var kb = _keyboards[i];
+                // ハンドル 0（リモートデスクトップなど、どの機器か分からない入力）は登録しても次に見分けられない
+                names[i] = kb.IsAssigned && kb.DeviceHandle != IntPtr.Zero ? kb.DeviceName : string.Empty;
+            }
+            return names;
+        }
+
+        /// <summary>その番号に固定登録があるか。</summary>
+        public bool HasFixedDevice(int index)
+        {
+            return index >= 0 && index < _fixedDevices.Length && !string.IsNullOrEmpty(_fixedDevices[index]);
         }
 
         private void Awake()
@@ -115,6 +162,7 @@ namespace ProjectEL4S.MultiKeyboard
                         : Color.white,
                 };
             }
+            _fixedDevices = new string[_maxKeyboards];
         }
 
         private void OnEnable()
@@ -158,6 +206,7 @@ namespace ProjectEL4S.MultiKeyboard
             if (_reader.Start())
             {
                 StatusMessage = null;
+                BindFixedDevices();
             }
             else
             {
@@ -178,8 +227,9 @@ namespace ProjectEL4S.MultiKeyboard
             _bridge.ReleaseAll();
             if (_forwardToUnityInput) _bridge.Flush();
 
-            // デバイスハンドルは作り直すと変わるので、割り当ても捨てる
+            // デバイスハンドルは作り直すと変わるので、割り当ても捨てる（固定登録の名前は残す）
             _deviceToKeyboard.Clear();
+            _deviceNames.Clear();
             if (_keyboards == null) return;
             for (int i = 0; i < _keyboards.Length; i++)
             {
@@ -308,18 +358,82 @@ namespace ProjectEL4S.MultiKeyboard
                 return _keyboards[index];
             if (!assignIfNew) return null;
 
+            string name = GetCachedDeviceName(device);
+            int slot = FindFixedSlot(name);
+            bool isFixed = slot >= 0;
+            if (!isFixed) slot = FindFreeSlot();
+            if (slot < 0) return null;
+
+            Assign(slot, device, name, isFixed);
+            return _keyboards[slot];
+        }
+
+        /// <summary>今つながっている、固定登録したキーボードを、キーを押す前から割り当てる。</summary>
+        private void BindFixedDevices()
+        {
+            if (!RawInputAvailable || _keyboards == null) return;
+            bool any = false;
+            for (int i = 0; i < _fixedDevices.Length; i++) any |= HasFixedDevice(i);
+            if (!any) return;
+
+            _reader.GetConnectedDevices(_connected);
+            for (int i = 0; i < _connected.Count; i++)
+            {
+                IntPtr device = _connected[i];
+                if (_deviceToKeyboard.ContainsKey(device)) continue;
+                string name = GetCachedDeviceName(device);
+                int slot = FindFixedSlot(name);
+                if (slot >= 0) Assign(slot, device, name, true);
+            }
+        }
+
+        /// <summary>まだ埋まっていない、その名前で固定登録した番号。無ければ -1。</summary>
+        private int FindFixedSlot(string name)
+        {
+            for (int i = 0; i < _fixedDevices.Length; i++)
+            {
+                if (_keyboards[i].IsAssigned || !HasFixedDevice(i)) continue;
+                if (string.Equals(_fixedDevices[i], name, StringComparison.OrdinalIgnoreCase)) return i;
+            }
+            return -1;
+        }
+
+        /// <summary>
+        /// 登録していないキーボードに渡す番号。固定登録の無い番号を先に使い、
+        /// 足りなければ「登録したキーボードがつながっていない番号」を使う（抜けた分を別のキーボードで代わりに遊べるように）。
+        /// </summary>
+        private int FindFreeSlot()
+        {
             for (int i = 0; i < _keyboards.Length; i++)
             {
-                if (_keyboards[i].IsAssigned) continue;
-
-                _deviceToKeyboard.Add(device, i);
-                _keyboards[i].IsAssigned = true;
-                _keyboards[i].DeviceHandle = device;
-                _keyboards[i].DeviceName = _reader.GetDeviceName(device);
-                Debug.Log($"[MultiKeyboard] キーボード {i} にデバイスを割り当て: {_keyboards[i].DeviceName}");
-                return _keyboards[i];
+                if (!_keyboards[i].IsAssigned && !HasFixedDevice(i)) return i;
             }
-            return null;
+            for (int i = 0; i < _keyboards.Length; i++)
+            {
+                if (!_keyboards[i].IsAssigned) return i;
+            }
+            return -1;
+        }
+
+        private void Assign(int slot, IntPtr device, string name, bool isFixed)
+        {
+            _deviceToKeyboard.Add(device, slot);
+            _keyboards[slot].IsAssigned = true;
+            _keyboards[slot].DeviceHandle = device;
+            _keyboards[slot].DeviceName = name;
+            Debug.Log(isFixed
+                ? $"[MultiKeyboard] キーボード {slot} に登録済みのデバイスを割り当て: {name}"
+                : $"[MultiKeyboard] キーボード {slot} にデバイスを割り当て: {name}");
+        }
+
+        private string GetCachedDeviceName(IntPtr device)
+        {
+            if (!_deviceNames.TryGetValue(device, out string name))
+            {
+                name = _reader.GetDeviceName(device);
+                _deviceNames.Add(device, name);
+            }
+            return name;
         }
     }
 }

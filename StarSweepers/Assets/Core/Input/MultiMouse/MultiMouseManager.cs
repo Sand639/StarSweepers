@@ -9,6 +9,8 @@ namespace ProjectEL4S.MultiMouse
     /// <summary>
     /// 物理マウスを Raw Input でデバイス別に読み、マウスごとに独立した仮想ポインタを動かす。
     /// OS のカーソルは 2 台分が合成されて 1 つしか動かないので、こちらで座標を自前に持つ。
+    /// 割り当ては「最初に動かした順」。<see cref="SetFixedDevices"/> で番号ごとのデバイスを決めておけば、
+    /// 動かした順に関係なくその番号になる（固定登録）。
     ///
     /// Raw Input を登録すると Unity の Mouse.current.delta が止まるので、受け取った移動量を
     /// <see cref="UnityMouseBridge"/> で Unity へ流し直す（既存のスクリプトがそのまま動く）。
@@ -27,6 +29,9 @@ namespace ProjectEL4S.MultiMouse
             new Color(0.5f, 1f, 0.4f),
             new Color(1f, 0.9f, 0.3f),
         };
+
+        [Tooltip("クリックしたマウスだけ割り当てる（動かしただけでは割り当てない）。登録の画面などで、触れただけのマウスを拾わないために使う")]
+        [SerializeField] private bool _assignOnClickOnly = false;
 
         [Header("OS カーソル")]
         [Tooltip("OS の矢印カーソルを隠す（2 台のマウスで動く合成カーソルが邪魔になるため）")]
@@ -51,6 +56,11 @@ namespace ProjectEL4S.MultiMouse
         private readonly Dictionary<IntPtr, int> _deviceToPointer = new Dictionary<IntPtr, int>();
         private readonly UnityMouseBridge _bridge = new UnityMouseBridge();
         private MultiMousePointer[] _pointers;
+        // 固定登録：番号ごとに使うデバイスの名前（Windows のデバイスパス）。空の番号は今までどおり動かした順
+        private string[] _fixedDevices = Array.Empty<string>();
+        // 名前を取るのは Windows への問い合わせになるので、ハンドルごとに覚えておく
+        private readonly Dictionary<IntPtr, string> _deviceNames = new Dictionary<IntPtr, string>();
+        private readonly List<IntPtr> _connected = new List<IntPtr>();
         private RawInputMouse _reader;
         private int _seenRestoreCount;
         // onBeforeUpdate と Update の両方から呼ばれるので、1 フレームに 1 回だけ処理するための印
@@ -91,7 +101,17 @@ namespace ProjectEL4S.MultiMouse
             return _pointers[index];
         }
 
-        /// <summary>デバイスとポインタの割り当てをやり直す（次に動いたマウスが 1 本目になる）。</summary>
+        /// <summary>クリックしたマウスだけ割り当てるか（動かしただけでは割り当てない）。</summary>
+        public bool AssignOnClickOnly
+        {
+            get => _assignOnClickOnly;
+            set => _assignOnClickOnly = value;
+        }
+
+        /// <summary>
+        /// デバイスとポインタの割り当てをやり直す（次に動いたマウスが 1 本目になる）。
+        /// 固定登録がある番号は、つながっていればすぐ登録したマウスに戻る。
+        /// </summary>
         public void ClearAssignments()
         {
             _deviceToPointer.Clear();
@@ -100,6 +120,44 @@ namespace ProjectEL4S.MultiMouse
                 _pointers[i].ResetAssignment();
                 _pointers[i].ScreenPosition = DefaultPosition(i);
             }
+            BindFixedDevices();
+        }
+
+        /// <summary>
+        /// 番号ごとに使うマウスを決める（固定登録）。deviceNames[i] が i 番のデバイスの名前で、
+        /// <see cref="GetAssignedDeviceNames"/> で取ったものをそのまま渡せばよい。null・空の番号は動かした順のまま。
+        /// 呼ぶと割り当てをやり直し、今つながっている登録済みのマウスは動かす前から割り当てる。
+        /// </summary>
+        public void SetFixedDevices(IReadOnlyList<string> deviceNames)
+        {
+            _fixedDevices = new string[_pointers.Length];
+            if (deviceNames != null)
+            {
+                for (int i = 0; i < _fixedDevices.Length && i < deviceNames.Count; i++)
+                {
+                    _fixedDevices[i] = deviceNames[i];
+                }
+            }
+            ClearAssignments();
+        }
+
+        /// <summary>番号ごとの、いま割り当たっているデバイスの名前（未割り当ては空文字）。固定登録の保存用。</summary>
+        public string[] GetAssignedDeviceNames()
+        {
+            var names = new string[_pointers.Length];
+            for (int i = 0; i < _pointers.Length; i++)
+            {
+                var p = _pointers[i];
+                // ハンドル 0（リモートデスクトップなど、どの機器か分からない入力）は登録しても次に見分けられない
+                names[i] = p.IsAssigned && p.DeviceHandle != IntPtr.Zero ? p.DeviceName : string.Empty;
+            }
+            return names;
+        }
+
+        /// <summary>その番号に固定登録があるか。</summary>
+        public bool HasFixedDevice(int index)
+        {
+            return index >= 0 && index < _fixedDevices.Length && !string.IsNullOrEmpty(_fixedDevices[index]);
         }
 
         private void Awake()
@@ -123,7 +181,7 @@ namespace ProjectEL4S.MultiMouse
                     ScreenPosition = DefaultPosition(i),
                 };
             }
-
+            _fixedDevices = new string[_maxPointers];
         }
 
         private void OnEnable()
@@ -173,6 +231,7 @@ namespace ProjectEL4S.MultiMouse
             if (_reader.Start())
             {
                 StatusMessage = null;
+                BindFixedDevices();
             }
             else
             {
@@ -190,8 +249,9 @@ namespace ProjectEL4S.MultiMouse
             reader.Dispose();
             _bridge.Clear();
 
-            // デバイスハンドルは作り直すと変わるので、割り当ても捨てる
+            // デバイスハンドルは作り直すと変わるので、割り当ても捨てる（固定登録の名前は残す）
             _deviceToPointer.Clear();
+            _deviceNames.Clear();
             if (_pointers == null) return;
             for (int i = 0; i < _pointers.Length; i++)
             {
@@ -261,8 +321,8 @@ namespace ProjectEL4S.MultiMouse
                 // Unity へは、割り当てに関係なく全部のマウスの移動量を流す（ふつうのマウスと同じ動きにする）
                 if (!frame.HasAbsolute) _bridge.Add(frame.DeltaX, frame.DeltaY);
 
-                var pointer = Resolve(frame.DeviceHandle);
-                if (pointer == null) continue;   // ポインタ数を超えたデバイスは無視
+                var pointer = Resolve(frame.DeviceHandle, assignIfNew: !_assignOnClickOnly || frame.ButtonDown != 0);
+                if (pointer == null) continue;   // ポインタ数を超えたデバイス・まだ割り当てないデバイスは無視
                 Apply(pointer, frame);
             }
 
@@ -316,23 +376,88 @@ namespace ProjectEL4S.MultiMouse
             Debug.Log($"[MultiMouse] Raw Input の登録を {_reader.LastRegistrationThief} に取られていたので取り戻しました（{restored} 回目）");
         }
 
-        private MultiMousePointer Resolve(IntPtr device)
+        private MultiMousePointer Resolve(IntPtr device, bool assignIfNew)
         {
             if (_deviceToPointer.TryGetValue(device, out int index))
                 return _pointers[index];
+            if (!assignIfNew) return null;
 
+            string name = GetCachedDeviceName(device);
+            int slot = FindFixedSlot(name);
+            bool isFixed = slot >= 0;
+            if (!isFixed) slot = FindFreeSlot();
+            if (slot < 0) return null;
+
+            Assign(slot, device, name, isFixed);
+            return _pointers[slot];
+        }
+
+        /// <summary>今つながっている、固定登録したマウスを、動かす前から割り当てる。</summary>
+        private void BindFixedDevices()
+        {
+            if (!RawInputAvailable || _pointers == null) return;
+            bool any = false;
+            for (int i = 0; i < _fixedDevices.Length; i++) any |= HasFixedDevice(i);
+            if (!any) return;
+
+            _reader.GetConnectedDevices(_connected);
+            for (int i = 0; i < _connected.Count; i++)
+            {
+                IntPtr device = _connected[i];
+                if (_deviceToPointer.ContainsKey(device)) continue;
+                string name = GetCachedDeviceName(device);
+                int slot = FindFixedSlot(name);
+                if (slot >= 0) Assign(slot, device, name, true);
+            }
+        }
+
+        /// <summary>まだ埋まっていない、その名前で固定登録した番号。無ければ -1。</summary>
+        private int FindFixedSlot(string name)
+        {
+            for (int i = 0; i < _fixedDevices.Length; i++)
+            {
+                if (_pointers[i].IsAssigned || !HasFixedDevice(i)) continue;
+                if (string.Equals(_fixedDevices[i], name, StringComparison.OrdinalIgnoreCase)) return i;
+            }
+            return -1;
+        }
+
+        /// <summary>
+        /// 登録していないマウスに渡す番号。固定登録の無い番号を先に使い、
+        /// 足りなければ「登録したマウスがつながっていない番号」を使う（抜けた分を別のマウスで代わりに遊べるように）。
+        /// </summary>
+        private int FindFreeSlot()
+        {
             for (int i = 0; i < _pointers.Length; i++)
             {
-                if (_pointers[i].IsAssigned) continue;
-
-                _deviceToPointer.Add(device, i);
-                _pointers[i].IsAssigned = true;
-                _pointers[i].DeviceHandle = device;
-                _pointers[i].DeviceName = _reader.GetDeviceName(device);
-                Debug.Log($"[MultiMouse] ポインタ {i} にデバイスを割り当て: {_pointers[i].DeviceName}");
-                return _pointers[i];
+                if (!_pointers[i].IsAssigned && !HasFixedDevice(i)) return i;
             }
-            return null;
+            for (int i = 0; i < _pointers.Length; i++)
+            {
+                if (!_pointers[i].IsAssigned) return i;
+            }
+            return -1;
+        }
+
+        private void Assign(int slot, IntPtr device, string name, bool isFixed)
+        {
+            _deviceToPointer.Add(device, slot);
+            _pointers[slot].IsAssigned = true;
+            _pointers[slot].DeviceHandle = device;
+            _pointers[slot].DeviceName = name;
+            Debug.Log(isFixed
+                ? $"[MultiMouse] ポインタ {slot} に登録済みのデバイスを割り当て: {name}"
+                : $"[MultiMouse] ポインタ {slot} にデバイスを割り当て: {name}");
+        }
+
+        private string GetCachedDeviceName(IntPtr device)
+        {
+            if (!_deviceNames.TryGetValue(device, out string name))
+            {
+                name = _reader.GetDeviceName(device);
+                _deviceNames.Add(device, name);
+            }
+            return name;
         }
 
         private void Apply(MultiMousePointer pointer, in RawMouseFrame frame)

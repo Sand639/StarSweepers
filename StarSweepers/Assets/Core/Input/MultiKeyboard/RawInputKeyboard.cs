@@ -545,6 +545,39 @@ namespace ProjectEL4S.MultiKeyboard
             }
         }
 
+        [StructLayout(LayoutKind.Sequential)]
+        private struct RAWINPUTDEVICELIST
+        {
+            public IntPtr hDevice;
+            public uint dwType;
+        }
+
+        [DllImport("user32.dll", SetLastError = true)]
+        private static extern uint GetRawInputDeviceList([Out] RAWINPUTDEVICELIST[] pRawInputDeviceList, ref uint puiNumDevices, uint cbSize);
+
+        /// <summary>
+        /// 今つながっているキーボードのハンドルを results に入れる（まだ一度も押されていない物も含む）。
+        /// 固定登録で、起動した瞬間に番号を決めるために使う。RawInputMouse にも同じものがある。
+        /// </summary>
+        public void GetConnectedDevices(List<IntPtr> results)
+        {
+            results.Clear();
+            uint size = (uint)Marshal.SizeOf<RAWINPUTDEVICELIST>();
+            uint count = 0;
+            if (GetRawInputDeviceList(null, ref count, size) != 0 || count == 0) return;
+
+            // 数えてから取るまでの間に機器が増えることがあるので、少し多めに用意する
+            count += 8;
+            var list = new RAWINPUTDEVICELIST[count];
+            uint got = GetRawInputDeviceList(list, ref count, size);
+            if (got == uint.MaxValue) return;
+
+            for (int i = 0; i < got; i++)
+            {
+                if (list[i].dwType == RIM_TYPEKEYBOARD) results.Add(list[i].hDevice);
+            }
+        }
+
         /// <summary>何度呼んでも安全。ドメインリロード前・Play 終了時に必ず呼ぶこと。</summary>
         public void Dispose()
         {
@@ -576,6 +609,8 @@ namespace ProjectEL4S.MultiKeyboard
         }
 
         public string GetDeviceName(IntPtr device) => device.ToString();
+
+        public void GetConnectedDevices(List<IntPtr> results) => results.Clear();
 
         public void Dispose()
         {
