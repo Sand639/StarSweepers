@@ -9,7 +9,7 @@ public enum TitleInputKind
     PrivateCode = 2,
     LanAddress = 3,
 
-    // パスワード（2026/10/6）。空ならパスワードなし。8〜64文字
+    // パスワード（2026/10/6）。空ならパスワードなし。1〜32文字（足りない分は中で a を足して 8 文字にする。InternetConnection）
     CreatePassword = 4,
     JoinPassword = 5,
 }
