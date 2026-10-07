@@ -128,7 +128,7 @@ public class TitleScreen : MonoBehaviour
     private bool createPrivate = true;
     private string createServerName = string.Empty;
 
-    /// <summary>作る部屋のパスワード（空ならなし。8〜64文字）。保存はしない。</summary>
+    /// <summary>作る部屋のパスワード（空ならなし。1〜32文字）。保存はしない。</summary>
     private string createPassword = string.Empty;
 
     // サーバーを探す
