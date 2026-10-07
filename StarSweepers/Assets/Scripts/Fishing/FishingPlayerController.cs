@@ -46,6 +46,18 @@ public class FishingPlayerController : MonoBehaviour, ILaunchable
     private PlayerInputSource input;
     private float verticalVelocity;
     private Vector3 launchVelocity;
+    private bool anchorMovementActive;
+
+    /// <summary>アンカー移動中は通常の入力移動と重力を止める。</summary>
+    public void SetAnchorPulling(bool isPulling)
+    {
+        anchorMovementActive = isPulling;
+        if (isPulling)
+        {
+            verticalVelocity = 0f;
+            launchVelocity = Vector3.zero;
+        }
+    }
 
     private void Awake()
     {
@@ -127,7 +139,7 @@ public class FishingPlayerController : MonoBehaviour, ILaunchable
 
         // スタン中は移動禁止（向きを変えることと、落ちることはできる）。
         // 試合が終わったあと（結果画面）も動かせない
-        if ((stun == null || !stun.IsStunned) && FishingMatch.PlayAllowed)
+        if (!anchorMovementActive && (stun == null || !stun.IsStunned) && FishingMatch.PlayAllowed)
         {
             Gamepad pad = input.Gamepad;
             bool typeB = pad != null && GameSettings.ControllerOperation == ControllerOperationType.TypeB;
@@ -158,13 +170,20 @@ public class FishingPlayerController : MonoBehaviour, ILaunchable
             }
         }
 
-        if (characterController.isGrounded && verticalVelocity < 0f)
+        if (anchorMovementActive)
+        {
+            verticalVelocity = 0f;
+        }
+        else if (characterController.isGrounded && verticalVelocity < 0f)
         {
             verticalVelocity = -2f;
         }
-        verticalVelocity += gravity * Time.deltaTime;
+        if (!anchorMovementActive)
+        {
+            verticalVelocity += gravity * Time.deltaTime;
+        }
 
-        Vector3 velocity = direction * moveSpeed + launchVelocity;
+        Vector3 velocity = anchorMovementActive ? Vector3.zero : direction * moveSpeed + launchVelocity;
         velocity.y = verticalVelocity;
 
         CollisionFlags collisions = characterController.Move(velocity * Time.deltaTime);
@@ -173,14 +192,21 @@ public class FishingPlayerController : MonoBehaviour, ILaunchable
             verticalVelocity = 0f;
         }
 
-        launchVelocity = Vector3.Lerp(launchVelocity, Vector3.zero,
-            1f - Mathf.Exp(-launchDamping * Time.deltaTime));
+        if (anchorMovementActive)
+        {
+            launchVelocity = Vector3.zero;
+        }
+        else
+        {
+            launchVelocity = Vector3.Lerp(launchVelocity, Vector3.zero,
+                1f - Mathf.Exp(-launchDamping * Time.deltaTime));
+        }
     }
 
     /// <summary>スタンせずに吹き飛ばす。オンラインでは自分の体だけが受け取る。</summary>
     public void Launch(Vector3 velocity)
     {
-        if (!isActiveAndEnabled || characterController == null || !characterController.enabled)
+        if (anchorMovementActive || !isActiveAndEnabled || characterController == null || !characterController.enabled)
         {
             return;
         }

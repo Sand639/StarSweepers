@@ -6,6 +6,9 @@ EditorBuildSettings:
   serializedVersion: 2
   m_Scenes:
   - enabled: 1
+    path: Assets/Scenes/Prototype/SpaceJunk/MainScene/TitleScene.unity
+    guid: eef331577ac16e6488c9dd4a0af4c7bc
+  - enabled: 1
     path: Assets/Scenes/Test/RobotStage/RobotStage01.unity
     guid: d1263b4ffb099e242ba2e83c793cf3e1
   - enabled: 0
@@ -30,7 +33,7 @@ EditorBuildSettings:
     path: Assets/Scenes/Prototype/Fish/FishingMap03.unity
     guid: 7fa6a2a62d0edac4bb47934262068db7
   - enabled: 1
-    path: Assets/Scenes/Prototype/SpaceJunk/SpaceJunkLobby.unity
+    path: Assets/Scenes/Prototype/SpaceJunk/MainScene/SpaceJunkLobby.unity
     guid: 007da50d74b225f48aa0a5289b5db978
   - enabled: 1
     path: Assets/Scenes/Prototype/SpaceJunk/SpaceJunkMap01.unity

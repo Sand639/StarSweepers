@@ -16,6 +16,7 @@ using UnityEngine;
 /// | Scene | マップのシーン。**名前も置き場所も自由** |
 /// | Show In Lobby | ロビーの候補に出すか。**作りかけのマップは外しておく** |
 /// | Display Name | ロビーに出す名前。空ならシーンの名前 |
+/// | Thumbnail | ロビーに出すマップの画像。空なら「画像 未設定」と出る |
 ///
 /// **入れたシーンは、ビルドの一覧（Build Profiles）にも自動で登録される**
 /// （入っていないと、全員でまとめてシーンを切り替えられないため）。
@@ -40,6 +41,9 @@ public class SpaceJunkMapList : ScriptableObject
 
         [Tooltip("ロビーに出す名前。空ならシーンの名前がそのまま出る")]
         public string displayName;
+
+        [Tooltip("ロビーに出すマップの画像（16:9 がおすすめ。Sprite (2D and UI) で読み込む）。空なら「画像 未設定」と出る")]
+        public Sprite thumbnail;
 
         // ---- ゲームを動かしているときに使う控え ----
         //

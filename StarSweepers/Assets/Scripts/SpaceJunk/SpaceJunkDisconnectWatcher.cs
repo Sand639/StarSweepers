@@ -19,8 +19,8 @@ using UnityEngine.SceneManagement;
 /// </summary>
 public class SpaceJunkDisconnectWatcher : MonoBehaviour
 {
-    /// <summary>ロビーのシーンの名前（試合の係が見つからないときに使う）。</summary>
-    private const string DefaultLobbySceneName = "SpaceJunkLobby";
+    /// <summary>自分だけ抜けたときに戻るタイトルのシーン（2026/10/6）。</summary>
+    private const string TitleSceneName = "TitleScene";
 
     /// <summary>知らせを出しておく秒数。</summary>
     private const float MessageSeconds = 6f;
@@ -30,9 +30,6 @@ public class SpaceJunkDisconnectWatcher : MonoBehaviour
 
     /// <summary>前のフレームで、試合中に参加者としてつながっていたか。</summary>
     private bool wasClientInMatch;
-
-    /// <summary>ロビーのシーンの名前（つながっている間に控えておく。切れると係が消えるため）。</summary>
-    private string lobbySceneName = DefaultLobbySceneName;
 
     private string message = string.Empty;
     private float messageUntil;
@@ -54,21 +51,19 @@ public class SpaceJunkDisconnectWatcher : MonoBehaviour
     private void Update()
     {
         NetworkManager manager = NetworkManager.Singleton;
+
+        // 試合中だけでなく、**ロビーにいる間も見張る**（2026/10/6。ホストが「タイトルにもどる」を選ぶと、
+        // 参加者はホストとの通信が切れるので、ここで全員をタイトルへ戻す）
         bool clientInMatch = manager != null && manager.IsConnectedClient && !manager.IsServer &&
-                             SpaceJunkRound.Current != null;
+                             SceneManager.GetActiveScene().name != TitleSceneName;
 
         if (clientInMatch)
         {
-            if (SpaceJunkSession.Current != null)
-            {
-                lobbySceneName = SpaceJunkSession.Current.LobbySceneName;
-            }
-
             LeavingOnPurpose = false;
         }
         else if (wasClientInMatch && !LeavingOnPurpose && (manager == null || !manager.IsConnectedClient))
         {
-            // つながっていたのに切れた（試合のマップのまま）
+            // つながっていたのに切れた（試合のマップ・ロビーのまま）
             OnLostConnection(manager);
         }
 
@@ -77,9 +72,9 @@ public class SpaceJunkDisconnectWatcher : MonoBehaviour
 
     private async void OnLostConnection(NetworkManager manager)
     {
-        Debug.LogWarning("[NET] 試合中にホストとの接続が切れました。ロビーに戻ります。");
+        Debug.LogWarning("[NET] ホストとの接続が切れました（ホストがタイトルにもどった・回線が切れた など）。タイトルに戻ります。");
 
-        message = "ホストとの接続が切れたので、ロビーに戻りました";
+        message = "ホストがゲームを抜けたか、接続が切れたので、タイトルに戻りました";
         messageUntil = Time.unscaledTime + MessageSeconds;
 
         // ポーズ画面を開いたまま切れたときに、止まったままにならないよう閉じる
@@ -100,7 +95,7 @@ public class SpaceJunkDisconnectWatcher : MonoBehaviour
             manager.Shutdown();
         }
 
-        SceneManager.LoadScene(lobbySceneName, LoadSceneMode.Single);
+        SceneManager.LoadScene(TitleSceneName, LoadSceneMode.Single);
     }
 
     private void OnGUI()

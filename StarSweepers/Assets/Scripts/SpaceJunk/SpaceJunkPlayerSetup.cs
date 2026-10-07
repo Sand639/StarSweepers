@@ -92,6 +92,12 @@ public class SpaceJunkPlayerSetup : MonoBehaviour
     /// <summary>マップに着いて、場所とカメラを合わせ終わったか。</summary>
     private bool placedInRound;
 
+    /// <summary>名前のタグのプレハブの名前（Assets/Resources の中）。</summary>
+    private const string NameplatePrefabName = "PlayerNameplate";
+
+    /// <summary>頭の上の名前のタグ。</summary>
+    private SpaceJunkNameplate nameplate;
+
     /// <summary>直前に塗ったチーム。変わったときだけ塗り直すために持つ。</summary>
     private int lastAppliedTeam = -999;
 
@@ -108,6 +114,9 @@ public class SpaceJunkPlayerSetup : MonoBehaviour
     {
         // チームの色は、**自分のぶんも他の人のぶんも**塗る（誰が味方か分かるように）
         ApplyTeamColor();
+
+        // 頭の上の名前のタグも、**全員のぶん**に付ける
+        EnsureNameplate();
 
         if (netPlayer == null || !netPlayer.IsOwner)
         {
@@ -353,6 +362,34 @@ public class SpaceJunkPlayerSetup : MonoBehaviour
         return false;
     }
 
+    /// <summary>
+    /// 頭の上の名前のタグ（<see cref="SpaceJunkNameplate"/>）を付ける。
+    /// 見た目は `Assets/Resources/PlayerNameplate.prefab` から作る（無ければ初期値で作る）。
+    /// プレイヤーの子にするので、シーンが変わっても一緒に残る。
+    /// </summary>
+    private void EnsureNameplate()
+    {
+        if (nameplate != null || netPlayer == null)
+        {
+            return;
+        }
+
+        SpaceJunkNameplate prefab = Resources.Load<SpaceJunkNameplate>(NameplatePrefabName);
+
+        if (prefab != null)
+        {
+            nameplate = Instantiate(prefab, transform);
+        }
+        else
+        {
+            GameObject plate = new GameObject(NameplatePrefabName);
+            plate.transform.SetParent(transform, false);
+            nameplate = plate.AddComponent<SpaceJunkNameplate>();
+        }
+
+        nameplate.Attach(netPlayer);
+    }
+
     /// <summary>自分のぶんにだけ、答え合わせの部品を付ける。</summary>
     private void EnsureLocalStateCheck()
     {
@@ -382,8 +419,8 @@ public class SpaceJunkPlayerSetup : MonoBehaviour
             return;
         }
 
-        // ポーズ中（と閉じたフレーム）と、設定の入力欄に打ち込んでいる最中は入力を読まない
-        if (GamePause.BlocksInput || SpaceJunkLobbyUI.IsEditingText)
+        // ポーズ中（と閉じたフレーム）と、ロビーの設定画面を開いている間は入力を読まない
+        if (GamePause.BlocksInput || SpaceJunkLobbyScreen.IsSettingsOpen)
         {
             return;
         }

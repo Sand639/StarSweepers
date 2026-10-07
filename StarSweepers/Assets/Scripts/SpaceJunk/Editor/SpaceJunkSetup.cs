@@ -72,6 +72,29 @@ public static class SpaceJunkSetup
         }
     }
 
+    /// <summary>タイトルのシーンの名前（2026/10/6。ゲームはここから始まる）。</summary>
+    public const string TitleSceneName = "TitleScene";
+
+    /// <summary>
+    /// **タイトルのシーンの置き場所。名前（TitleScene）で探す**（ロビーと同じく、移動しても追いかける）。見つからなければ null。
+    /// </summary>
+    public static string TitleScenePath
+    {
+        get
+        {
+            foreach (string guid in AssetDatabase.FindAssets(TitleSceneName + " t:Scene"))
+            {
+                string path = AssetDatabase.GUIDToAssetPath(guid);
+                if (System.IO.Path.GetFileNameWithoutExtension(path) == TitleSceneName)
+                {
+                    return path;
+                }
+            }
+
+            return null;
+        }
+    }
+
     /// <summary>コピー元の釣りマップと、コピー先の宇宙ごみマップ。</summary>
     private static readonly string[,] MapSources =
     {

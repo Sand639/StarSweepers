@@ -1,0 +1,21 @@
+%YAML 1.1
+%TAG !u! tag:unity3d.com,2011:
+--- !u!114 &11400000
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 0}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: f66bec690b03425baf784f154965b951, type: 3}
+  m_Name: TitleScreenTheme
+  m_EditorClassIdentifier: Assembly-CSharp::TitleScreenTheme
+  button: {fileID: 0}
+  buttonHover: {fileID: 0}
+  buttonColor: {r: 0.1, g: 0.12, b: 0.12, a: 0.92}
+  buttonHoverColor: {r: 0.12, g: 0.2, b: 0.14, a: 0.96}
+  buttonOutlineColor: {r: 0.2, g: 0.95, b: 0.35, a: 1}
+  buttonTextColor: {r: 1, g: 1, b: 1, a: 1}
+  buttonHoverTextColor: {r: 0.3, g: 1, b: 0.45, a: 1}
