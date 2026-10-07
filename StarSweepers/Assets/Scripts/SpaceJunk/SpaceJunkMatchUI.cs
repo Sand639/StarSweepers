@@ -223,7 +223,7 @@ public class SpaceJunkMatchUI : MonoBehaviour
         // **カメラの切り替えの案内。** 切り替えられるカメラ（STAGE_01〜05）のときだけ出す
         if (!string.IsNullOrEmpty(SpaceJunkCameraModeSwitch.LocalToggleKeyName))
         {
-            GUILayout.Label($"［{SpaceJunkCameraModeSwitch.LocalToggleKeyName}］でカメラ切り替え（全体／自陣）", lineStyle);
+            GUILayout.Label($"［{SpaceJunkCameraModeSwitch.LocalToggleKeyName}］でカメラ切り替え　{SpaceJunkCameraModeSwitch.LocalModeSummary}", lineStyle);
         }
 
         GUILayout.EndArea();
