@@ -895,10 +895,17 @@ public class TitleScreen : MonoBehaviour
 
         ClearFriendCards();
 
+        // 説明が長くなるので、枠からはみ出しても下へ続けて出す
+        Text friendMessage = PartText(TitlePartRole.FriendListMessage);
+        if (friendMessage != null)
+        {
+            friendMessage.verticalOverflow = VerticalWrapMode.Overflow;
+        }
+
         if (!SteamFriendsService.IsAvailable)
         {
-            SetText(TitlePartRole.FriendListMessage,
-                "Steam を起動していないので、フレンドのサーバーは出せません。\nSteam を起動してから、ゲームを立ち上げ直してください。");
+            // つながらなかった理由（Steam が起動していない など）をそのまま出す
+            SetText(TitlePartRole.FriendListMessage, SteamFriendsService.StatusMessage);
             return;
         }
 
@@ -906,6 +913,16 @@ public class TitleScreen : MonoBehaviour
         searchingFriends = true;
         SteamFriendsService.RequestFriendRooms();
         await System.Threading.Tasks.Task.Delay(1000);
+
+        // フレンドの様子は届くのに時間がかかることがある。遊んでいる人がいるのに部屋が見つからなければ、少し待ってもう一度読む
+        List<SteamFriendRoom> rooms = SteamFriendsService.FindFriendRooms();
+        if (rooms.Count == 0 && SteamFriendsService.CountFriendsPlayingThisGame() > 0 && this != null && current == Page.FindFriends)
+        {
+            SteamFriendsService.RequestFriendRooms();
+            await System.Threading.Tasks.Task.Delay(2000);
+            rooms = SteamFriendsService.FindFriendRooms();
+        }
+
         searchingFriends = false;
 
         // 待っている間に画面を移っていたら何もしない
@@ -914,9 +931,11 @@ public class TitleScreen : MonoBehaviour
             return;
         }
 
-        List<SteamFriendRoom> rooms = SteamFriendsService.FindFriendRooms();
+        string hint = SteamFriendsService.CountFriendsPlayingThisGame() > 0
+            ? "このゲームを遊んでいるフレンドはいますが、インターネットの部屋に入っている人はいません（LAN の部屋は出ません）。"
+            : "このゲームを遊んでいるフレンドがいません。相手もゲームを起動しているか、Steam でフレンドになっているか確かめてください。";
         SetText(TitlePartRole.FriendListMessage, rooms.Count == 0
-            ? "このゲームで部屋に入っているフレンドはいません。\n「フレンドのサーバーを更新」でもう一度探せます。"
+            ? $"{hint}\n「フレンドのサーバーを更新」でもう一度探せます。\n\n{SteamFriendsService.Diagnose()}"
             : string.Empty);
 
         GameObject content = PartObject(TitlePartRole.FriendListContent);

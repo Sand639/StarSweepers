@@ -3,6 +3,7 @@
 #endif
 
 using System.Collections.Generic;
+using System.IO;
 using Unity.Netcode;
 using UnityEngine;
 #if STARSWEEPERS_STEAM
@@ -67,6 +68,16 @@ public class SteamFriendsService : MonoBehaviour
     /// <summary>Steam が使える状態か（Steam が起動していて、初期化できた）。</summary>
     public static bool IsAvailable { get; private set; }
 
+    /// <summary>Steam が使えないときの理由（画面に出す）。使えるなら空。</summary>
+    public static string StatusMessage { get; private set; } =
+        "このゲームは Steam の機能に対応していない環境で動いているので、フレンドのサーバーは出せません。";
+
+    /// <summary>
+    /// まだこのゲーム専用の App ID が無いので使っている、Valve のテスト用の App ID（Spacewar）。
+    /// App ID をもらったら、ここと `steam_appid.txt` を変える。
+    /// </summary>
+    public const uint DevelopmentAppId = 480;
+
     /// <summary>
     /// Steam から「このコードの部屋に入りたい」と言われたときの参加コード（タイトル画面が受け取って入る）。
     /// 受け取ったら <see cref="ConsumePendingJoinCode"/> で消す。
@@ -108,25 +119,54 @@ public class SteamFriendsService : MonoBehaviour
         {
             if (!Packsize.Test() || !DllCheck.Test())
             {
-                Debug.LogWarning("[STEAM] Steam の部品が正しく入っていないので、Steam の機能は使いません。");
+                StatusMessage = "Steam の部品が正しく入っていないので、Steam の機能は使えません。";
+                Debug.LogWarning("[STEAM] " + StatusMessage);
                 return;
             }
 
-            IsAvailable = SteamAPI.Init();
+            // **steam_appid.txt が exe の隣に無くても、つながるようにする**（2026/10/7）。
+            // Steam の外（exe をダブルクリック）で起動したときは、steam_appid.txt で「どのゲームか」を Steam に伝える。
+            // ところが Unity のふつうのビルド（Build Profiles）は、このファイルをビルドに入れてくれない。
+            // そこで、ファイルが無ければ、同じことを環境変数（SteamAppId）で伝える
+            if (!File.Exists("steam_appid.txt") && string.IsNullOrEmpty(System.Environment.GetEnvironmentVariable("SteamAppId")))
+            {
+                System.Environment.SetEnvironmentVariable("SteamAppId", DevelopmentAppId.ToString());
+                System.Environment.SetEnvironmentVariable("SteamGameId", DevelopmentAppId.ToString());
+                Debug.Log($"[STEAM] steam_appid.txt が無いので、App ID {DevelopmentAppId} として Steam につなぎます。");
+            }
+
+            ESteamAPIInitResult result = SteamAPI.InitEx(out string error);
+            IsAvailable = result == ESteamAPIInitResult.k_ESteamAPIInitResult_OK;
+
+            if (!IsAvailable)
+            {
+                switch (result)
+                {
+                    case ESteamAPIInitResult.k_ESteamAPIInitResult_NoSteamClient:
+                        StatusMessage = "Steam が起動していないので、フレンドのサーバーは出せません。\nSteam を起動してから、ゲームを立ち上げ直してください。";
+                        break;
+                    case ESteamAPIInitResult.k_ESteamAPIInitResult_VersionMismatch:
+                        StatusMessage = "Steam が古いので、フレンドのサーバーは出せません。Steam を更新してください。";
+                        break;
+                    default:
+                        StatusMessage = $"Steam につながりませんでした（{error}）。\nSteam にログインしているか確かめて、ゲームを立ち上げ直してください。";
+                        break;
+                }
+
+                Debug.Log($"[STEAM] Steam につながりませんでした（{result}：{error}）。フレンドの機能は使いません。ほかは今までどおり動きます。");
+                return;
+            }
         }
         catch (System.DllNotFoundException error)
         {
-            Debug.LogWarning($"[STEAM] steam_api64.dll が見つからないので、Steam の機能は使いません（{error.Message}）。");
+            StatusMessage = "steam_api64.dll が見つからないので、Steam の機能は使えません。";
+            Debug.LogWarning($"[STEAM] {StatusMessage}（{error.Message}）");
             IsAvailable = false;
-        }
-
-        if (!IsAvailable)
-        {
-            Debug.Log("[STEAM] Steam が起動していない（または使えない）ので、フレンドの機能は使いません。ほかは今までどおり動きます。");
             return;
         }
 
-        Debug.Log($"[STEAM] Steam につながりました（{SteamFriends.GetPersonaName()}）。");
+        StatusMessage = string.Empty;
+        Debug.Log($"[STEAM] Steam につながりました（{SteamFriends.GetPersonaName()}・App ID {SteamUtils.GetAppID()}）。");
         joinRequested = Callback<GameRichPresenceJoinRequested_t>.Create(OnJoinRequested);
 
         // Steam の「ゲームに参加」から起動されたときは、コマンドラインに "+join 参加コード" が付いてくる
@@ -257,6 +297,29 @@ public class SteamFriendsService : MonoBehaviour
         return rooms;
     }
 
+    /// <summary>
+    /// **うまく見つからないときの手がかり**（2026/10/7）。Steam のフレンドの数と、このゲームを遊んでいる人の数。
+    /// フレンドのサーバーの画面に出して、どこで止まっているかを分かるようにする。
+    /// </summary>
+    public static string Diagnose()
+    {
+        if (!IsAvailable)
+        {
+            return StatusMessage;
+        }
+
+        int friends = SteamFriends.GetFriendCount(EFriendFlags.k_EFriendFlagImmediate);
+        int playing = FriendsPlayingThisGame().Count;
+        return $"Steam：{SteamFriends.GetPersonaName()} でつながっています（App ID {SteamUtils.GetAppID()}）。\n" +
+               $"フレンド {friends} 人のうち、このゲームを遊んでいる人 {playing} 人";
+    }
+
+    /// <summary>このゲーム（同じ App ID）を遊んでいるフレンドの数。</summary>
+    public static int CountFriendsPlayingThisGame()
+    {
+        return IsAvailable ? FriendsPlayingThisGame().Count : 0;
+    }
+
     /// <summary>いまこのゲーム（同じ App ID）を遊んでいるフレンド。</summary>
     private static List<CSteamID> FriendsPlayingThisGame()
     {
@@ -279,6 +342,18 @@ public class SteamFriendsService : MonoBehaviour
     /// <summary>Steam が使えない環境：何もしない。</summary>
     public static void RequestFriendRooms()
     {
+    }
+
+    /// <summary>Steam が使えない環境：理由だけ返す。</summary>
+    public static string Diagnose()
+    {
+        return StatusMessage;
+    }
+
+    /// <summary>Steam が使えない環境：いつも 0。</summary>
+    public static int CountFriendsPlayingThisGame()
+    {
+        return 0;
     }
 
     /// <summary>Steam が使えない環境：いつも空。</summary>
