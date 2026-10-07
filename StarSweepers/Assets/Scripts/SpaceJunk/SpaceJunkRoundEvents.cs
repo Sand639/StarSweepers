@@ -120,6 +120,12 @@ public partial class SpaceJunkRound
                 return -1f;
             }
 
+            // 始まりの演出中は止めておく（START から減り始める。残り時間と同じ。2026/10/7）
+            if (IsIntro)
+            {
+                return Mathf.Max(0f, (float)(eventServerTime.Value - PlayStartServerTime));
+            }
+
             return Mathf.Max(0f, (float)(eventServerTime.Value - NetworkManager.ServerTime.Time));
         }
     }

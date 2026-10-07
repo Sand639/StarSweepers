@@ -172,6 +172,13 @@ public partial class SpaceJunkRound : NetworkBehaviour
                 return 0f;
             }
 
+            // **始まりの演出中（3・2・1 の間も）は、決めた制限時間のまま止めておく。** START から減り始める（2026/10/7）。
+            // そのまま引き算すると、演出の残りのぶん多く出る（60秒なのに 63秒 など）
+            if (IsIntro)
+            {
+                return Mathf.Max(0f, (float)(endServerTime.Value - playStartServerTime.Value));
+            }
+
             return Mathf.Max(0f, (float)(endServerTime.Value - NetworkManager.ServerTime.Time));
         }
     }
