@@ -91,6 +91,7 @@ public class HookController : MonoBehaviour
 
     private InputActionMap playerMap;
     private InputAction attackAction;
+    private PlayerInputSource input;
 
     private HookPhase phase = HookPhase.Idle;
     private float charge;
@@ -219,6 +220,9 @@ public class HookController : MonoBehaviour
             netPlayer = GetComponent<FishingNetPlayer>();
         }
 
+        // 操作の読み口（単体操作か、1台のPCで複数人の席か）
+        input = PlayerInputSource.Get(this);
+
         // 狙いの切り替えは、付いていなければここで付ける。
         // **既存のシーンやプレハブを作り直さなくても使える**ようにするため
         if (aimAssist == null)
@@ -339,14 +343,14 @@ public class HookController : MonoBehaviour
         {
             // **宇宙ごみ式：左（LT）でも右（RT）でも撃てる。** どちらで撃ったかで、引っ掛けたあとの流れが変わる
             // （左＝くっついた場所で止まって引っ張る／右＝頭上で止まって投げる）
-            bool left = ThrowController.PullPressed();
-            bool right = !left && ThrowController.ThrowPressed();
+            bool left = throwController.PullPressed();
+            bool right = !left && throwController.ThrowPressed();
             pressed = left || right;
             chargingWithThrow = right;
         }
         else
         {
-            pressed = attackAction.WasPressedThisFrame();
+            pressed = input.AttackPressed(attackAction);
         }
 
         if (pressed)
@@ -372,8 +376,8 @@ public class HookController : MonoBehaviour
         }
 
         bool released = UsesTwoButtons
-            ? (chargingWithThrow ? ThrowController.ThrowReleased() : ThrowController.PullReleased())
-            : attackAction.WasReleasedThisFrame();
+            ? (chargingWithThrow ? throwController.ThrowReleased() : throwController.PullReleased())
+            : input.AttackReleased(attackAction);
 
         if (released)
         {

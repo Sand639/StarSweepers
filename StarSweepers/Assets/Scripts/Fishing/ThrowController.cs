@@ -261,6 +261,7 @@ public class ThrowController : MonoBehaviour
 
     private InputActionMap playerMap;
     private InputAction attackAction;
+    private PlayerInputSource input;
 
     private HookableObject target;
     private IHookPullable pullableTarget;
@@ -346,6 +347,9 @@ public class ThrowController : MonoBehaviour
         {
             hook = GetComponent<HookController>();
         }
+
+        // 操作の読み口（単体操作か、1台のPCで複数人の席か）
+        input = PlayerInputSource.Get(this);
 
         if (inputActions == null)
         {
@@ -560,7 +564,7 @@ public class ThrowController : MonoBehaviour
             hook.UI.SetMarker(t);
         }
 
-        if (armDelay <= 0f && attackAction.WasPressedThisFrame())
+        if (armDelay <= 0f && input.AttackPressed(attackAction))
         {
             Resolve(t);
             return;
@@ -632,7 +636,7 @@ public class ThrowController : MonoBehaviour
     /// <summary>引き抜き入力。現在はフックボタン（Attack）またはLT。</summary>
     private bool IsDistancePullInputPressed()
     {
-        return attackAction.WasPressedThisFrame() || PullPressed();
+        return input.AttackPressed(attackAction) || PullPressed();
     }
 
     /// <summary>残り距離をフックの最大飛距離に対する割合（0〜1）で返す。</summary>
@@ -1137,44 +1141,16 @@ public class ThrowController : MonoBehaviour
     }
 
     /// <summary>「引っ張る」ボタンが押された瞬間か。左クリックか、コントローラーの LT。</summary>
-    public static bool PullPressed()
-    {
-        Mouse mouse = Mouse.current;
-        Gamepad pad = Gamepad.current;
-
-        return (mouse != null && mouse.leftButton.wasPressedThisFrame)
-            || (pad != null && pad.leftTrigger.wasPressedThisFrame);
-    }
+    public bool PullPressed() => input.PullPressed;
 
     /// <summary>「引っ張る」ボタンが離された瞬間か。</summary>
-    public static bool PullReleased()
-    {
-        Mouse mouse = Mouse.current;
-        Gamepad pad = Gamepad.current;
-
-        return (mouse != null && mouse.leftButton.wasReleasedThisFrame)
-            || (pad != null && pad.leftTrigger.wasReleasedThisFrame);
-    }
+    public bool PullReleased() => input.PullReleased;
 
     /// <summary>「投げる」ボタンが離された瞬間か。</summary>
-    public static bool ThrowReleased()
-    {
-        Mouse mouse = Mouse.current;
-        Gamepad pad = Gamepad.current;
-
-        return (mouse != null && mouse.rightButton.wasReleasedThisFrame)
-            || (pad != null && pad.rightTrigger.wasReleasedThisFrame);
-    }
+    public bool ThrowReleased() => input.ThrowReleased;
 
     /// <summary>「投げる」ボタンが押された瞬間か。右クリックか、コントローラーの RT。</summary>
-    public static bool ThrowPressed()
-    {
-        Mouse mouse = Mouse.current;
-        Gamepad pad = Gamepad.current;
-
-        return (mouse != null && mouse.rightButton.wasPressedThisFrame)
-            || (pad != null && pad.rightTrigger.wasPressedThisFrame);
-    }
+    public bool ThrowPressed() => input.ThrowPressed;
 
     /// <summary>
     /// **引っ張る（の仕上げ）。** 釣り式と同じ軌道で頭上を越え、後ろへ抜けたところで手を離し、
