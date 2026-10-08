@@ -27,7 +27,8 @@
 | シーン作成ツール | `Assets/Scripts/UI/Editor/GameTimerUISetup.cs` |
 | 検証シーン | `Assets/Scenes/Test/GameTimerUITest.unity` |
 | プレハブ | `Assets/Resources/GameTimerUI.prefab` |
-| 画像 | `Assets/Scenes/Test/shotaro/UI_Timer_Back.png`・`UI_Timer_IMG.png` |
+| フォント | `Assets/TextMesh Pro/Resources/Fonts & Materials/LiberationSans SDF.asset`（TextMeshPro Essential Resources） |
+| 画像 | 背景 `Assets/Scenes/Test/shotaro/UI_Timer_Back.png`。ゲージ用リング `GameTimerGauge.png` はセットアップツールが作成 |
 
 ## 設定できる値（インスペクターの項目）
 
@@ -37,12 +38,12 @@
 | Run On Start | 再生時に自動で始めるか | オン |
 | Middle Phase Threshold / Final Phase Threshold | 色が変わる残り時間の割合 | 0.66 / 0.33 |
 | Initial / Middle / Final Phase Color | 3段階の色 | 青緑 / 黄・オレンジ / 赤・茶 |
-| Backdrop Image / Gauge Image / Time Text | 背景・ゲージ・文字の表示部品 | プレハブで割り当て済み |
+| Backdrop Image / Gauge Image / Time Text | 背景・ゲージ・TextMeshPro文字の表示部品 | プレハブで割り当て済み |
 | On Phase Changed | 色段階の変更時に呼ぶ Unity イベント。値は初期=0、中盤=1、終盤=2 | 未接続 |
 
 ## 仕組み（分かる人向け）
 
-`SetRemainingTime` が残り時間と割合を更新し、段階が変わった瞬間に `Action<int>` と `UnityEvent<int>` の両方を呼ぶ。`UpdateVisuals(float progress)` はゲージ、文字、シェーダー用の `_Progress` と `_TimerColor` をまとめて更新する。ゲージは Radial 360、Top 起点、時計回り。
+`SetRemainingTime` が残り時間と割合を更新し、段階が変わった瞬間に `Action<int>` と `UnityEvent<int>` の両方を呼ぶ。`UpdateVisuals(float progress)` はゲージ、文字、シェーダー用の `_Progress` と `_TimerColor` をまとめて更新する。ゲージは Radial 360、Top 起点、`fillClockwise = false`。残り部分を起点から反時計回りに描くことで、消える部分が12時から時計回りに進む。完成見本画像 `UI_Timer_IMG.png` は描画に使わず、TextMeshPro の文字と透過リング素材を重ねる。
 
 ## できていないこと・既知の問題
 
@@ -55,3 +56,5 @@
 | 日付 | 変更者 | 内容 |
 | --- | --- | --- |
 | 2026/10/8 | 鈴木 翔太郎（実装補助：Codex） | 2分の仮タイマー、3段階の色、段階変更イベント、検証シーンとプレハブを追加 |
+| 2026/10/8 | 鈴木 翔太郎（実装補助：Codex） | 完成見本画像をゲージから外し、TextMeshProと透過リングへ分離。12時から時計回りに空く向きへ調整 |
+| 2026/10/8 | 鈴木 翔太郎（実装補助：Codex） | TextMeshProのフォント資産を設定し、色見本に近い落ち着いた3色へ調整 |

@@ -1,4 +1,5 @@
 using System;
+using TMPro;
 using UnityEngine;
 using UnityEngine.Events;
 using UnityEngine.UI;
@@ -9,7 +10,7 @@ public sealed class GameTimerUI : MonoBehaviour
     [Header("表示部品")]
     [SerializeField] private Image backdropImage;
     [SerializeField] private Image gaugeImage;
-    [SerializeField] private Text timeText;
+    [SerializeField] private TMP_Text timeText;
 
     [Header("タイマー")]
     [SerializeField, Min(0.01f)] private float maxTimeSeconds = 120f;
@@ -18,9 +19,9 @@ public sealed class GameTimerUI : MonoBehaviour
     [Header("残り時間の割合と色")]
     [SerializeField, Range(0f, 1f)] private float middlePhaseThreshold = 0.66f;
     [SerializeField, Range(0f, 1f)] private float finalPhaseThreshold = 0.33f;
-    [SerializeField] private Color initialPhaseColor = new Color(0.16f, 0.82f, 0.86f, 1f);
-    [SerializeField] private Color middlePhaseColor = new Color(1f, 0.61f, 0.16f, 1f);
-    [SerializeField] private Color finalPhaseColor = new Color(0.86f, 0.19f, 0.16f, 1f);
+    [SerializeField] private Color initialPhaseColor = new Color(0.56f, 0.71f, 0.67f, 1f);
+    [SerializeField] private Color middlePhaseColor = new Color(0.92f, 0.68f, 0.30f, 1f);
+    [SerializeField] private Color finalPhaseColor = new Color(0.51f, 0.24f, 0.18f, 1f);
     [SerializeField] private UnityEvent<int> onPhaseChanged = new UnityEvent<int>();
 
     /// <summary>フェーズが変わったとき通知する。フェーズ番号は初期=0、中盤=1、終盤=2。</summary>
@@ -109,7 +110,8 @@ public sealed class GameTimerUI : MonoBehaviour
             gaugeImage.type = Image.Type.Filled;
             gaugeImage.fillMethod = Image.FillMethod.Radial360;
             gaugeImage.fillOrigin = (int)Image.Origin360.Top;
-            gaugeImage.fillClockwise = true;
+            // 残り量は上から反時計回りに残し、空いた部分が上から時計回りに増える。
+            gaugeImage.fillClockwise = false;
             gaugeImage.fillAmount = progress;
             gaugeImage.color = phaseColor;
 
