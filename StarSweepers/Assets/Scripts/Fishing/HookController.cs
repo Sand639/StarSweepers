@@ -266,6 +266,7 @@ public class HookController : MonoBehaviour
 
     private void OnDisable()
     {
+        ResetHook();
         playerMap?.Disable();
 
         if (hook != null)
@@ -462,7 +463,7 @@ public class HookController : MonoBehaviour
                 out RaycastHit hit, step, hookableMask, QueryTriggerInteraction.Collide))
         {
             IHookPullable pullable = FindPullable(hit.collider);
-            if (!chargingWithThrow && pullable != null && pullable.CanBeHooked)
+            if (!chargingWithThrow && CanHookPullable(pullable, PlayerRoot))
             {
                 OnPullableTouched(pullable);
                 return;
@@ -545,10 +546,22 @@ public class HookController : MonoBehaviour
         return null;
     }
 
+    /// <summary>共通条件と、対象が持つ Player ごとの条件をまとめて確認する。</summary>
+    public static bool CanHookPullable(IHookPullable pullable, Transform playerRoot)
+    {
+        if (pullable == null || !pullable.CanBeHooked)
+        {
+            return false;
+        }
+
+        return pullable is not IPlayerAwareHookPullable playerAware
+            || playerAware.CanBeHookedBy(playerRoot);
+    }
+
     /// <summary>左ボタンで飛ばした Hook が大型の拉扯対象に触れたときに呼ばれる。</summary>
     private void OnPullableTouched(IHookPullable pullable)
     {
-        if (phase != HookPhase.Flying || chargingWithThrow || pullable == null || !pullable.CanBeHooked)
+        if (phase != HookPhase.Flying || chargingWithThrow || !CanHookPullable(pullable, PlayerRoot))
         {
             return;
         }

@@ -3,14 +3,16 @@ using UnityEngine;
 /// <summary>Hook が大型物件の拉扯を完成した時に渡す情報。</summary>
 public readonly struct HookPullContext
 {
-    public HookPullContext(Vector3 playerPosition, float strength)
+    public HookPullContext(Vector3 playerPosition, float strength, Transform playerRoot = null)
     {
         PlayerPosition = playerPosition;
         Strength = Mathf.Clamp01(strength);
+        PlayerRoot = playerRoot;
     }
 
     public Vector3 PlayerPosition { get; }
     public float Strength { get; }
+    public Transform PlayerRoot { get; }
 }
 
 /// <summary>
