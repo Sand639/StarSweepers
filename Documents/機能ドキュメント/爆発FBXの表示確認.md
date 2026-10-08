@@ -27,8 +27,8 @@
 | プレビュー | Assets/Scripts/Effect/ExplosionEffectPreview.cs |
 | 爆発FBX用シーン設定 | Assets/Scripts/Effect/ExplosionEffectTestSceneBuilder.cs |
 | 確認用シーン | Assets/Scenes/Test/fbxTest.unity（長島さん作成） |
-| 爆発FBX（例） | Assets/Art/Models/Explosion.fbx |
-| 再生コントローラー（例） | Assets/Art/Models/ExplosionPreview.controller |
+| 爆発FBX（例） | Assets/Art/fbx/Explosion.fbx |
+| 再生コントローラー（例） | Assets/Art/fbx/ExplosionPreview.controller |
 
 ## 別のエフェクトを試す手順
 
@@ -67,4 +67,5 @@ Animator / Legacy Animation / Particle System を再生する。表示時間が0
 | 2026/10/8 | 長島 颯士（実装補助：Codex） | 長島さん作成のfbxTestシーンを確認用シーンとして記載 |
 | 2026/10/8 | 長島 颯士（実装補助：Codex） | fbxTestを開いた際の再生設定自動接続と、再生カメラの調整を追加 |
 | 2026/10/8 | 長島 颯士（実装補助：Codex） | AnimatorとParticle Systemを使う他のエフェクトにも使える共通プレビューに拡張 |
+| 2026/10/8 | 長島 颯士（実装補助：Codex） | Unity上でのFBXの移動先に合わせ、シーン設定ツールが配置済みFBXの場所を見つけるよう変更 |
 

@@ -1,5 +1,6 @@
 #if UNITY_EDITOR
 using System.Linq;
+using System.IO;
 using UnityEditor;
 using UnityEditor.Animations;
 using UnityEditor.SceneManagement;
@@ -11,8 +12,7 @@ using UnityEngine.SceneManagement;
 public static class ExplosionEffectTestSceneBuilder
 {
     private const string ScenePath = "Assets/Scenes/Test/fbxTest.unity";
-    private const string ModelPath = "Assets/Art/Models/Explosion.fbx";
-    private const string ControllerPath = "Assets/Art/Models/ExplosionPreview.controller";
+    private const string FallbackModelPath = "Assets/Art/fbx/Explosion.fbx";
 
     static ExplosionEffectTestSceneBuilder()
     {
@@ -56,10 +56,18 @@ public static class ExplosionEffectTestSceneBuilder
             return;
         }
 
-        ModelImporter importer = AssetImporter.GetAtPath(ModelPath) as ModelImporter;
+        string modelPath = FindModelPath(roots);
+        if (string.IsNullOrEmpty(modelPath))
+        {
+            Debug.LogError("fbxTest内のExplosion FBXを見つけられませんでした。");
+            return;
+        }
+        string controllerPath = Path.Combine(Path.GetDirectoryName(modelPath) ?? "Assets/Art/fbx",
+            "ExplosionPreview.controller").Replace('\\', '/');
+        ModelImporter importer = AssetImporter.GetAtPath(modelPath) as ModelImporter;
         if (importer == null)
         {
-            Debug.LogError($"爆発FBXが見つかりません: {ModelPath}");
+            Debug.LogError($"爆発FBXが見つかりません: {modelPath}");
             return;
         }
 
@@ -71,7 +79,7 @@ public static class ExplosionEffectTestSceneBuilder
             return;
         }
 
-        AnimationClip clip = AssetDatabase.LoadAllAssetsAtPath(ModelPath)
+        AnimationClip clip = AssetDatabase.LoadAllAssetsAtPath(modelPath)
             .OfType<AnimationClip>()
             .FirstOrDefault(candidate => !candidate.name.StartsWith("__", System.StringComparison.Ordinal));
         if (clip == null)
@@ -80,10 +88,10 @@ public static class ExplosionEffectTestSceneBuilder
             return;
         }
 
-        AnimatorController controller = AssetDatabase.LoadAssetAtPath<AnimatorController>(ControllerPath);
+        AnimatorController controller = AssetDatabase.LoadAssetAtPath<AnimatorController>(controllerPath);
         if (controller == null)
         {
-            controller = AnimatorController.CreateAnimatorControllerAtPath(ControllerPath);
+            controller = AnimatorController.CreateAnimatorControllerAtPath(controllerPath);
         }
         AnimatorStateMachine stateMachine = controller.layers[0].stateMachine;
         AnimatorState state = stateMachine.states.Select(child => child.state)
@@ -102,11 +110,11 @@ public static class ExplosionEffectTestSceneBuilder
             .FirstOrDefault(gameObject =>
             {
                 Object source = PrefabUtility.GetCorrespondingObjectFromSource(gameObject);
-                return source != null && AssetDatabase.GetAssetPath(source) == ModelPath;
+                return source != null && AssetDatabase.GetAssetPath(source) == modelPath;
             });
         if (target == null)
         {
-            Object model = AssetDatabase.LoadAssetAtPath<GameObject>(ModelPath);
+            Object model = AssetDatabase.LoadAssetAtPath<GameObject>(modelPath);
             if (model == null)
             {
                 Debug.LogError("爆発FBXをPrefabとして読み込めませんでした。");
@@ -142,6 +150,27 @@ public static class ExplosionEffectTestSceneBuilder
         EditorSceneManager.MarkSceneDirty(SceneManager.GetActiveScene());
         EditorSceneManager.SaveScene(SceneManager.GetActiveScene());
         Debug.Log("fbxTestに爆発エフェクトの自動再生と調整用プレビューを設定しました。");
+    }
+
+    private static string FindModelPath(GameObject[] roots)
+    {
+        string placedModelPath = roots
+            .SelectMany(root => root.GetComponentsInChildren<Transform>(true))
+            .Select(transform => PrefabUtility.GetCorrespondingObjectFromSource(transform.gameObject))
+            .Where(source => source != null)
+            .Select(AssetDatabase.GetAssetPath)
+            .FirstOrDefault(path => path.EndsWith(".fbx", System.StringComparison.OrdinalIgnoreCase) &&
+                                    Path.GetFileNameWithoutExtension(path).Equals("Explosion", System.StringComparison.OrdinalIgnoreCase));
+        if (!string.IsNullOrEmpty(placedModelPath))
+        {
+            return placedModelPath;
+        }
+
+        return AssetDatabase.LoadAssetAtPath<GameObject>(FallbackModelPath) != null
+            ? FallbackModelPath
+            : AssetDatabase.FindAssets("Explosion t:Model")
+                .Select(AssetDatabase.GUIDToAssetPath)
+                .FirstOrDefault(path => path.EndsWith(".fbx", System.StringComparison.OrdinalIgnoreCase));
     }
 
     private static void FrameEffectWithCamera(GameObject target, GameObject[] roots)
