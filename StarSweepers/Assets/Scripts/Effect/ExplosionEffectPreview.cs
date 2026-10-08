@@ -2,7 +2,7 @@ using System.Collections;
 using UnityEngine;
 
 /// <summary>
-/// 爆発FBXの表示と、再生タイミングを確認するためのシンプルなプレビュー。
+/// Animator / Animation / Particle System を使うエフェクトを再生する共通プレビュー。
 /// 再生開始の遅れ・再生速度・表示時間はInspectorから調整できる。
 /// </summary>
 public sealed class ExplosionEffectPreview : MonoBehaviour
@@ -34,7 +34,7 @@ public sealed class ExplosionEffectPreview : MonoBehaviour
     {
         const int left = 20;
         const int top = 20;
-        GUI.Box(new Rect(left, top, 310, 115), "Explosion FBX Preview");
+        GUI.Box(new Rect(left, top, 310, 115), "Effect Preview");
         GUI.Label(new Rect(left + 12, top + 30, 286, 22),
             $"Delay: {startDelay:0.00}s   Speed: {playbackSpeed:0.00}x");
         GUI.Label(new Rect(left + 12, top + 53, 286, 22),
@@ -59,7 +59,7 @@ public sealed class ExplosionEffectPreview : MonoBehaviour
     }
 
     /// <summary>Inspectorのコンテキストメニュー、またはUIからエフェクトを再生する。</summary>
-    [ContextMenu("Play Explosion")]
+    [ContextMenu("Play Effect")]
     public void PlayEffect()
     {
         if (targetEffect == null && effectPrefab == null)
@@ -96,7 +96,17 @@ public sealed class ExplosionEffectPreview : MonoBehaviour
             ? targetEffect
             : Instantiate(effectPrefab, transform.position, transform.rotation);
         currentEffect.SetActive(true);
-        Animator animator = currentEffect.GetComponentInChildren<Animator>();
+
+        ParticleSystem[] particleSystems = currentEffect.GetComponentsInChildren<ParticleSystem>(true);
+        foreach (ParticleSystem particleSystem in particleSystems)
+        {
+            ParticleSystem.MainModule main = particleSystem.main;
+            main.simulationSpeed = playbackSpeed;
+            particleSystem.Stop(true, ParticleSystemStopBehavior.StopEmittingAndClear);
+            particleSystem.Play(true);
+        }
+
+        Animator animator = currentEffect.GetComponentInChildren<Animator>(true);
         if (animator != null)
         {
             if (animatorController != null)
@@ -105,6 +115,7 @@ public sealed class ExplosionEffectPreview : MonoBehaviour
             }
 
             animator.speed = playbackSpeed;
+            animator.Rebind();
             animator.Update(0f);
             if (animator.runtimeAnimatorController != null &&
                 animator.runtimeAnimatorController.animationClips.Length > 0)
@@ -117,17 +128,20 @@ public sealed class ExplosionEffectPreview : MonoBehaviour
             animator = currentEffect.AddComponent<Animator>();
             animator.runtimeAnimatorController = animatorController;
             animator.speed = playbackSpeed;
+            animator.Rebind();
             animator.Update(0f);
             animator.Play(0, 0, 0f);
         }
 
-        float duration = visibleDuration;
-        if (duration <= 0f && animator != null && animator.runtimeAnimatorController != null &&
-            animator.runtimeAnimatorController.animationClips.Length > 0)
+        Animation legacyAnimation = currentEffect.GetComponentInChildren<Animation>(true);
+        if (legacyAnimation != null)
         {
-            duration = animator.runtimeAnimatorController.animationClips[0].length /
-                       Mathf.Max(0.01f, Mathf.Abs(playbackSpeed));
+            legacyAnimation.Rewind();
+            legacyAnimation.Play();
         }
+
+        float duration = visibleDuration > 0f ? visibleDuration : GetAutomaticDuration(
+            particleSystems, animator, legacyAnimation, playbackSpeed);
 
         if (duration > 0f)
         {
@@ -144,5 +158,44 @@ public sealed class ExplosionEffectPreview : MonoBehaviour
         }
 
         playbackRoutine = null;
+    }
+
+    private static float GetAutomaticDuration(ParticleSystem[] systems, Animator animator,
+        Animation legacyAnimation, float speed)
+    {
+        float duration = 0f;
+        float safeSpeed = Mathf.Max(0.01f, Mathf.Abs(speed));
+
+        foreach (ParticleSystem system in systems)
+        {
+            ParticleSystem.MainModule main = system.main;
+            if (main.loop)
+            {
+                return 0f;
+            }
+
+            float particleLife = main.startLifetime.mode == ParticleSystemCurveMode.Constant
+                ? main.startLifetime.constant
+                : main.startLifetime.constantMax;
+            duration = Mathf.Max(duration, (main.duration + particleLife) / safeSpeed);
+        }
+
+        if (animator != null && animator.runtimeAnimatorController != null)
+        {
+            foreach (AnimationClip clip in animator.runtimeAnimatorController.animationClips)
+            {
+                duration = Mathf.Max(duration, clip.length / safeSpeed);
+            }
+        }
+
+        if (legacyAnimation != null)
+        {
+            foreach (AnimationState state in legacyAnimation)
+            {
+                duration = Mathf.Max(duration, state.length / safeSpeed);
+            }
+        }
+
+        return duration;
     }
 }

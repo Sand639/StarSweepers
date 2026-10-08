@@ -5,30 +5,41 @@
 | 担当者 | 長島 颯士（実装補助：Codex） |
 | 作成日 | 2026年10月8日 |
 | 最終更新日 | 2026年10月8日 |
-| 状態 | 実装中（既存シーンへの再生設定の接続待ち） |
+| 状態 | 共通プレビュー実装済み（Unityでの再生確認待ち） |
 
 ---
 
 ## この機能は何か
 
-爆発FBXを単独のシーンで表示して、見た目と再生タイミングを確認するためのテスト用機能。
+エフェクトのPrefabやFBXをテスト用シーンで表示して、見た目と再生タイミングを確認するための共通機能。現在の `fbxTest` は爆発FBXの例。
 
 ## 遊ぶ人から見た動き
 
 | 操作 | 結果 |
 | --- | --- |
-| シーンを再生 | 爆発FBXを自動で再生する |
-| 画面左上の「Play / Replay」 | 爆発をもう一度再生する |
+| シーンを再生 | Play On Start がONなら設定したエフェクトを再生する |
+| 画面左上の「Play / Replay」 | エフェクトをもう一度再生する |
 
 ## 関係するファイル・シーン
 
 | 種類 | パス |
 | --- | --- |
-| FBX | Assets/Art/Models/Explosion.fbx |
-| スクリプト | Assets/Scripts/Effect/ExplosionEffectPreview.cs |
-| シーン生成スクリプト | Assets/Scripts/Effect/ExplosionEffectTestSceneBuilder.cs（既存シーンへ設定を接続） |
+| プレビュー | Assets/Scripts/Effect/ExplosionEffectPreview.cs |
+| 爆発FBX用シーン設定 | Assets/Scripts/Effect/ExplosionEffectTestSceneBuilder.cs |
 | 確認用シーン | Assets/Scenes/Test/fbxTest.unity（長島さん作成） |
-| 再生コントローラー | Assets/Art/Models/ExplosionPreview.controller（アニメーションがある場合に生成） |
+| 爆発FBX（例） | Assets/Art/Models/Explosion.fbx |
+| 再生コントローラー（例） | Assets/Art/Models/ExplosionPreview.controller |
+
+## 別のエフェクトを試す手順
+
+1. Unityで `fbxTest` を複製し、`Assets/Scenes/Test/` に別名で保存する。
+2. 複製したシーンで `ExplosionEffect` を削除する。
+3. Hierarchyに空のGameObjectを作り、`ExplosionEffectPreview` を追加する。
+4. エフェクトPrefabを `Effect Prefab` に設定する。シーン上のオブジェクトを直接試す場合は `Target Effect` に設定する。
+5. Animatorが独自のControllerを必要とする場合だけ `Animator Controller` に設定する。Particle SystemだけのPrefabなら空欄でよい。
+6. 必要に応じて `Start Delay`、`Playback Speed`、`Visible Duration` を調整してPlayする。
+
+Animator / Legacy Animation / Particle System を再生する。表示時間が0の場合、アニメーションまたはループしないParticle Systemの長さから自動で決める。ループするParticle Systemは自動では消さないため、消したい場合は `Visible Duration` を設定する。
 
 ## 設定できる値（インスペクターの項目）
 
@@ -41,7 +52,7 @@
 
 ## 仕組み（分かる人向け）
 
-確認用のEditorメニューから、FBXをGeneric形式で取り込み、含まれている最初のアニメーションクリップを1回再生するAnimator Controllerと確認用シーンを作る。再生スクリプトには待ち時間・再生速度・表示時間を設定でき、画面のボタンから再生し直せる。
+プレビューはPrefabまたはシーン上のオブジェクトを受け取り、アニメーションとParticle Systemを再生する。爆発FBXの `fbxTest` はシーンを開いたときにFBXをGeneric形式で読み込み、含まれているアニメーションクリップをControllerへ接続する。
 
 ## できていないこと・既知の問題
 
@@ -55,4 +66,5 @@
 | 2026/10/8 | 長島 颯士（実装補助：Codex） | 爆発FBXの表示・時間調整を確認する機能ドキュメントを作成 |
 | 2026/10/8 | 長島 颯士（実装補助：Codex） | 長島さん作成のfbxTestシーンを確認用シーンとして記載 |
 | 2026/10/8 | 長島 颯士（実装補助：Codex） | fbxTestを開いた際の再生設定自動接続と、再生カメラの調整を追加 |
+| 2026/10/8 | 長島 颯士（実装補助：Codex） | AnimatorとParticle Systemを使う他のエフェクトにも使える共通プレビューに拡張 |
 
