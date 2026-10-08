@@ -5,7 +5,7 @@ using UnityEngine;
 /// Animator / Animation / Particle System を使うエフェクトを再生する共通プレビュー。
 /// 再生開始の遅れ・再生速度・表示時間はInspectorから調整できる。
 /// </summary>
-public sealed class ExplosionEffectPreview : MonoBehaviour
+public sealed class EffectPreviewController : MonoBehaviour
 {
     [Header("Effect")]
     [SerializeField] private GameObject targetEffect;

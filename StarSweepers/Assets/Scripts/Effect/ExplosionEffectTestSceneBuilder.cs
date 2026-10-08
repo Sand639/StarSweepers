@@ -13,11 +13,29 @@ public static class ExplosionEffectTestSceneBuilder
 {
     private const string ScenePath = "Assets/Scenes/Test/fbxTest.unity";
     private const string FallbackModelPath = "Assets/Art/fbx/Explosion.fbx";
+    private const string OldPreviewScriptPath = "Assets/Scripts/Effect/ExplosionEffectPreview.cs";
+    private const string PreviewScriptPath = "Assets/Scripts/Effect/EffectPreviewController.cs";
 
     static ExplosionEffectTestSceneBuilder()
     {
         EditorSceneManager.sceneOpened += OnSceneOpened;
+        EditorApplication.delayCall += RenamePreviewScriptWithUnity;
         EditorApplication.delayCall += ConfigureOpenTestScene;
+    }
+
+    private static void RenamePreviewScriptWithUnity()
+    {
+        if (!string.IsNullOrEmpty(AssetDatabase.AssetPathToGUID(PreviewScriptPath)) ||
+            string.IsNullOrEmpty(AssetDatabase.AssetPathToGUID(OldPreviewScriptPath)))
+        {
+            return;
+        }
+
+        string error = AssetDatabase.MoveAsset(OldPreviewScriptPath, PreviewScriptPath);
+        if (!string.IsNullOrEmpty(error))
+        {
+            Debug.LogError($"プレビュースクリプト名を変更できませんでした: {error}");
+        }
     }
 
     private static void OnSceneOpened(Scene scene, OpenSceneMode mode)
@@ -48,8 +66,8 @@ public static class ExplosionEffectTestSceneBuilder
         }
 
         GameObject[] roots = SceneManager.GetActiveScene().GetRootGameObjects();
-        ExplosionEffectPreview existing = roots
-            .SelectMany(root => root.GetComponentsInChildren<ExplosionEffectPreview>(true))
+        EffectPreviewController existing = roots
+            .SelectMany(root => root.GetComponentsInChildren<EffectPreviewController>(true))
             .FirstOrDefault();
         if (existing != null && existing.TargetEffect != null && existing.AnimatorController != null)
         {
@@ -142,8 +160,8 @@ public static class ExplosionEffectTestSceneBuilder
             SceneManager.MoveGameObjectToScene(previewObject, SceneManager.GetActiveScene());
         }
 
-        ExplosionEffectPreview preview = existing != null ? existing :
-            Undo.AddComponent<ExplosionEffectPreview>(previewObject);
+        EffectPreviewController preview = existing != null ? existing :
+            Undo.AddComponent<EffectPreviewController>(previewObject);
         preview.Configure(target, controller);
         FrameEffectWithCamera(target, roots);
 
