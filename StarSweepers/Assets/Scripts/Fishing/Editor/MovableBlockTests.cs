@@ -5,7 +5,82 @@ using UnityEngine;
 public class MovableBlockTests
 {
     private const string PrefabPath = "Assets/Scenes/Test/Sou/MovableBlock.prefab";
-    private const string PullAblePlatePrefabPath = "Assets/Prefabs/SpaceJunk/Gimmick/PullAblePlate.prefab";
+
+    [Test]
+    public void BlockEnumsContainOnlyTheTwoModesAndFourSides()
+    {
+        Assert.That(
+            System.Enum.GetNames(typeof(MovableBlockMoveMode)),
+            Is.EqualTo(new[] { "TowardPlayer", "FourDirections" }));
+        Assert.That(
+            System.Enum.GetNames(typeof(MovableBlockPullSide)),
+            Is.EqualTo(new[] { "Front", "Back", "Left", "Right" }));
+    }
+
+    [Test]
+    public void PlayerAwarePullableRejectsOnlyThePlayerItDisallows()
+    {
+        GameObject pullableObject = new GameObject("PlayerAwarePullable");
+        GameObject player = new GameObject("Player");
+
+        try
+        {
+            PlayerAwarePullableFake pullable = pullableObject.AddComponent<PlayerAwarePullableFake>();
+            pullable.CanHook = false;
+
+            Assert.That(HookController.CanHookPullable(pullable, player.transform), Is.False);
+
+            pullable.CanHook = true;
+
+            Assert.That(HookController.CanHookPullable(pullable, player.transform), Is.True);
+        }
+        finally
+        {
+            Object.DestroyImmediate(pullableObject);
+            Object.DestroyImmediate(player);
+        }
+    }
+
+    [Test]
+    public void NormalMovableBlockPullPointKeepsUsingGeneralHookCondition()
+    {
+        GameObject root = new GameObject("MovableBlock");
+        GameObject pointObject = new GameObject("Front");
+        GameObject player = new GameObject("Player");
+
+        try
+        {
+            root.AddComponent<Rigidbody>().isKinematic = true;
+            root.AddComponent<MovableBlock>();
+            pointObject.transform.SetParent(root.transform, false);
+            pointObject.AddComponent<BoxCollider>();
+            MovableBlockPullPoint pullable = pointObject.AddComponent<MovableBlockPullPoint>();
+
+            Assert.That(HookController.CanHookPullable(pullable, player.transform), Is.True);
+        }
+        finally
+        {
+            Object.DestroyImmediate(root);
+            Object.DestroyImmediate(player);
+        }
+    }
+
+    [Test]
+    public void HookPullContextKeepsTheExactPlayerRoot()
+    {
+        GameObject player = new GameObject("Player");
+
+        try
+        {
+            HookPullContext context = new HookPullContext(Vector3.one, 0.5f, player.transform);
+
+            Assert.That(context.PlayerRoot, Is.SameAs(player.transform));
+        }
+        finally
+        {
+            Object.DestroyImmediate(player);
+        }
+    }
 
     [Test]
     public void TowardPlayerUsesHorizontalDirectionFromBlockToPlayer()
@@ -51,26 +126,6 @@ public class MovableBlockTests
             Vector3.back);
 
         Assert.That(Vector3.Distance(direction, Vector3.right), Is.LessThan(0.0001f));
-    }
-
-    [TestCase(MovableBlockPullSide.FrontLeft, -1f, 1f)]
-    [TestCase(MovableBlockPullSide.FrontRight, 1f, 1f)]
-    [TestCase(MovableBlockPullSide.BackLeft, -1f, -1f)]
-    [TestCase(MovableBlockPullSide.BackRight, 1f, -1f)]
-    public void FourCornersUsesNamedLocalCorner(
-        MovableBlockPullSide side,
-        float expectedX,
-        float expectedZ)
-    {
-        Vector3 direction = MovableBlock.CalculateMoveDirection(
-            MovableBlockMoveMode.FourCorners,
-            Quaternion.identity,
-            side,
-            Vector3.zero,
-            new Vector3(-20f, 5f, -20f));
-
-        Vector3 expected = new Vector3(expectedX, 0f, expectedZ).normalized;
-        Assert.That(Vector3.Distance(direction, expected), Is.LessThan(0.0001f));
     }
 
     [Test]
@@ -187,31 +242,6 @@ public class MovableBlockTests
         AssertPullPoint(prefab.transform, "Right", MovableBlockPullSide.Right);
     }
 
-    [Test]
-    public void PullAblePlatePrefabHasFourNamedCornerTriggerPullPoints()
-    {
-        GameObject prefab = AssetDatabase.LoadAssetAtPath<GameObject>(PullAblePlatePrefabPath);
-
-        Assert.That(prefab, Is.Not.Null);
-
-        MovableBlock block = prefab.GetComponent<MovableBlock>();
-        Assert.That(block, Is.Not.Null);
-        SerializedObject serializedBlock = new SerializedObject(block);
-        Assert.That(
-            serializedBlock.FindProperty("moveMode").enumValueIndex,
-            Is.EqualTo((int)MovableBlockMoveMode.FourCorners));
-
-        Rigidbody body = prefab.GetComponent<Rigidbody>();
-        Assert.That(body, Is.Not.Null);
-        Assert.That(body.isKinematic, Is.True);
-        Assert.That(body.useGravity, Is.False);
-
-        AssertPullPoint(prefab.transform, "FrontLeft", MovableBlockPullSide.FrontLeft);
-        AssertPullPoint(prefab.transform, "FrontRight", MovableBlockPullSide.FrontRight);
-        AssertPullPoint(prefab.transform, "BackLeft", MovableBlockPullSide.BackLeft);
-        AssertPullPoint(prefab.transform, "BackRight", MovableBlockPullSide.BackRight);
-    }
-
     private static void AssertPullPoint(Transform root, string childName, MovableBlockPullSide expectedSide)
     {
         Transform child = root.Find(childName);
@@ -226,5 +256,29 @@ public class MovableBlockTests
 
         SerializedObject serializedPoint = new SerializedObject(pullPoint);
         Assert.That(serializedPoint.FindProperty("side").enumValueIndex, Is.EqualTo((int)expectedSide));
+    }
+}
+
+public sealed class PlayerAwarePullableFake : MonoBehaviour, IHookPullable, IPlayerAwareHookPullable
+{
+    public bool CanHook { get; set; }
+    public Component HookComponent => this;
+    public Vector3 HookAnchorPoint => transform.position;
+    public bool IsHooked { get; private set; }
+    public bool CanBeHooked => true;
+
+    public bool CanBeHookedBy(Transform playerRoot)
+    {
+        return CanHook;
+    }
+
+    public void SetHooked(bool hooked)
+    {
+        IsHooked = hooked;
+    }
+
+    public void CompletePull(HookPullContext context)
+    {
+        IsHooked = false;
     }
 }

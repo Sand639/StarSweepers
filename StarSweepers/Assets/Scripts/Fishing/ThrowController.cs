@@ -755,7 +755,8 @@ public class ThrowController : MonoBehaviour
     private void FinishPullable(float accuracy)
     {
         Vector3 playerPosition = hook != null ? hook.PlayerRoot.position : transform.position;
-        CompletePullable(pullableTarget, playerPosition, accuracy);
+        Transform playerRoot = hook != null ? hook.PlayerRoot : null;
+        CompletePullable(pullableTarget, playerPosition, accuracy, playerRoot);
         pullableTarget = null;
         active = false;
 
@@ -770,9 +771,13 @@ public class ThrowController : MonoBehaviour
     }
 
     /// <summary>拉扯ゲージが確定した時だけ、対象の介面を呼ぶ。</summary>
-    public static void CompletePullable(IHookPullable pullable, Vector3 playerPosition, float accuracy)
+    public static void CompletePullable(
+        IHookPullable pullable,
+        Vector3 playerPosition,
+        float accuracy,
+        Transform playerRoot = null)
     {
-        pullable?.CompletePull(new HookPullContext(playerPosition, accuracy));
+        pullable?.CompletePull(new HookPullContext(playerPosition, accuracy, playerRoot));
     }
 
     // ------------------------------------------------------------
