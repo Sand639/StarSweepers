@@ -257,69 +257,56 @@ public class PullAblePlateTests
     }
 
     [Test]
-    public void CollisionPolicyIgnoresOnlyPlatesAndFixedSolidColliders()
+    public void ImmediatePullStopsBeforeAFixedCube()
     {
         GameObject plateObject = CreatePlate(out PullAblePlate plate);
-        GameObject otherPlateObject = CreatePlate(out _);
+        BoxCollider plateCollider = plateObject.AddComponent<BoxCollider>();
         GameObject fixedObject = new GameObject("FixedMap");
-        GameObject playerObject = CreatePlayer("Player", out CharacterController playerController);
-        GameObject dynamicObject = new GameObject("DynamicDebris");
-        GameObject triggerObject = new GameObject("Trigger");
+        BoxCollider fixedCollider = fixedObject.AddComponent<BoxCollider>();
 
         try
         {
-            BoxCollider otherPlateCollider = otherPlateObject.AddComponent<BoxCollider>();
-            BoxCollider fixedCollider = fixedObject.AddComponent<BoxCollider>();
-            dynamicObject.AddComponent<Rigidbody>();
-            BoxCollider dynamicCollider = dynamicObject.AddComponent<BoxCollider>();
-            BoxCollider triggerCollider = triggerObject.AddComponent<BoxCollider>();
-            triggerCollider.isTrigger = true;
+            fixedObject.transform.position = new Vector3(1.4f, 0f, 0f);
+            ConfigureImmediatePull(plate);
+            Physics.SyncTransforms();
 
-            Assert.That(plate.ShouldIgnoreCollision(otherPlateCollider), Is.True);
-            Assert.That(plate.ShouldIgnoreCollision(fixedCollider), Is.True);
-            Assert.That(plate.ShouldIgnoreCollision(playerController), Is.False);
-            Assert.That(plate.ShouldIgnoreCollision(dynamicCollider), Is.False);
-            Assert.That(plate.ShouldIgnoreCollision(triggerCollider), Is.False);
+            Assert.That(plate.Pull(PullAblePlateDirection.Right), Is.True);
+
+            Assert.That(Physics.GetIgnoreCollision(plateCollider, fixedCollider), Is.False);
+            Assert.That(AreOverlapping(plateCollider, fixedCollider), Is.False);
+            Assert.That(plateObject.transform.position.x, Is.LessThan(0.5f));
+        }
+        finally
+        {
+            Object.DestroyImmediate(plateObject);
+            Object.DestroyImmediate(fixedObject);
+        }
+    }
+
+    [Test]
+    public void ImmediatePullStopsBeforeAnotherPlate()
+    {
+        GameObject plateObject = CreatePlate(out PullAblePlate plate);
+        BoxCollider plateCollider = plateObject.AddComponent<BoxCollider>();
+        GameObject otherPlateObject = CreatePlate(out _);
+        BoxCollider otherPlateCollider = otherPlateObject.AddComponent<BoxCollider>();
+
+        try
+        {
+            otherPlateObject.transform.position = new Vector3(1.4f, 0f, 0f);
+            ConfigureImmediatePull(plate);
+            Physics.SyncTransforms();
+
+            Assert.That(plate.Pull(PullAblePlateDirection.Right), Is.True);
+
+            Assert.That(Physics.GetIgnoreCollision(plateCollider, otherPlateCollider), Is.False);
+            Assert.That(AreOverlapping(plateCollider, otherPlateCollider), Is.False);
+            Assert.That(plateObject.transform.position.x, Is.LessThan(0.5f));
         }
         finally
         {
             Object.DestroyImmediate(plateObject);
             Object.DestroyImmediate(otherPlateObject);
-            Object.DestroyImmediate(fixedObject);
-            Object.DestroyImmediate(playerObject);
-            Object.DestroyImmediate(dynamicObject);
-            Object.DestroyImmediate(triggerObject);
-        }
-    }
-
-    [Test]
-    public void RefreshIgnoredCollisionsFindsAFixedColliderAddedAfterTheFirstRefresh()
-    {
-        GameObject plateObject = CreatePlate(out PullAblePlate plate);
-        BoxCollider plateCollider = plateObject.AddComponent<BoxCollider>();
-        GameObject fixedObject = null;
-
-        try
-        {
-            plate.RefreshIgnoredCollisions();
-
-            fixedObject = new GameObject("LateFixedMap");
-            BoxCollider fixedCollider = fixedObject.AddComponent<BoxCollider>();
-            Physics.SyncTransforms();
-
-            Assert.That(Physics.GetIgnoreCollision(plateCollider, fixedCollider), Is.False);
-
-            plate.RefreshIgnoredCollisions();
-
-            Assert.That(Physics.GetIgnoreCollision(plateCollider, fixedCollider), Is.True);
-        }
-        finally
-        {
-            Object.DestroyImmediate(plateObject);
-            if (fixedObject != null)
-            {
-                Object.DestroyImmediate(fixedObject);
-            }
         }
     }
 
@@ -417,6 +404,27 @@ public class PullAblePlateTests
         body.useGravity = false;
         plate = plateObject.AddComponent<PullAblePlate>();
         return plateObject;
+    }
+
+    private static void ConfigureImmediatePull(PullAblePlate plate)
+    {
+        SerializedObject serializedPlate = new SerializedObject(plate);
+        serializedPlate.FindProperty("moveDistance").floatValue = 2f;
+        serializedPlate.FindProperty("moveDuration").floatValue = 0f;
+        serializedPlate.ApplyModifiedPropertiesWithoutUndo();
+    }
+
+    private static bool AreOverlapping(Collider first, Collider second)
+    {
+        return Physics.ComputePenetration(
+            first,
+            first.transform.position,
+            first.transform.rotation,
+            second,
+            second.transform.position,
+            second.transform.rotation,
+            out _,
+            out _);
     }
 
     private static GameObject CreatePlayer(string name, out CharacterController controller)

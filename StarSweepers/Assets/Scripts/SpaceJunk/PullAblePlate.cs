@@ -18,6 +18,7 @@ public enum PullAblePlateDirection
 [RequireComponent(typeof(Rigidbody))]
 public class PullAblePlate : MonoBehaviour
 {
+    private const float CollisionSkin = 0.01f;
     private static readonly HashSet<PullAblePlate> EnabledPlates = new();
 
     [Header("拉扯移動")]
@@ -61,7 +62,6 @@ public class PullAblePlate : MonoBehaviour
     {
         EnabledPlates.Add(this);
         RefreshPullPointStates();
-        RefreshIgnoredCollisions();
     }
 
     private void OnDisable()
@@ -145,48 +145,6 @@ public class PullAblePlate : MonoBehaviour
         };
     }
 
-    public bool ShouldIgnoreCollision(Collider other)
-    {
-        if (other == null || other.isTrigger || other is CharacterController)
-        {
-            return false;
-        }
-
-        PullAblePlate otherPlate = other.GetComponentInParent<PullAblePlate>();
-        if (otherPlate != null)
-        {
-            return otherPlate != this;
-        }
-
-        return other.attachedRigidbody == null;
-    }
-
-    public void RefreshIgnoredCollisions()
-    {
-        Collider[] ownColliders = GetComponentsInChildren<Collider>(true);
-        Collider[] sceneColliders = FindObjectsByType<Collider>(
-            FindObjectsInactive.Exclude,
-            FindObjectsSortMode.None);
-
-        foreach (Collider ownCollider in ownColliders)
-        {
-            if (ownCollider == null || ownCollider.isTrigger || !ownCollider.enabled)
-            {
-                continue;
-            }
-
-            foreach (Collider other in sceneColliders)
-            {
-                if (other == ownCollider || !ShouldIgnoreCollision(other))
-                {
-                    continue;
-                }
-
-                Physics.IgnoreCollision(ownCollider, other, true);
-            }
-        }
-    }
-
     public void SetPullPointActive(PullAblePlateDirection direction, bool active)
     {
         switch (direction)
@@ -247,8 +205,6 @@ public class PullAblePlate : MonoBehaviour
             return false;
         }
 
-        RefreshIgnoredCollisions();
-
         if (body == null)
         {
             body = GetComponent<Rigidbody>();
@@ -278,7 +234,12 @@ public class PullAblePlate : MonoBehaviour
             elapsed += Time.fixedDeltaTime;
             float t = Mathf.SmoothStep(0f, 1f, Mathf.Clamp01(elapsed / moveDuration));
             Vector3 next = Vector3.Lerp(start, destination, t);
-            ApplyMoveStep(next, current);
+            if (ApplyMoveStep(next, current))
+            {
+                IsMoving = false;
+                yield break;
+            }
+
             current = next;
         }
 
@@ -286,17 +247,65 @@ public class PullAblePlate : MonoBehaviour
         IsMoving = false;
     }
 
-    private void ApplyMoveStep(Vector3 nextPosition)
+    private bool ApplyMoveStep(Vector3 nextPosition)
     {
-        ApplyMoveStep(nextPosition, body.position);
-        transform.position = nextPosition;
+        return ApplyMoveStep(nextPosition, body.position);
     }
 
-    private void ApplyMoveStep(Vector3 nextPosition, Vector3 currentPosition)
+    private bool ApplyMoveStep(Vector3 nextPosition, Vector3 currentPosition)
     {
-        Vector3 delta = nextPosition - currentPosition;
-        body.MovePosition(nextPosition);
-        MovePassengers(delta);
+        Vector3 requestedDelta = nextPosition - currentPosition;
+        Vector3 allowedDelta = LimitMoveByCollision(requestedDelta, out bool blocked);
+        Vector3 allowedPosition = currentPosition + allowedDelta;
+
+        body.MovePosition(allowedPosition);
+        if (!Application.isPlaying)
+        {
+            transform.position = allowedPosition;
+        }
+
+        MovePassengers(allowedDelta);
+        return blocked;
+    }
+
+    private Vector3 LimitMoveByCollision(Vector3 requestedDelta, out bool blocked)
+    {
+        blocked = false;
+        float requestedDistance = requestedDelta.magnitude;
+        if (requestedDistance <= 0.0001f)
+        {
+            return Vector3.zero;
+        }
+
+        Vector3 direction = requestedDelta / requestedDistance;
+        RaycastHit[] hits = body.SweepTestAll(
+            direction,
+            requestedDistance + CollisionSkin,
+            QueryTriggerInteraction.Ignore);
+
+        float allowedDistance = requestedDistance;
+        foreach (RaycastHit hit in hits)
+        {
+            Collider other = hit.collider;
+            if (other == null ||
+                other is CharacterController ||
+                other.transform.IsChildOf(transform) ||
+                Vector3.Dot(direction, hit.normal) >= -0.0001f)
+            {
+                continue;
+            }
+
+            float distanceBeforeContact = Mathf.Max(0f, hit.distance - CollisionSkin);
+            if (distanceBeforeContact >= allowedDistance)
+            {
+                continue;
+            }
+
+            allowedDistance = distanceBeforeContact;
+            blocked = true;
+        }
+
+        return direction * allowedDistance;
     }
 
     private void MovePassengers(Vector3 delta)
