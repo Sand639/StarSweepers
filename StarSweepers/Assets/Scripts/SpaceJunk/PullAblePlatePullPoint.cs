@@ -33,6 +33,11 @@ public class PullAblePlatePullPoint : MonoBehaviour, IHookPullable, IPlayerAware
         }
     }
 
+    private void OnDisable()
+    {
+        IsHooked = false;
+    }
+
     public bool CanBeHookedBy(Transform playerRoot)
     {
         return CanBeHooked && !plate.IsPlayerOnPlate(playerRoot);

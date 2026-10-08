@@ -66,6 +66,8 @@ public class PullAblePlate : MonoBehaviour
 
     private void OnDisable()
     {
+        StopAllCoroutines();
+        IsMoving = false;
         EnabledPlates.Remove(this);
         passengers.Clear();
     }

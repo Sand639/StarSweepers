@@ -263,6 +263,7 @@ public class HookController : MonoBehaviour
 
     private void OnDisable()
     {
+        ResetHook();
         playerMap?.Disable();
 
         if (hook != null)

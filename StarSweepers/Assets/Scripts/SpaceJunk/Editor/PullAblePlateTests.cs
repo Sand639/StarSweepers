@@ -1,3 +1,5 @@
+using System.Collections;
+using System.Reflection;
 using NUnit.Framework;
 using UnityEditor;
 using UnityEngine;
@@ -275,6 +277,159 @@ public class PullAblePlateTests
             Assert.That(Physics.GetIgnoreCollision(plateCollider, fixedCollider), Is.False);
             Assert.That(AreOverlapping(plateCollider, fixedCollider), Is.False);
             Assert.That(plateObject.transform.position.x, Is.LessThan(0.5f));
+        }
+        finally
+        {
+            Object.DestroyImmediate(plateObject);
+            Object.DestroyImmediate(fixedObject);
+        }
+    }
+
+    [Test]
+    public void PullPointCanCompleteThreeConsecutivePulls()
+    {
+        GameObject plateObject = CreatePlate(out PullAblePlate plate);
+        GameObject pointObject = CreatePullPoint(
+            plate,
+            PullAblePlateDirection.Right,
+            out PullAblePlatePullPoint point);
+
+        try
+        {
+            ConfigureImmediatePull(plate);
+
+            for (int pullIndex = 0; pullIndex < 3; pullIndex++)
+            {
+                Assert.That(point.CanBeHooked, Is.True, $"拉扯 {pullIndex + 1} 次前應可勾中");
+                point.SetHooked(true);
+                point.CompletePull(new HookPullContext(Vector3.left, 1f));
+                Assert.That(point.IsHooked, Is.False, $"拉扯 {pullIndex + 1} 次後應解除 Hook");
+                Physics.SyncTransforms();
+            }
+
+            Assert.That(Vector3.Distance(plateObject.transform.position, new Vector3(6f, 0f, 0f)),
+                Is.LessThan(0.0001f));
+        }
+        finally
+        {
+            Object.DestroyImmediate(plateObject);
+        }
+    }
+
+    [Test]
+    public void DisablingPlateDuringMoveClearsMovingState()
+    {
+        GameObject plateObject = CreatePlate(out PullAblePlate plate);
+
+        try
+        {
+            typeof(PullAblePlate).GetField(
+                    "body",
+                    BindingFlags.Instance | BindingFlags.NonPublic)
+                ?.SetValue(plate, plateObject.GetComponent<Rigidbody>());
+            MethodInfo moveTo = typeof(PullAblePlate).GetMethod(
+                "MoveTo",
+                BindingFlags.Instance | BindingFlags.NonPublic);
+            Assert.That(moveTo, Is.Not.Null);
+
+            IEnumerator moveRoutine = (IEnumerator)moveTo.Invoke(
+                plate,
+                new object[] { new Vector3(2f, 0f, 0f) });
+            Assert.That(moveRoutine.MoveNext(), Is.True);
+            Assert.That(plate.IsMoving, Is.True);
+
+            typeof(PullAblePlate).GetMethod(
+                    "OnDisable",
+                    BindingFlags.Instance | BindingFlags.NonPublic)
+                ?.Invoke(plate, null);
+
+            Assert.That(plate.IsMoving, Is.False,
+                "移動中に物件が停用されても、再啟用後は再次拉扯できる必要がある");
+        }
+        finally
+        {
+            Object.DestroyImmediate(plateObject);
+        }
+    }
+
+    [Test]
+    public void DisablingPlateClearsHookedPullPointState()
+    {
+        GameObject plateObject = CreatePlate(out PullAblePlate plate);
+        CreatePullPoint(plate, PullAblePlateDirection.Right, out PullAblePlatePullPoint point);
+
+        try
+        {
+            point.SetHooked(true);
+            Assert.That(point.IsHooked, Is.True);
+
+            typeof(PullAblePlatePullPoint).GetMethod(
+                    "OnDisable",
+                    BindingFlags.Instance | BindingFlags.NonPublic)
+                ?.Invoke(point, null);
+
+            Assert.That(point.IsHooked, Is.False);
+            Assert.That(point.CanBeHooked, Is.True);
+        }
+        finally
+        {
+            Object.DestroyImmediate(plateObject);
+        }
+    }
+
+    [Test]
+    public void DisablingHookControllerReleasesAttachedPullPoint()
+    {
+        GameObject plateObject = CreatePlate(out PullAblePlate plate);
+        CreatePullPoint(plate, PullAblePlateDirection.Right, out PullAblePlatePullPoint point);
+        GameObject playerObject = new GameObject("Player");
+        playerObject.SetActive(false);
+        HookController hook = playerObject.AddComponent<HookController>();
+
+        try
+        {
+            point.SetHooked(true);
+            typeof(HookController).GetField(
+                    "attachedPullable",
+                    BindingFlags.Instance | BindingFlags.NonPublic)
+                ?.SetValue(hook, point);
+
+            typeof(HookController).GetMethod(
+                    "OnDisable",
+                    BindingFlags.Instance | BindingFlags.NonPublic)
+                ?.Invoke(hook, null);
+
+            Assert.That(point.IsHooked, Is.False);
+        }
+        finally
+        {
+            Object.DestroyImmediate(plateObject);
+            Object.DestroyImmediate(playerObject);
+        }
+    }
+
+    [Test]
+    public void PlateCanMoveAwayAfterStoppingAtAFixedCube()
+    {
+        GameObject plateObject = CreatePlate(out PullAblePlate plate);
+        BoxCollider plateCollider = plateObject.AddComponent<BoxCollider>();
+        GameObject fixedObject = new GameObject("FixedMap");
+        BoxCollider fixedCollider = fixedObject.AddComponent<BoxCollider>();
+
+        try
+        {
+            fixedObject.transform.position = new Vector3(1.4f, 0f, 0f);
+            ConfigureImmediatePull(plate);
+            Physics.SyncTransforms();
+
+            Assert.That(plate.Pull(PullAblePlateDirection.Right), Is.True);
+            float stoppedX = plateObject.transform.position.x;
+            Assert.That(AreOverlapping(plateCollider, fixedCollider), Is.False);
+
+            Assert.That(plate.Pull(PullAblePlateDirection.Left), Is.True);
+
+            Assert.That(plateObject.transform.position.x, Is.LessThan(stoppedX - 1.9f));
+            Assert.That(AreOverlapping(plateCollider, fixedCollider), Is.False);
         }
         finally
         {
