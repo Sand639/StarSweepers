@@ -342,7 +342,7 @@ public sealed class EffectPreviewSetupWindow : EditorWindow
         previewSettings.FindProperty("visibleDuration").floatValue = visibleDuration;
         previewSettings.ApplyModifiedPropertiesWithoutUndo();
 
-        FrameCamera(effect, scene);
+        SetInitialCamera(scene);
         EditorSceneManager.MarkSceneDirty(scene);
         EditorSceneManager.SaveScene(scene, scenePath);
         Selection.activeGameObject = previewObject;
@@ -405,15 +405,8 @@ public sealed class EffectPreviewSetupWindow : EditorWindow
         return string.IsNullOrEmpty(safeName) ? "NewEffect" : safeName;
     }
 
-    private static void FrameCamera(GameObject effect, Scene scene)
+    private static void SetInitialCamera(Scene scene)
     {
-        Renderer[] renderers = effect.GetComponentsInChildren<Renderer>(true);
-        Bounds bounds = renderers.Length > 0 ? renderers[0].bounds : new Bounds(Vector3.zero, Vector3.one);
-        foreach (Renderer renderer in renderers.Skip(1))
-        {
-            bounds.Encapsulate(renderer.bounds);
-        }
-
         GameObject cameraObject = new GameObject("PreviewCamera", typeof(Camera));
         SceneManager.MoveGameObjectToScene(cameraObject, scene);
         Camera camera = cameraObject.GetComponent<Camera>();
@@ -421,10 +414,9 @@ public sealed class EffectPreviewSetupWindow : EditorWindow
         camera.fieldOfView = 45f;
         camera.clearFlags = CameraClearFlags.SolidColor;
         camera.backgroundColor = new Color(0.08f, 0.08f, 0.1f, 1f);
-        float distance = Mathf.Max(3f, bounds.extents.magnitude * 1.8f /
-            Mathf.Tan(camera.fieldOfView * 0.5f * Mathf.Deg2Rad));
-        camera.transform.position = bounds.center + new Vector3(0f, 0f, -distance);
-        camera.transform.LookAt(bounds.center);
+        camera.transform.position = new Vector3(0f, 2.32f, -5.35f);
+        camera.transform.rotation = Quaternion.Euler(17.418f, 0f, 0f);
+        camera.transform.localScale = Vector3.one;
 
         GameObject lightObject = new GameObject("PreviewLight", typeof(Light));
         SceneManager.MoveGameObjectToScene(lightObject, scene);

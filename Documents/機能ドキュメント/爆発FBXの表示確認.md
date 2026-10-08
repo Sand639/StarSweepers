@@ -40,6 +40,8 @@
 4. `テストシーンを作成して開く`を押す。
 5. 作られたシーンをPlayして確認する。シーンは `Assets/Scenes/Test/` に自動保存される。
 
+生成シーンのカメラ初期値は、位置 `(0, 2.32, -5.35)`、回転 `(17.418, 0, 0)`、スケール `(1, 1, 1)`。
+
 以前の手順で手動設定する場合は、空のGameObjectに `EffectPreviewController` を追加し、Prefabを設定する方法も使える。
 
 Animator / Legacy Animation / Particle System を再生する。表示時間が0の場合、アニメーションまたはループしないParticle Systemの長さから自動で決める。ループするParticle Systemは自動では消さないため、消したい場合は `Visible Duration` を設定する。
@@ -74,4 +76,5 @@ Animator / Legacy Animation / Particle System を再生する。表示時間が0
 | 2026/10/8 | 長島 颯士（実装補助：Codex） | 共通プレビュー用スクリプトを `EffectPreviewController.cs` に改名 |
 | 2026/10/8 | 長島 颯士（実装補助：Codex） | プレビュー用オブジェクトを削除した場合、Unityメニューで同じオブジェクトを復元できるように修正 |
 | 2026/10/8 | 長島 颯士（実装補助：Codex） | Prefab/FBXと再生時間を選ぶだけで専用の確認シーンを作る画面を追加 |
+| 2026/10/8 | 長島 颯士（実装補助：Codex） | 作成画面から生成する確認シーンのカメラ初期値を指定のTransformに設定 |
 
