@@ -19,6 +19,17 @@ public sealed class ExplosionEffectPreview : MonoBehaviour
     private GameObject currentEffect;
     private Coroutine playbackRoutine;
 
+    public GameObject TargetEffect => targetEffect;
+    public RuntimeAnimatorController AnimatorController => animatorController;
+
+    public void Configure(GameObject effect, RuntimeAnimatorController controller)
+    {
+        targetEffect = effect;
+        effectPrefab = null;
+        animatorController = controller;
+        playOnStart = true;
+    }
+
     private void OnGUI()
     {
         const int left = 20;

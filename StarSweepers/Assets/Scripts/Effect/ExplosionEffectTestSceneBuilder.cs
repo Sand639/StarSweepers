@@ -6,113 +6,171 @@ using UnityEditor.SceneManagement;
 using UnityEngine;
 using UnityEngine.SceneManagement;
 
-/// <summary>既存のfbxTestシーンへ爆発FBXの再生確認機能を接続するEditorツール。</summary>
+/// <summary>fbxTest を開いたときに爆発FBXの再生設定を自動で用意する。</summary>
+[InitializeOnLoad]
 public static class ExplosionEffectTestSceneBuilder
 {
+    private const string ScenePath = "Assets/Scenes/Test/fbxTest.unity";
     private const string ModelPath = "Assets/Art/Models/Explosion.fbx";
     private const string ControllerPath = "Assets/Art/Models/ExplosionPreview.controller";
-    private const string ScenePath = "Assets/Scenes/Test/fbxTest.unity";
+
+    static ExplosionEffectTestSceneBuilder()
+    {
+        EditorSceneManager.sceneOpened += OnSceneOpened;
+        EditorApplication.delayCall += ConfigureOpenTestScene;
+    }
+
+    private static void OnSceneOpened(Scene scene, OpenSceneMode mode)
+    {
+        if (scene.path == ScenePath)
+        {
+            EditorApplication.delayCall += ConfigureOpenTestScene;
+        }
+    }
 
     [MenuItem("Tools/StarSweepers/Tests/Configure Explosion FBX Test Scene")]
-    public static void Build()
+    private static void ConfigureFromMenu()
     {
-        AssetDatabase.Refresh(ImportAssetOptions.ForceSynchronousImport);
+        if (SceneManager.GetActiveScene().path != ScenePath)
+        {
+            EditorSceneManager.OpenScene(ScenePath, OpenSceneMode.Single);
+        }
 
-        GameObject model = AssetDatabase.LoadAssetAtPath<GameObject>(ModelPath);
+        ConfigureOpenTestScene();
+    }
+
+    private static void ConfigureOpenTestScene()
+    {
+        if (EditorApplication.isPlayingOrWillChangePlaymode ||
+            SceneManager.GetActiveScene().path != ScenePath)
+        {
+            return;
+        }
+
+        GameObject[] roots = SceneManager.GetActiveScene().GetRootGameObjects();
+        ExplosionEffectPreview existing = roots
+            .SelectMany(root => root.GetComponentsInChildren<ExplosionEffectPreview>(true))
+            .FirstOrDefault();
+        if (existing != null && existing.TargetEffect != null && existing.AnimatorController != null)
+        {
+            return;
+        }
+
         ModelImporter importer = AssetImporter.GetAtPath(ModelPath) as ModelImporter;
-        if (model == null || importer == null)
+        if (importer == null)
         {
-            throw new System.InvalidOperationException($"FBXを読み込めません: {ModelPath}");
+            Debug.LogError($"爆発FBXが見つかりません: {ModelPath}");
+            return;
         }
 
-        importer.importAnimation = true;
-        importer.animationType = ModelImporterAnimationType.Generic;
-        ModelImporterClipAnimation[] clips = importer.defaultClipAnimations;
-        if (clips.Length > 0)
+        if (importer.animationType != ModelImporterAnimationType.Generic || !importer.importAnimation)
         {
-            clips[0].loopTime = false;
-            clips[0].wrapMode = WrapMode.ClampForever;
-            importer.clipAnimations = clips;
+            importer.animationType = ModelImporterAnimationType.Generic;
+            importer.importAnimation = true;
+            importer.SaveAndReimport();
+            return;
         }
 
-        importer.SaveAndReimport();
-        model = AssetDatabase.LoadAssetAtPath<GameObject>(ModelPath);
         AnimationClip clip = AssetDatabase.LoadAllAssetsAtPath(ModelPath)
             .OfType<AnimationClip>()
             .FirstOrDefault(candidate => !candidate.name.StartsWith("__", System.StringComparison.Ordinal));
-
-        RuntimeAnimatorController controller = null;
-        if (clip != null)
+        if (clip == null)
         {
-            AnimatorController animatorController = AssetDatabase.LoadAssetAtPath<AnimatorController>(ControllerPath);
-            if (animatorController == null)
-            {
-                animatorController = AnimatorController.CreateAnimatorControllerAtPath(ControllerPath);
-            }
-
-            AnimatorStateMachine stateMachine = animatorController.layers[0].stateMachine;
-            AnimatorState state = stateMachine.states
-                .Select(child => child.state)
-                .FirstOrDefault(existingState => existingState.name == "Explosion");
-            if (state == null)
-            {
-                state = stateMachine.AddState("Explosion");
-            }
-
-            state.motion = clip;
-            stateMachine.defaultState = state;
-            EditorUtility.SetDirty(animatorController);
-            controller = animatorController;
-            Debug.Log($"Explosion FBX animation imported: {clip.name}, {clip.length:0.000}s");
-        }
-        else
-        {
-            Debug.LogWarning("FBXにアニメーションクリップがありません。FBX自体の表示確認はできます。");
+            Debug.LogError("FBXに再生可能なアニメーションクリップがありません。");
+            return;
         }
 
-        Scene scene = EditorSceneManager.OpenScene(ScenePath, OpenSceneMode.Single);
-        GameObject target = scene.GetRootGameObjects()
+        AnimatorController controller = AssetDatabase.LoadAssetAtPath<AnimatorController>(ControllerPath);
+        if (controller == null)
+        {
+            controller = AnimatorController.CreateAnimatorControllerAtPath(ControllerPath);
+        }
+        AnimatorStateMachine stateMachine = controller.layers[0].stateMachine;
+        AnimatorState state = stateMachine.states.Select(child => child.state)
+            .FirstOrDefault(candidate => candidate.name == "Explosion");
+        if (state == null)
+        {
+            state = stateMachine.AddState("Explosion");
+        }
+        state.motion = clip;
+        stateMachine.defaultState = state;
+        EditorUtility.SetDirty(controller);
+
+        GameObject target = roots
             .SelectMany(root => root.GetComponentsInChildren<Transform>(true))
             .Select(transform => transform.gameObject)
-            .FirstOrDefault(candidate =>
+            .FirstOrDefault(gameObject =>
             {
-                GameObject source = PrefabUtility.GetCorrespondingObjectFromSource(candidate);
+                Object source = PrefabUtility.GetCorrespondingObjectFromSource(gameObject);
                 return source != null && AssetDatabase.GetAssetPath(source) == ModelPath;
             });
         if (target == null)
         {
-            throw new System.InvalidOperationException("fbxTestシーン内にExplosion.fbxの配置が見つかりません。");
+            Object model = AssetDatabase.LoadAssetAtPath<GameObject>(ModelPath);
+            if (model == null)
+            {
+                Debug.LogError("爆発FBXをPrefabとして読み込めませんでした。");
+                return;
+            }
+
+            target = (GameObject)PrefabUtility.InstantiatePrefab(model, SceneManager.GetActiveScene());
+            target.name = "ExplosionEffect";
         }
 
-        Animator animator = target.GetComponentInChildren<Animator>(true);
+        Animator animator = target.GetComponent<Animator>();
         if (animator == null)
         {
-            animator = target.AddComponent<Animator>();
+            animator = Undo.AddComponent<Animator>(target);
         }
+        animator.runtimeAnimatorController = controller;
+        animator.applyRootMotion = false;
+        PrefabUtility.RecordPrefabInstancePropertyModifications(animator);
 
-        GameObject previewObject = GameObject.Find("ExplosionPreview");
-        if (previewObject == null)
+        GameObject previewObject = existing != null ? existing.gameObject :
+            new GameObject("ExplosionPreview");
+        if (existing == null)
         {
-            previewObject = new GameObject("ExplosionPreview");
+            Undo.RegisterCreatedObjectUndo(previewObject, "Create Explosion Preview");
+            SceneManager.MoveGameObjectToScene(previewObject, SceneManager.GetActiveScene());
         }
 
-        ExplosionEffectPreview preview = previewObject.GetComponent<ExplosionEffectPreview>();
-        if (preview == null)
+        ExplosionEffectPreview preview = existing != null ? existing :
+            Undo.AddComponent<ExplosionEffectPreview>(previewObject);
+        preview.Configure(target, controller);
+        FrameEffectWithCamera(target, roots);
+
+        EditorSceneManager.MarkSceneDirty(SceneManager.GetActiveScene());
+        EditorSceneManager.SaveScene(SceneManager.GetActiveScene());
+        Debug.Log("fbxTestに爆発エフェクトの自動再生と調整用プレビューを設定しました。");
+    }
+
+    private static void FrameEffectWithCamera(GameObject target, GameObject[] roots)
+    {
+        Renderer[] renderers = target.GetComponentsInChildren<Renderer>(true);
+        if (renderers.Length == 0)
         {
-            preview = previewObject.AddComponent<ExplosionEffectPreview>();
+            Debug.LogWarning("爆発FBX内にRendererがありません。表示できるメッシュがあるか確認してください。");
+            return;
         }
 
-        SerializedObject serializedPreview = new SerializedObject(preview);
-        serializedPreview.FindProperty("targetEffect").objectReferenceValue = target;
-        serializedPreview.FindProperty("effectPrefab").objectReferenceValue = null;
-        serializedPreview.FindProperty("animatorController").objectReferenceValue = controller;
-        serializedPreview.FindProperty("playOnStart").boolValue = true;
-        serializedPreview.ApplyModifiedPropertiesWithoutUndo();
+        Bounds bounds = renderers[0].bounds;
+        foreach (Renderer renderer in renderers.Skip(1))
+        {
+            bounds.Encapsulate(renderer.bounds);
+        }
 
-        EditorSceneManager.MarkSceneDirty(scene);
-        EditorSceneManager.SaveScene(scene);
-        Selection.activeGameObject = previewObject;
-        Debug.Log($"Explosion FBX preview configured in {ScenePath}. Target: {target.name}");
+        Camera camera = roots.SelectMany(root => root.GetComponentsInChildren<Camera>(true))
+            .FirstOrDefault(candidate => candidate.CompareTag("MainCamera"));
+        if (camera == null)
+        {
+            return;
+        }
+
+        float distance = Mathf.Max(2f, bounds.extents.magnitude * 1.8f /
+            Mathf.Tan(camera.fieldOfView * 0.5f * Mathf.Deg2Rad));
+        camera.transform.position = bounds.center + new Vector3(0f, 0f, -distance);
+        camera.transform.LookAt(bounds.center);
+        EditorUtility.SetDirty(camera);
     }
 }
 #endif
