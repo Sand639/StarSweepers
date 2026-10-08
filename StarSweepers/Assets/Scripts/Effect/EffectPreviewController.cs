@@ -34,12 +34,12 @@ public sealed class EffectPreviewController : MonoBehaviour
     {
         const int left = 20;
         const int top = 20;
-        GUI.Box(new Rect(left, top, 310, 115), "Effect Preview");
+        GUI.Box(new Rect(left, top, 310, 115), "エフェクト確認");
         GUI.Label(new Rect(left + 12, top + 30, 286, 22),
-            $"Delay: {startDelay:0.00}s   Speed: {playbackSpeed:0.00}x");
+            $"待ち時間: {startDelay:0.00}秒   再生速度: {playbackSpeed:0.00}倍");
         GUI.Label(new Rect(left + 12, top + 53, 286, 22),
-            $"Visible: {(visibleDuration <= 0f ? "Animation length" : $"{visibleDuration:0.00}s")}");
-        if (GUI.Button(new Rect(left + 12, top + 78, 286, 26), "Play / Replay"))
+            $"表示時間: {(visibleDuration <= 0f ? "自動" : $"{visibleDuration:0.00}秒")}");
+        if (GUI.Button(new Rect(left + 12, top + 78, 286, 26), "再生 / もう一度再生"))
         {
             PlayEffect();
         }

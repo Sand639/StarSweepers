@@ -34,12 +34,13 @@
 
 ## 別のエフェクトを試す手順
 
-1. Unityで `fbxTest` を複製し、`Assets/Scenes/Test/` に別名で保存する。
-2. 複製したシーンで `ExplosionEffect` を削除する。
-3. Hierarchyに空のGameObjectを作り、`EffectPreviewController` を追加する。
-4. エフェクトPrefabを `Effect Prefab` に設定する。シーン上のオブジェクトを直接試す場合は `Target Effect` に設定する。
-5. Animatorが独自のControllerを必要とする場合だけ `Animator Controller` に設定する。Particle SystemだけのPrefabなら空欄でよい。
-6. 必要に応じて `Start Delay`、`Playback Speed`、`Visible Duration` を調整してPlayする。
+1. Unityメニューの `Tools > StarSweepers > Effect Preview > Create Test Scene` を開く。
+2. `エフェクト`欄にProjectウィンドウからPrefabまたはFBXをドラッグする。
+3. 必要に応じてAnimator Controllerと、再生までの待ち時間・再生速度・表示時間を入力する。Particle SystemだけならAnimator Controllerは不要。
+4. `テストシーンを作成して開く`を押す。
+5. 作られたシーンをPlayして確認する。シーンは `Assets/Scenes/Test/` に自動保存される。
+
+以前の手順で手動設定する場合は、空のGameObjectに `EffectPreviewController` を追加し、Prefabを設定する方法も使える。
 
 Animator / Legacy Animation / Particle System を再生する。表示時間が0の場合、アニメーションまたはループしないParticle Systemの長さから自動で決める。ループするParticle Systemは自動では消さないため、消したい場合は `Visible Duration` を設定する。
 
@@ -72,4 +73,5 @@ Animator / Legacy Animation / Particle System を再生する。表示時間が0
 | 2026/10/8 | 長島 颯士（実装補助：Codex） | Unity上でのFBXの移動先に合わせ、シーン設定ツールが配置済みFBXの場所を見つけるよう変更 |
 | 2026/10/8 | 長島 颯士（実装補助：Codex） | 共通プレビュー用スクリプトを `EffectPreviewController.cs` に改名 |
 | 2026/10/8 | 長島 颯士（実装補助：Codex） | プレビュー用オブジェクトを削除した場合、Unityメニューで同じオブジェクトを復元できるように修正 |
+| 2026/10/8 | 長島 颯士（実装補助：Codex） | Prefab/FBXと再生時間を選ぶだけで専用の確認シーンを作る画面を追加 |
 

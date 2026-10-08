@@ -223,4 +223,214 @@ public static class ExplosionEffectTestSceneBuilder
         EditorUtility.SetDirty(camera);
     }
 }
+
+/// <summary>プログラマー以外でもエフェクト確認用シーンを作れるウィンドウ。</summary>
+public sealed class EffectPreviewSetupWindow : EditorWindow
+{
+    private GameObject effectAsset;
+    private RuntimeAnimatorController animatorController;
+    private float startDelay;
+    private float playbackSpeed = 1f;
+    private float visibleDuration;
+
+    [MenuItem("Tools/StarSweepers/Effect Preview/Create Test Scene")]
+    private static void Open()
+    {
+        GetWindow<EffectPreviewSetupWindow>("Effect Preview");
+    }
+
+    private void OnGUI()
+    {
+        EditorGUILayout.LabelField("エフェクト確認シーンを作成", EditorStyles.boldLabel);
+        EditorGUILayout.HelpBox("PrefabまたはFBXを選んでボタンを押すと、再生確認用のシーンを自動で作ります。",
+            MessageType.Info);
+
+        effectAsset = (GameObject)EditorGUILayout.ObjectField("エフェクト", effectAsset,
+            typeof(GameObject), false);
+        animatorController = (RuntimeAnimatorController)EditorGUILayout.ObjectField(
+            "Animator Controller（任意）", animatorController, typeof(RuntimeAnimatorController), false);
+
+        EditorGUILayout.Space();
+        startDelay = Mathf.Max(0f, EditorGUILayout.FloatField("再生までの待ち時間", startDelay));
+        playbackSpeed = Mathf.Max(0.01f, EditorGUILayout.FloatField("再生速度", playbackSpeed));
+        visibleDuration = Mathf.Max(0f,
+            EditorGUILayout.FloatField("表示時間（0なら自動）", visibleDuration));
+
+        EditorGUILayout.Space();
+        using (new EditorGUI.DisabledScope(effectAsset == null))
+        {
+            if (GUILayout.Button("テストシーンを作成して開く", GUILayout.Height(34f)))
+            {
+                CreateTestScene();
+            }
+        }
+        EditorGUILayout.HelpBox("Particle SystemだけのエフェクトはAnimator Controller不要です。",
+            MessageType.None);
+    }
+
+    private void CreateTestScene()
+    {
+        string assetPath = AssetDatabase.GetAssetPath(effectAsset);
+        string extension = Path.GetExtension(assetPath);
+        if (string.IsNullOrEmpty(assetPath) ||
+            (!extension.Equals(".prefab", System.StringComparison.OrdinalIgnoreCase) &&
+             !extension.Equals(".fbx", System.StringComparison.OrdinalIgnoreCase)))
+        {
+            EditorUtility.DisplayDialog("エフェクトを選んでください",
+                "ProjectウィンドウからPrefabまたはFBXを選択してください。", "OK");
+            return;
+        }
+
+        if (extension.Equals(".fbx", System.StringComparison.OrdinalIgnoreCase))
+        {
+            ModelImporter importer = AssetImporter.GetAtPath(assetPath) as ModelImporter;
+            if (importer != null &&
+                (importer.animationType != ModelImporterAnimationType.Generic || !importer.importAnimation))
+            {
+                importer.animationType = ModelImporterAnimationType.Generic;
+                importer.importAnimation = true;
+                importer.SaveAndReimport();
+                effectAsset = AssetDatabase.LoadAssetAtPath<GameObject>(assetPath);
+                EditorUtility.DisplayDialog("FBXを読み込み直しました",
+                    "読み込みが終わったら、もう一度「テストシーンを作成して開く」を押してください。", "OK");
+                return;
+            }
+        }
+
+        GameObject prefab = AssetDatabase.LoadAssetAtPath<GameObject>(assetPath);
+        if (prefab == null)
+        {
+            EditorUtility.DisplayDialog("読み込めません", "選択したPrefabまたはFBXを読み込めませんでした。", "OK");
+            return;
+        }
+
+        RuntimeAnimatorController controller = animatorController;
+        if (controller == null)
+        {
+            controller = CreateControllerForFirstClip(assetPath);
+        }
+
+        string scenePath = CreateUniqueScenePath(prefab.name);
+        Scene scene = EditorSceneManager.NewScene(NewSceneSetup.EmptyScene, NewSceneMode.Single);
+        GameObject effect = PrefabUtility.InstantiatePrefab(prefab, scene) as GameObject;
+        if (effect == null)
+        {
+            EditorUtility.DisplayDialog("作成できません", "エフェクトPrefabをシーンに配置できませんでした。", "OK");
+            return;
+        }
+        effect.name = "Effect";
+
+        Animator animator = effect.GetComponentInChildren<Animator>(true);
+        if (controller != null && animator == null)
+        {
+            animator = Undo.AddComponent<Animator>(effect);
+        }
+        if (animator != null && controller != null)
+        {
+            animator.runtimeAnimatorController = controller;
+            animator.applyRootMotion = false;
+            PrefabUtility.RecordPrefabInstancePropertyModifications(animator);
+        }
+
+        GameObject previewObject = new GameObject("EffectPreviewController");
+        SceneManager.MoveGameObjectToScene(previewObject, scene);
+        EffectPreviewController preview = previewObject.AddComponent<EffectPreviewController>();
+        preview.Configure(effect, controller);
+        SerializedObject previewSettings = new SerializedObject(preview);
+        previewSettings.FindProperty("startDelay").floatValue = startDelay;
+        previewSettings.FindProperty("playbackSpeed").floatValue = playbackSpeed;
+        previewSettings.FindProperty("visibleDuration").floatValue = visibleDuration;
+        previewSettings.ApplyModifiedPropertiesWithoutUndo();
+
+        FrameCamera(effect, scene);
+        EditorSceneManager.MarkSceneDirty(scene);
+        EditorSceneManager.SaveScene(scene, scenePath);
+        Selection.activeGameObject = previewObject;
+        EditorUtility.DisplayDialog("テストシーンを作成しました",
+            $"{scenePath}\nPlayボタンでエフェクトを確認できます。", "OK");
+    }
+
+    private static RuntimeAnimatorController CreateControllerForFirstClip(string assetPath)
+    {
+        AnimationClip clip = AssetDatabase.LoadAllAssetsAtPath(assetPath)
+            .OfType<AnimationClip>()
+            .FirstOrDefault(candidate => !candidate.name.StartsWith("__", System.StringComparison.Ordinal));
+        if (clip == null)
+        {
+            return null;
+        }
+
+        string directory = Path.GetDirectoryName(assetPath) ?? "Assets";
+        string controllerName = SanitizeAssetName(Path.GetFileNameWithoutExtension(assetPath));
+        string controllerPath = Path.Combine(directory, $"{controllerName}Preview.controller").Replace('\\', '/');
+        AnimatorController controller = AssetDatabase.LoadAssetAtPath<AnimatorController>(controllerPath);
+        if (controller == null)
+        {
+            controller = AnimatorController.CreateAnimatorControllerAtPath(controllerPath);
+        }
+
+        AnimatorStateMachine stateMachine = controller.layers[0].stateMachine;
+        AnimatorState state = stateMachine.states.Select(child => child.state)
+            .FirstOrDefault(candidate => candidate.name == "Effect");
+        if (state == null)
+        {
+            state = stateMachine.AddState("Effect");
+        }
+        state.motion = clip;
+        stateMachine.defaultState = state;
+        EditorUtility.SetDirty(controller);
+        AssetDatabase.SaveAssets();
+        return controller;
+    }
+
+    private static string CreateUniqueScenePath(string assetName)
+    {
+        string safeName = SanitizeAssetName(assetName);
+        string basePath = $"Assets/Scenes/Test/EffectTest_{safeName}";
+        string candidate = basePath + ".unity";
+        int suffix = 2;
+        while (AssetDatabase.LoadAssetAtPath<SceneAsset>(candidate) != null)
+        {
+            candidate = $"{basePath}_{suffix++:00}.unity";
+        }
+        return candidate;
+    }
+
+    private static string SanitizeAssetName(string assetName)
+    {
+        string safeName = new string(assetName.Where(character =>
+            (character >= 'A' && character <= 'Z') ||
+            (character >= 'a' && character <= 'z') ||
+            (character >= '0' && character <= '9')).ToArray());
+        return string.IsNullOrEmpty(safeName) ? "NewEffect" : safeName;
+    }
+
+    private static void FrameCamera(GameObject effect, Scene scene)
+    {
+        Renderer[] renderers = effect.GetComponentsInChildren<Renderer>(true);
+        Bounds bounds = renderers.Length > 0 ? renderers[0].bounds : new Bounds(Vector3.zero, Vector3.one);
+        foreach (Renderer renderer in renderers.Skip(1))
+        {
+            bounds.Encapsulate(renderer.bounds);
+        }
+
+        GameObject cameraObject = new GameObject("PreviewCamera", typeof(Camera));
+        SceneManager.MoveGameObjectToScene(cameraObject, scene);
+        Camera camera = cameraObject.GetComponent<Camera>();
+        camera.tag = "MainCamera";
+        camera.fieldOfView = 45f;
+        camera.clearFlags = CameraClearFlags.SolidColor;
+        camera.backgroundColor = new Color(0.08f, 0.08f, 0.1f, 1f);
+        float distance = Mathf.Max(3f, bounds.extents.magnitude * 1.8f /
+            Mathf.Tan(camera.fieldOfView * 0.5f * Mathf.Deg2Rad));
+        camera.transform.position = bounds.center + new Vector3(0f, 0f, -distance);
+        camera.transform.LookAt(bounds.center);
+
+        GameObject lightObject = new GameObject("PreviewLight", typeof(Light));
+        SceneManager.MoveGameObjectToScene(lightObject, scene);
+        Light light = lightObject.GetComponent<Light>();
+        light.type = LightType.Directional;
+        light.transform.rotation = Quaternion.Euler(50f, -30f, 0f);
+    }
+}
 #endif
