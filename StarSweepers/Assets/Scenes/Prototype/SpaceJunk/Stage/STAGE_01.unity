@@ -2366,11 +2366,11 @@ PrefabInstance:
     serializedVersion: 3
     m_TransformParent: {fileID: 0}
     m_Modifications:
-    - target: {fileID: 5200000000000000001, guid: d7b55e97e7d24f679d029bfbd2e6c012, type: 3}
+    - target: {fileID: 5700000000000000001, guid: cc5d643315dc5ec6c1d03638531f7711, type: 3}
       propertyPath: m_Name
-      value: SpecialDebrisPoint
+      value: HeavyDebrisPoint
       objectReference: {fileID: 0}
-    - target: {fileID: 5200000000000000002, guid: d7b55e97e7d24f679d029bfbd2e6c012, type: 3}
+    - target: {fileID: 5700000000000000002, guid: cc5d643315dc5ec6c1d03638531f7711, type: 3}
       propertyPath: m_LocalPosition.y
       value: 1.5
       objectReference: {fileID: 0}
@@ -2378,7 +2378,7 @@ PrefabInstance:
     m_RemovedGameObjects: []
     m_AddedGameObjects: []
     m_AddedComponents: []
-  m_SourcePrefab: {fileID: 100100000, guid: d7b55e97e7d24f679d029bfbd2e6c012, type: 3}
+  m_SourcePrefab: {fileID: 100100000, guid: cc5d643315dc5ec6c1d03638531f7711, type: 3}
 --- !u!1660057539 &9223372036854775807
 SceneRoots:
   m_ObjectHideFlags: 0

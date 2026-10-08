@@ -310,6 +310,15 @@ public class SpaceJunkSpawner : MonoBehaviour
         return SpawnOne(ignoreLimit: true);
     }
 
+    /// <summary>
+    /// このマップで出る素材のプレハブを、出やすさに合わせて1つ選ぶ（爆弾は選ばない）。
+    /// 決まった場所に重いデブリを置く <see cref="SpaceJunkBombPoints"/> が使う。
+    /// </summary>
+    public GameObject ChooseMaterialPrefab()
+    {
+        return ChoosePrefab(bombsAllowed: false);
+    }
+
     private void TrySpawnOne()
     {
         SpawnOne(ignoreLimit: false);

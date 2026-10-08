@@ -72,6 +72,47 @@ public class Stage01LayoutTests
         }
     }
 
+    [Test]
+    public void Stage01_HasOneHeavyDebrisPointOnTheBase()
+    {
+        Scene scene = SceneManager.GetSceneByPath(ScenePath);
+        bool openedByTest = !scene.IsValid() || !scene.isLoaded;
+        if (openedByTest)
+        {
+            scene = EditorSceneManager.OpenScene(ScenePath, OpenSceneMode.Additive);
+        }
+        try
+        {
+            Transform stageBase = FindByName(scene, "Base");
+            float baseTop = stageBase.position.y + stageBase.lossyScale.y * 0.5f;
+
+            int heavyPoints = 0;
+            foreach (SpaceJunkBombPoints points in FindInScene<SpaceJunkBombPoints>(scene))
+            {
+                if (!new SerializedObject(points).FindProperty("makeHeavy").boolValue)
+                {
+                    continue;
+                }
+
+                heavyPoints++;
+                foreach (Transform place in points.transform)
+                {
+                    Assert.That(place.position.y, Is.GreaterThan(baseTop),
+                        $"{place.name}: 重いデブリは土台の上に出す（土台にめり込まない高さ）");
+                }
+            }
+
+            Assert.That(heavyPoints, Is.EqualTo(1), "真ん中に重いデブリの置き場所が1つ");
+        }
+        finally
+        {
+            if (openedByTest)
+            {
+                EditorSceneManager.CloseScene(scene, true);
+            }
+        }
+    }
+
     private static Transform FindByName(Scene scene, string objectName)
     {
         foreach (GameObject root in scene.GetRootGameObjects())
