@@ -47,8 +47,9 @@ public class Stage01LayoutTests
                 float highTop = lowTop + rise;
                 float highBottom = t.position.y - halfHeight + rise;
 
-                Assert.That(lowTop, Is.EqualTo(groundY).Within(0.01f),
-                    $"{lift.name}: 下にいるときの上面は、地面と同じ高さ");
+                // ぴったり同じ高さだと、地面と床の面が重なってちらつく（Zファイティング。2026/10/8 大槻さんの報告）
+                Assert.That(lowTop - groundY, Is.GreaterThan(0.001f).And.LessThanOrEqualTo(0.05f),
+                    $"{lift.name}: 下にいるときの上面は、地面より少しだけ高い（同じ高さだと面が重なってちらつく）");
                 Assert.That(highTop, Is.EqualTo(baseTop).Within(0.01f),
                     $"{lift.name}: 上がりきったときの上面は、土台の上面と同じ高さ（Rise Height を土台に合わせる）");
                 Assert.That(highBottom, Is.LessThanOrEqualTo(groundY + 0.01f),
