@@ -710,7 +710,18 @@ public class SpaceJunkPlayerSetup : MonoBehaviour
             aim.SetCamera(Camera.main);
         }
 
-        // カメラとゲージは画面に1つしか無いので、そのPCの1人目にだけ結びつける（1台で複数人のとき）
+        // チャージ量とスキルチェックのゲージは、人ごとに頭の上に出す（1台で複数人のときも全員に出る）
+        HookController hook = GetComponent<HookController>();
+        if (hook != null)
+        {
+            HookChargeUI ui = HookChargeUI.CreateOverhead(transform);
+            if (ui != null && hook.UI != ui)
+            {
+                hook.SetUI(ui);
+            }
+        }
+
+        // カメラは画面に1つしか無いので、そのPCの1人目にだけ結びつける（1台で複数人のとき）
         if (!IsFirstLocalPlayer)
         {
             return;
@@ -727,16 +738,6 @@ public class SpaceJunkPlayerSetup : MonoBehaviour
         if (teamCamera != null)
         {
             teamCamera.SetTarget(transform);
-        }
-
-        HookController hook = GetComponent<HookController>();
-        if (hook != null)
-        {
-            HookChargeUI ui = FindFirstObjectByType<HookChargeUI>();
-            if (ui != null)
-            {
-                hook.SetUI(ui);
-            }
         }
     }
 }

@@ -447,7 +447,17 @@ public class FishingNetPlayer : NetworkBehaviour
             aim.SetCamera(Camera.main);
         }
 
-        // カメラとゲージは画面に1つしか無いので、そのPCの1人目にだけ結びつける
+        // チャージ量とスキルチェックのゲージは、人ごとに頭の上に出す（1台で複数人のときも全員に出る）
+        if (hookController != null)
+        {
+            HookChargeUI ui = HookChargeUI.CreateOverhead(transform);
+            if (ui != null && hookController.UI != ui)
+            {
+                hookController.SetUI(ui);
+            }
+        }
+
+        // カメラは画面に1つしか無いので、そのPCの1人目にだけ結びつける
         if (localSeat.Value != 0)
         {
             return;
@@ -458,16 +468,6 @@ public class FishingNetPlayer : NetworkBehaviour
         if (follow != null)
         {
             follow.SetTarget(transform);
-        }
-
-        // チャージ量とスキルチェックのゲージ
-        if (hookController != null)
-        {
-            HookChargeUI ui = FindFirstObjectByType<HookChargeUI>();
-            if (ui != null)
-            {
-                hookController.SetUI(ui);
-            }
         }
     }
 }
