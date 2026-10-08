@@ -20,6 +20,8 @@
 | シーンを再生 | Play On Start がONなら設定したエフェクトを再生する |
 | 画面左上の「Play / Replay」 | エフェクトをもう一度再生する |
 
+プレビュー用オブジェクトを削除した場合は、Unityのメニュー `Tools > StarSweepers > Tests > Configure Explosion FBX Test Scene` を実行すると作り直せる。
+
 ## 関係するファイル・シーン
 
 | 種類 | パス |
@@ -69,4 +71,5 @@ Animator / Legacy Animation / Particle System を再生する。表示時間が0
 | 2026/10/8 | 長島 颯士（実装補助：Codex） | AnimatorとParticle Systemを使う他のエフェクトにも使える共通プレビューに拡張 |
 | 2026/10/8 | 長島 颯士（実装補助：Codex） | Unity上でのFBXの移動先に合わせ、シーン設定ツールが配置済みFBXの場所を見つけるよう変更 |
 | 2026/10/8 | 長島 颯士（実装補助：Codex） | 共通プレビュー用スクリプトを `EffectPreviewController.cs` に改名 |
+| 2026/10/8 | 長島 颯士（実装補助：Codex） | プレビュー用オブジェクトを削除した場合、Unityメニューで同じオブジェクトを復元できるように修正 |
 

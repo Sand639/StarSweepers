@@ -152,10 +152,13 @@ public static class ExplosionEffectTestSceneBuilder
         animator.applyRootMotion = false;
         PrefabUtility.RecordPrefabInstancePropertyModifications(animator);
 
-        GameObject previewObject = existing != null ? existing.gameObject :
-            new GameObject("ExplosionPreview");
-        if (existing == null)
+        GameObject previewObject = existing != null ? existing.gameObject : roots
+            .SelectMany(root => root.GetComponentsInChildren<Transform>(true))
+            .Select(transform => transform.gameObject)
+            .FirstOrDefault(gameObject => gameObject.name == "ExplosionPreview");
+        if (previewObject == null)
         {
+            previewObject = new GameObject("ExplosionPreview");
             Undo.RegisterCreatedObjectUndo(previewObject, "Create Explosion Preview");
             SceneManager.MoveGameObjectToScene(previewObject, SceneManager.GetActiveScene());
         }
