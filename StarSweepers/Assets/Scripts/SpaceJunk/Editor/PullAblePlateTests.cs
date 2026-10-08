@@ -332,15 +332,35 @@ public class PullAblePlateTests
         PullAblePlate plate = prefab.GetComponent<PullAblePlate>();
         Assert.That(plate, Is.Not.Null);
         Assert.That(prefab.GetComponent<MovableBlock>(), Is.Null);
+        Assert.That(prefab.transform.localPosition, Is.EqualTo(Vector3.zero));
+        Assert.That(prefab.transform.localRotation, Is.EqualTo(Quaternion.identity));
+        Assert.That(prefab.transform.localScale, Is.EqualTo(Vector3.one));
 
         Rigidbody body = prefab.GetComponent<Rigidbody>();
         Assert.That(body, Is.Not.Null);
         Assert.That(body.isKinematic, Is.True);
         Assert.That(body.useGravity, Is.False);
 
-        MeshCollider floor = prefab.GetComponent<MeshCollider>();
-        Assert.That(floor, Is.Not.Null);
-        Assert.That(floor.sharedMesh, Is.Not.Null);
+        Assert.That(prefab.GetComponent<MeshFilter>(), Is.Null);
+        Assert.That(prefab.GetComponent<MeshRenderer>(), Is.Null);
+        Assert.That(prefab.GetComponent<Collider>(), Is.Null);
+
+        Transform plateBody = prefab.transform.Find("PlateBody");
+        Assert.That(plateBody, Is.Not.Null);
+        Assert.That(Vector3.Distance(plateBody.localPosition, new Vector3(0f, -0.25f, 0f)),
+            Is.LessThan(0.0001f));
+        Assert.That(Vector3.Distance(plateBody.localScale, new Vector3(10f, 0.5f, 10f)),
+            Is.LessThan(0.0001f));
+
+        MeshFilter plateMesh = plateBody.GetComponent<MeshFilter>();
+        Assert.That(plateMesh, Is.Not.Null);
+        Assert.That(plateMesh.sharedMesh, Is.Not.Null);
+        Assert.That(plateMesh.sharedMesh.name, Is.EqualTo("Cube"));
+        Assert.That(plateBody.GetComponent<MeshRenderer>(), Is.Not.Null);
+
+        BoxCollider plateCollider = plateBody.GetComponent<BoxCollider>();
+        Assert.That(plateCollider, Is.Not.Null);
+        Assert.That(plateCollider.isTrigger, Is.False);
 
         AssertPlatePullPoint(prefab.transform, "Front", PullAblePlateDirection.Front);
         AssertPlatePullPoint(prefab.transform, "FrontRight", PullAblePlateDirection.FrontRight);
