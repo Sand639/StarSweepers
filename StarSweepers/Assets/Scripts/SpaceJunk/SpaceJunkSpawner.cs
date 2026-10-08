@@ -121,6 +121,11 @@ public class SpaceJunkSpawner : MonoBehaviour
     [Tooltip("ON にすると、**真下に床があるときだけ**出す（穴の上には出さない）")]
     [SerializeField] private bool requireGroundBelow = false;
 
+    [Tooltip("ON にすると、**土台など一段高い床の上にも**出す（真下の床から Drop Height の高さに出す。STAGE_01 の土台）。" +
+             "高い床は、Drop Height より低くしておくこと。" +
+             "OFF なら、このオブジェクトと同じ高さの床だけに出す（高い床の上は「何かある」とみなして出さない）")]
+    [SerializeField] private bool spawnOnRaisedFloor = false;
+
     /// <summary>ある種類の素材だけを出す範囲。</summary>
     [System.Serializable]
     public class KindZone
@@ -469,8 +474,16 @@ public class SpaceJunkSpawner : MonoBehaviour
         {
             Vector3 candidate = bagZone != null ? PointInZone(bagZone) : RandomPointInArea(zones);
 
+            // 一段高い床の上なら、その床の高さを基準にする（Spawn On Raised Floor が ON のときだけ）
+            float floorY = transform.position.y;
+            if (spawnOnRaisedFloor && TryFindRaisedFloor(candidate, out float raisedY) && raisedY > floorY)
+            {
+                floorY = raisedY;
+                candidate.y = Mathf.Max(candidate.y, floorY + dropHeight);
+            }
+
             // 落とす高さから床の少し上まで、縦に長く調べる（プレイヤーや障害物の真上を避ける）
-            Vector3 bottom = new Vector3(candidate.x, transform.position.y + clearRadius + 0.1f, candidate.z);
+            Vector3 bottom = new Vector3(candidate.x, floorY + clearRadius + 0.1f, candidate.z);
             bool blocked = Physics.CheckCapsule(bottom, candidate, clearRadius, ~0, QueryTriggerInteraction.Ignore);
 
             if (!blocked && HasGroundBelow(candidate))
@@ -547,6 +560,33 @@ public class SpaceJunkSpawner : MonoBehaviour
         Vector3 point = zone.TransformPoint(local);
         point.y = transform.position.y + dropHeight;
         return point;
+    }
+
+    /// <summary>
+    /// 真下にある床（地形）の上面の高さ。プレイヤーや、物理で動く物（物資・爆弾）は床とみなさず、通り抜けて下を見る。
+    /// いくつも当たったときは、一番高いもの。
+    /// </summary>
+    private static bool TryFindRaisedFloor(Vector3 candidate, out float floorY)
+    {
+        floorY = float.MinValue;
+        bool found = false;
+
+        foreach (RaycastHit hit in Physics.RaycastAll(candidate, Vector3.down, 50f, ~0, QueryTriggerInteraction.Ignore))
+        {
+            if (hit.collider is CharacterController ||
+                (hit.rigidbody != null && !hit.rigidbody.isKinematic))
+            {
+                continue;
+            }
+
+            if (hit.point.y > floorY)
+            {
+                floorY = hit.point.y;
+                found = true;
+            }
+        }
+
+        return found;
     }
 
     /// <summary>

@@ -113,6 +113,7 @@
 | 2026/9/10 | Claude Code | **既存の検証シーンを壊さずに、盛り込んだシーンも欲しいと言われたとき** | **生成ツールを2つに分け、シーンのパスも分ける。** そのとき**部品の作り方は1つのファイルにまとめて共有する**（`FishingSceneBuilder.cs` が実例。床・プレイヤー・カメラ・UI・結線を `static` メソッドで持ち、ツール側は「どれをどう並べるか」だけ書く）。丸ごとコピーして2本にすると、次の修正で必ず片方だけ直して食い違う。**なお、共通のランタイムスクリプトを書き換えている場合、古いシーンも新しい挙動で動く**（シーンを分けても「昔の挙動」は戻らない）ので、そこは先に伝えること |
 | 2026/9/9 | Claude Code | **既存プレイヤー（PlayerRig）と操作方式が合わない新機能を作るとき** | 釣りプロトタイプは「マウス方向を向く見下ろし操作」で、`PlayerRig` の一人称/三人称マウス視点（`PlayerController` / `PlayerViewSwitcher`）とは噛み合わない。**プレハブ本体は触らず、生成スクリプトの中で `InstantiatePrefab` → `UnpackPrefabInstance(Completely)` → 合わない `MonoBehaviour` を `enabled = false`、内蔵カメラを `DestroyImmediate`** して土台だけ流用した。「既存Prefabを使う」指示は満たしつつ、`PlayerRig.prefab` の差分は出ない。方向性が固まったら視点モードを増やすか専用の体を作るかは `質問リスト.md` に登録した |
 | 2026/9/24 | Claude Code | **エフェクトなど「見た目」を AI 自身で確かめたいとき** | **`-nographics` を付けずに** `-batchmode` で起動すると GPU が使えるので、`Camera.Render()` → `RenderTexture` → `ReadPixels` → `EncodeToPNG` で**静止画を書き出し、AI が画像として見られる**。編集モードでは `Awake` / `Update` が呼ばれないので、**リフレクションで直接呼んでから撮る**。撮影用の一時スクリプトは `Editor` フォルダに置き、終わったら `.cs` と `.meta` を両方消す（コミットしない）。**ブルームなどの後処理は、この撮り方では効いていない可能性がある**ので、光り方の最終確認は人に頼む。`HelixLightning`（電撃）の色と形は、この方法で確認しながら直した |
+| 2026/10/8 | Claude Code | **シーンのファイル（.unity）を直接書き換えたあと、壊れていないか確かめたいとき**（STAGE_01 の作り直し） | **確かめたい関係を EditMode のテストに書き**（`Stage01LayoutTests.cs`。シーンを `OpenSceneMode.Additive` で開いて、終わったら閉じる）、Unity を閉じた状態で Git Bash から `Unity.exe -batchmode -projectPath ... -runTests -testPlatform EditMode -testFilter "テストのクラス名" -testResults 結果.xml -logFile ログ` を実行する（`-runTests` のときは `-quit` を付けない）。結果の xml の `result="Passed"` で判断できる。プレハブの置き場所を書き足すときの ID は「置いた物の ID ^ プレハブの中の ID」（XOR）にすると、既存のシーン（STAGE_02 など）と同じ決め方になる。テストは、**調整で変わる数値ではなく「上下する床の上面が土台と同じ高さ」のような関係**を確かめるようにすると、レベルデザインで値を変えても壊れない |
 
 ---
 
@@ -210,3 +211,4 @@
 | 2026/10/7 | Claude Code | steam_appid.txt がビルドに入らず Steam につながらなかった失敗を記録 |
 | 2026/10/7 | Claude Code | 「次のAIへの伝言」の済んだ3件を消し、ドキュメント点検（第3回）の置き手紙に入れ替えた |
 | 2026/10/7 | Claude Code | 「作業サイクルへの提案」に、状態の更新漏れと改名の追いかけ方を追加 |
+| 2026/10/8 | Claude Code | 「うまくいったやり方」に、シーンを直接書き換えたあとバッチモードのテストで確かめるやり方を追加 |
