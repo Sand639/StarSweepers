@@ -37,7 +37,7 @@ using UnityEngine;
 public static class SpaceJunkBuilder
 {
     /// <summary>
-    /// **起動したときに最初に開くシーン。** ロビーであること。
+    /// ロビーのシーン（タイトルの次に入れる。起動したときに最初に開くのはタイトル）。
     /// このあとに、**マップの一覧（SpaceJunkMapList）に入っているマップ**が全部足される。
     /// </summary>
     private static string LobbyScenePath => SpaceJunkSetup.LobbyScenePath;
@@ -94,8 +94,17 @@ public static class SpaceJunkBuilder
             return;
         }
 
-        // **ロビーを先頭に置く。** 先頭のシーンが起動時に開く
-        List<string> scenes = new List<string> { LobbyScenePath };
+        // **タイトルを先頭に置く。** 先頭のシーンが起動時に開く（2026/10/6 からタイトル → ロビー → マップの順）
+        string titleScenePath = SpaceJunkSetup.TitleScenePath;
+        if (string.IsNullOrEmpty(titleScenePath))
+        {
+            Debug.LogError(
+                $"タイトルのシーン（{SpaceJunkSetup.TitleSceneName}.unity）が見つかりません。\n" +
+                "**ゲームはタイトルから始まるので、無いとビルドを作れません。**");
+            return;
+        }
+
+        List<string> scenes = new List<string> { titleScenePath, LobbyScenePath };
         scenes.AddRange(maps);
 
         BuildPlayerOptions options = new BuildPlayerOptions
@@ -117,6 +126,12 @@ public static class SpaceJunkBuilder
         }
 
         CreateLaunchScripts(OutputFolder);
+
+        // Steam のフレンドの機能用（まだ App ID が無いので、テスト用の 480）。exe の隣に無いと Steam につながらない
+        if (File.Exists("steam_appid.txt"))
+        {
+            File.Copy("steam_appid.txt", Path.Combine(OutputFolder, "steam_appid.txt"), true);
+        }
 
         string mapList = string.Join("\n　　", maps);
         string full = Path.GetFullPath(OutputFolder);

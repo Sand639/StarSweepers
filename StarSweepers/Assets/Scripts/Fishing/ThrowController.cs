@@ -274,7 +274,7 @@ public class ThrowController : MonoBehaviour
     private bool targetKinematicWas;
     private AnchorGimmick anchorTarget;
     private CharacterController pullingPlayer;
-    private float anchorPullTimer;
+    private FishingPlayerController pullingPlayerMovement;
 
     // ---- 宇宙ごみ式の途中経過 ----
 
@@ -378,6 +378,7 @@ public class ThrowController : MonoBehaviour
     private void OnDisable()
     {
         playerMap?.Disable();
+        SetAnchorGravitySuppressed(false);
     }
 
     /// <summary>HookController から呼ばれる。引き寄せとスキルチェックを開始する。</summary>
@@ -399,7 +400,8 @@ public class ThrowController : MonoBehaviour
         {
             anchorTarget.BeginPull(hook != null ? hook.Charge : 0f);
             pullingPlayer = hook != null ? hook.PlayerRoot.GetComponent<CharacterController>() : null;
-            anchorPullTimer = 0f;
+            pullingPlayerMovement = hook != null ? hook.PlayerRoot.GetComponent<FishingPlayerController>() : null;
+            SetAnchorGravitySuppressed(true);
             if (hook != null && hook.UI != null)
             {
                 hook.UI.ShowTiming(false);
@@ -515,11 +517,8 @@ public class ThrowController : MonoBehaviour
 
         if (anchorTarget != null)
         {
-            anchorPullTimer += Time.deltaTime;
-
-            // アンカーは「1回だけ引っ張る」ギミック。
-            // 引っ張る時間が終わったら、まだ距離があっても釣り竿を手元へ戻す。
-            if (anchorTarget.PullPlayer(pullingPlayer) || anchorPullTimer >= anchorTarget.PullSeconds)
+            // プレイヤーがアンカー位置まで着くまで、フックと糸をつないだままにする。
+            if (anchorTarget.PullPlayer(pullingPlayer))
             {
                 EndPull();
             }
@@ -1456,10 +1455,11 @@ public class ThrowController : MonoBehaviour
             return;
         }
 
+        SetAnchorGravitySuppressed(false);
         target = null;
         anchorTarget = null;
         pullingPlayer = null;
-        anchorPullTimer = 0f;
+        pullingPlayerMovement = null;
         active = false;
 
         if (hook != null && hook.UI != null)
@@ -1496,9 +1496,12 @@ public class ThrowController : MonoBehaviour
         // 物理には触らずにやめるだけでよい（2026/9/24・アンカーとの合流時に追加）
         if (anchorTarget != null)
         {
+            SetAnchorGravitySuppressed(false);
             anchorTarget = null;
             target = null;
             active = false;
+            pullingPlayer = null;
+            pullingPlayerMovement = null;
 
             if (hook != null && hook.UI != null)
             {
@@ -1552,15 +1555,29 @@ public class ThrowController : MonoBehaviour
     /// <summary>引き寄せ中に物資が消えた場合。物理には触らず、フックだけ戻す。</summary>
     private void AbandonPull()
     {
+        // **オンラインでは、ホストにも「離した」と知らせる**（2026/10/6）。
+        // このPCだけが「消えた」と判断した場合（爆発の巻き込みを、ホストと少し違う位置で判断した など）、
+        // ホストではまだ消えておらず「この人が引っ掛け中」のまま残る。そうなると、その物は**誰もつかめなくなる。**
+        // ホストで本当に消えていれば、この知らせは届かないか、引っ掛け中でないので何も起きない
+        if (target != null && anchorTarget == null)
+        {
+            FishingNetSupply netSupply = GetNetSupply();
+            if (netSupply != null && netSupply.IsSpawned)
+            {
+                netSupply.RequestRelease(Vector3.zero, 0f, hook.LocalPlayerIndex);
+            }
+        }
+
         if (pullableTarget != null)
         {
             pullableTarget.SetHooked(false);
             pullableTarget = null;
         }
+        SetAnchorGravitySuppressed(false);
         target = null;
         anchorTarget = null;
         pullingPlayer = null;
-        anchorPullTimer = 0f;
+        pullingPlayerMovement = null;
         active = false;
         distanceBasedPullActive = false;
 
@@ -1597,11 +1614,12 @@ public class ThrowController : MonoBehaviour
 
     private void EndPull()
     {
+        SetAnchorGravitySuppressed(false);
         target.SetHooked(false);
         target = null;
         anchorTarget = null;
         pullingPlayer = null;
-        anchorPullTimer = 0f;
+        pullingPlayerMovement = null;
         active = false;
         distanceBasedPullActive = false;
         heavy = false;
@@ -1613,6 +1631,14 @@ public class ThrowController : MonoBehaviour
         }
 
         hook.NotifyThrowFinished();
+    }
+
+    private void SetAnchorGravitySuppressed(bool suppressed)
+    {
+        if (pullingPlayerMovement != null)
+        {
+            pullingPlayerMovement.SetAnchorPulling(suppressed);
+        }
     }
 
     /// <summary>引き寄せのために止めていた物理を元に戻す。</summary>

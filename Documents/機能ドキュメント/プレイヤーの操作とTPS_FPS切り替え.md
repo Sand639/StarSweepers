@@ -101,7 +101,7 @@ PlayerRig                 ← CharacterController / PlayerController / PlayerVie
 
 ### PlayerController（動きと視点）
 
-| 項目名 | 意味 | 初期値 |
+| 項目名 | 意味 | 実装したときの初期値（目安。調整で変わる） |
 | --- | --- | --- |
 | Walk Speed | 歩く速さ（1秒あたりのメートル） | 4 |
 | Sprint Speed | Shiftを押している間の速さ | 7 |
@@ -113,7 +113,7 @@ PlayerRig                 ← CharacterController / PlayerController / PlayerVie
 
 ### PlayerViewSwitcher（カメラの切り替え）
 
-| 項目名 | 意味 | 初期値 |
+| 項目名 | 意味 | 実装したときの初期値（目安。調整で変わる） |
 | --- | --- | --- |
 | Start Mode | 再生したときにどちらで始めるか | Third Person |
 | Switch Key | 切り替えに使うキー | V |
@@ -189,3 +189,4 @@ PlayerRig                 ← CharacterController / PlayerController / PlayerVie
 | 2026/9/7 | Claude Code | **Escape がポーズ画面のものになった**（ポーズ画面を置いたシーンのみ）。あわせて、**設定画面のマウス感度**が視点の速さに掛かるようになった。詳細は `ポーズ画面.md` |
 | 2026/9/8 | Claude Code | **Escape はポーズ画面だけのものになった。** ポーズ画面がどのシーンでも自動で用意されるようになったため、こちらでは Escape を見ていない（クリックでカーソルを固定するのは今までどおり）。詳細は `ポーズ画面.md` |
 | 2026/9/20 | Claude Code | `Tools > StarSweepers` のメニュー整理にあわせて、メニューの場所の書き方を直した（`アーカイブ > ゲーム名 > …`）。**ツールの中身と動きは変わっていない** |
+| 2026/10/7 | Claude Code | 設定の表の見出しを「実装したときの初期値（目安。調整で変わる）」にした（大槻さんの方針：インスペクターの値はレベルデザインで変わるので、細かい数値は目安として扱う） |

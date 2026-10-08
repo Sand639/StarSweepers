@@ -1,3 +1,4 @@
+using System.Threading.Tasks;
 using Unity.Netcode;
 using UnityEngine;
 using UnityEngine.SceneManagement;
@@ -17,21 +18,52 @@ using UnityEngine.SceneManagement;
 /// </summary>
 public static class SpaceJunkLeaveMatch
 {
-    /// <summary>ロビーのシーンの名前（試合の係が見つからないときに使う）。</summary>
-    private const string DefaultLobbySceneName = "SpaceJunkLobby";
+    /// <summary>自分だけ抜けたときに戻るタイトルのシーン（2026/10/6）。</summary>
+    private const string TitleSceneName = "TitleScene";
 
     [RuntimeInitializeOnLoadMethod(RuntimeInitializeLoadType.BeforeSceneLoad)]
     private static void Register()
     {
         PauseMenu.CanReturnToLobby = () => SpaceJunkRound.Current != null;
         PauseMenu.ReturnToLobby = ReturnToLobby;
+
+        // つながっていて、タイトル以外（ロビー・試合）にいる間は「タイトルにもどる」を出す（2026/10/6）
+        PauseMenu.CanReturnToTitle = () =>
+        {
+            NetworkManager manager = NetworkManager.Singleton;
+            return manager != null && manager.IsListening && SceneManager.GetActiveScene().name != TitleSceneName;
+        };
+        PauseMenu.ReturnToTitle = ReturnToTitle;
+    }
+
+    /// <summary>
+    /// **タイトルにもどる。**（ポーズ画面の「タイトルにもどる」。2026/10/6・大槻さん）
+    ///
+    /// ・参加者：自分だけ通信を切って部屋から抜け、タイトルへ。ほかの人は続く
+    /// ・ホスト：通信を止めて（部屋も閉じる）タイトルへ。**参加者はホストとの通信が切れるので、
+    ///   見張り役（<see cref="SpaceJunkDisconnectWatcher"/>）が全員をタイトルへ戻す**
+    /// </summary>
+    public static async void ReturnToTitle()
+    {
+        NetworkManager manager = NetworkManager.Singleton;
+        if (manager != null && manager.IsListening)
+        {
+            Debug.Log(manager.IsServer
+                ? "[JUNK] ホストがタイトルにもどります。参加者も全員タイトルに戻ります。"
+                : "[JUNK] 部屋から抜けて、タイトルにもどります。");
+
+            // 自分で抜けるので、「通信が切れた」の見張り役には反応させない
+            SpaceJunkDisconnectWatcher.LeavingOnPurpose = true;
+            await Disconnect(manager);
+        }
+
+        SceneManager.LoadScene(TitleSceneName, LoadSceneMode.Single);
     }
 
     /// <summary>試合から抜けて、ロビーへ戻る。</summary>
-    public static void ReturnToLobby()
+    public static async void ReturnToLobby()
     {
         SpaceJunkSession session = SpaceJunkSession.Current;
-        string lobby = session != null ? session.LobbySceneName : DefaultLobbySceneName;
 
         NetworkManager manager = NetworkManager.Singleton;
         if (manager != null && manager.IsListening)
@@ -48,25 +80,34 @@ public static class SpaceJunkLeaveMatch
                 Debug.LogWarning("[JUNK] 全員でロビーへ戻れませんでした。通信を切って、このPCだけロビーへ戻ります。");
             }
 
-            Disconnect(manager);
+            // 自分で抜けるので、「通信が切れた」の見張り役には反応させない
+            SpaceJunkDisconnectWatcher.LeavingOnPurpose = true;
+            await Disconnect(manager);
         }
 
-        Debug.Log($"[JUNK] 試合から抜けて、ロビー（{lobby}）へ戻ります。");
-        SceneManager.LoadScene(lobby, LoadSceneMode.Single);
+        // 自分だけ抜けたので、タイトルへ戻る（2026/10/6 まではロビーへ戻っていた。サーバーを作る・探すはタイトルで行うため）
+        Debug.Log($"[JUNK] 試合から抜けて、タイトル（{TitleSceneName}）へ戻ります。");
+        SceneManager.LoadScene(TitleSceneName, LoadSceneMode.Single);
     }
 
     /// <summary>
-    /// 通信を切る。インターネット（合言葉）でつないでいたら、部屋からも抜ける。
-    /// 部屋から抜けるのには少し時間がかかるので、**通信だけはすぐ止めて**からシーンを移る。
+    /// 通信を切る。インターネット（合言葉）でつないでいたら、**部屋から抜け終わるのを待ってから**通信を止める。
+    ///
+    /// 2026/10/6 までは、抜け始めた直後に通信を止めていた。そのせいで抜ける処理が失敗し、
+    /// 中継サーバーに「まだ参加している」記録が残って、**もう一度同じ合言葉で入れなくなっていた**（SessionConflict）。
     /// </summary>
-    private static void Disconnect(NetworkManager manager)
+    private static async Task Disconnect(NetworkManager manager)
     {
         InternetConnection internet = manager.GetComponent<InternetConnection>();
         if (internet != null && internet.State == InternetConnection.Phase.Connected)
         {
-            internet.LeaveGame();
+            // 抜け終わったら、LeaveGameAsync が通信も止める
+            await internet.LeaveGameAsync();
         }
 
-        manager.Shutdown();
+        if (manager != null && manager.IsListening)
+        {
+            manager.Shutdown();
+        }
     }
 }

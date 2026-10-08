@@ -19,7 +19,7 @@ public enum SpaceJunkMatchState
 }
 
 /// <summary>
-/// 参加者1人ぶんの席。**誰が・どのチームか**だけを持つ。
+/// 参加者1人ぶんの席。**誰が・どのチームか・名前**を持つ。
 /// <see cref="NetworkList{T}"/> に入れるため、構造体にして比較できるようにしてある。
 /// </summary>
 public struct SpaceJunkPlayerSlot : INetworkSerializable, IEquatable<SpaceJunkPlayerSlot>
@@ -30,15 +30,22 @@ public struct SpaceJunkPlayerSlot : INetworkSerializable, IEquatable<SpaceJunkPl
     /// <summary>所属チーム（0から）。</summary>
     public int Team;
 
+    /// <summary>
+    /// **その人がタイトル画面で入れた名前**（2026/10/6）。空なら「プレイヤー1」などを出す。
+    /// 日本語で16文字まで入る大きさ（UTF-8 で 61 バイトまで）。
+    /// </summary>
+    public FixedString64Bytes Name;
+
     public void NetworkSerialize<T>(BufferSerializer<T> serializer) where T : IReaderWriter
     {
         serializer.SerializeValue(ref ClientId);
         serializer.SerializeValue(ref Team);
+        serializer.SerializeValue(ref Name);
     }
 
     public bool Equals(SpaceJunkPlayerSlot other)
     {
-        return ClientId == other.ClientId && Team == other.Team;
+        return ClientId == other.ClientId && Team == other.Team && Name.Equals(other.Name);
     }
 }
 
@@ -135,8 +142,14 @@ public class SpaceJunkSession : NetworkBehaviour
     /// <summary>誰がどのチームか。</summary>
     private readonly NetworkList<SpaceJunkPlayerSlot> slots = new NetworkList<SpaceJunkPlayerSlot>();
 
-    /// <summary>ホストが選んだ、この試合で使うマップ。</summary>
+    /// <summary>ホストが選んだ、この試合で使うマップ（「ランダム」のときの候補。ロビーのチェック）。</summary>
     private readonly NetworkList<FixedString64Bytes> selectedMaps = new NetworkList<FixedString64Bytes>();
+
+    /// <summary>
+    /// **ホストが「このマップで遊ぶ」と1つ選んだマップ。** 空なら「ランダム」（チェックの付いたマップから選ぶ）。
+    /// 1つ選んだときは、**全部のラウンドをそのマップで遊ぶ**（2026/10/6・大槻さん。めっちゃカメレオンのマップ選び）。
+    /// </summary>
+    private readonly NetworkVariable<FixedString64Bytes> fixedMap = new NetworkVariable<FixedString64Bytes>(default);
 
     /// <summary>チームごとのラウンドの勝ち数。長さは常に <see cref="SpaceJunkTeams.MaxTeams"/>。</summary>
     private readonly NetworkList<int> roundWins = new NetworkList<int>();
@@ -277,6 +290,18 @@ public class SpaceJunkSession : NetworkBehaviour
     /// <summary>ホストが選んでいるマップの数。**中身が要らないときはこちらを使う**（入れ物を作らない）。</summary>
     public int SelectedMapCount => selectedMaps.Count;
 
+    /// <summary>「このマップで遊ぶ」と選ばれたマップのシーン名。空なら「ランダム」。</summary>
+    public string FixedMap => fixedMap.Value.ToString();
+
+    /// <summary>マップを「ランダム」で選ぶか（1つに決めていないか）。</summary>
+    public bool IsRandomMap => fixedMap.Value.Length == 0;
+
+    /// <summary>
+    /// 試合を始められるマップの選び方になっているか。
+    /// 1つに決めている、または「ランダム」でチェックの付いたマップが1つ以上ある。
+    /// </summary>
+    public bool HasPlayableMapChoice => !IsRandomMap || selectedMaps.Count > 0;
+
     /// <summary>そのマップが選ばれているか。</summary>
     public bool IsMapSelected(string sceneName)
     {
@@ -301,6 +326,12 @@ public class SpaceJunkSession : NetworkBehaviour
     {
         Current = this;
 
+        // 参加者は、自分の名前をホストへ送る（ホストは席を作るときに自分の設定から入れる）
+        if (!IsServer)
+        {
+            SubmitMyName();
+        }
+
         if (IsServer)
         {
             // ラウンドの勝ち数の枠を、チームの最大数ぶん用意する
@@ -319,7 +350,56 @@ public class SpaceJunkSession : NetworkBehaviour
 
             NetworkManager.OnClientConnectedCallback += OnClientConnected;
             NetworkManager.OnClientDisconnectCallback += OnClientDisconnected;
+
+            // 前回ホストをしたときのマップの選び方（チェックと「このマップで遊ぶ」）を読み込む
+            LoadSavedMapChoice();
         }
+    }
+
+    // ------------------------------------------------------------
+    // マップの選び方を覚えておく（2026/10/6・大槻さん「チェックしたかは前回の設定を読み込んでほしい」）
+    // ------------------------------------------------------------
+
+    /// <summary>チェックしたマップ（シーン名を改行でつないだもの）を保存する鍵。</summary>
+    private const string SavedMapsKey = "StarSweepers.SpaceJunk.SelectedMaps";
+
+    /// <summary>「このマップで遊ぶ」で選んだマップ（空ならランダム）を保存する鍵。</summary>
+    private const string SavedFixedMapKey = "StarSweepers.SpaceJunk.FixedMap";
+
+    /// <summary>
+    /// 前回のマップの選び方を読み込む（ホストだけ）。**ビルドの一覧に無くなったマップは読み込まない**
+    /// （名前を変えた・消したマップがチェックの数に入ってしまわないように）。
+    /// </summary>
+    private void LoadSavedMapChoice()
+    {
+        selectedMaps.Clear();
+
+        string saved = PlayerPrefs.GetString(SavedMapsKey, string.Empty);
+        foreach (string name in saved.Split('\n'))
+        {
+            if (!string.IsNullOrEmpty(name) && SpaceJunkLobbyUI.IsSceneInBuildList(name) && !IsMapSelected(name))
+            {
+                selectedMaps.Add(new FixedString64Bytes(name));
+            }
+        }
+
+        string fixedName = PlayerPrefs.GetString(SavedFixedMapKey, string.Empty);
+        fixedMap.Value = SpaceJunkLobbyUI.IsSceneInBuildList(fixedName)
+            ? new FixedString64Bytes(fixedName)
+            : default;
+
+        if (selectedMaps.Count > 0 || !IsRandomMap)
+        {
+            Debug.Log($"[JUNK] 前回のマップの選び方を読み込みました（チェック {selectedMaps.Count} 個／{(IsRandomMap ? "ランダム" : FixedMap)}）。");
+        }
+    }
+
+    /// <summary>いまのマップの選び方を保存する（ホストだけ）。</summary>
+    private void SaveMapChoice()
+    {
+        PlayerPrefs.SetString(SavedMapsKey, string.Join("\n", SelectedMaps));
+        PlayerPrefs.SetString(SavedFixedMapKey, FixedMap);
+        PlayerPrefs.Save();
     }
 
     public override void OnNetworkDespawn()
@@ -339,6 +419,257 @@ public class SpaceJunkSession : NetworkBehaviour
     private void OnClientConnected(ulong clientId)
     {
         AddSlot(clientId);
+    }
+
+    // ------------------------------------------------------------
+    // 席の答え合わせ（ホストだけ。2026/10/6）
+    // ------------------------------------------------------------
+
+    /// <summary>席の答え合わせの間隔（秒）。</summary>
+    private const float SlotCheckInterval = 1f;
+
+    private float slotCheckTimer;
+
+    /// <summary>「席とつながっている人が食い違う」が何回続いたか。</summary>
+    private int slotMismatchCount;
+
+    // ------------------------------------------------------------
+    // 名前（2026/10/6）
+    // ------------------------------------------------------------
+
+    /// <summary>ホストが受け取った名前（席ができる前に届いた分も、ここに控えておく）。</summary>
+    private readonly Dictionary<ulong, string> serverNames = new Dictionary<ulong, string>();
+
+    /// <summary>自分の名前が席に入っているかを確かめる間隔（秒）。参加者のPCだけ。</summary>
+    private const float NameCheckInterval = 2f;
+
+    private float nameCheckTimer;
+
+    /// <summary>
+    /// **その人の、画面に出す名前。** タイトル画面で入れた名前があればそれ、無ければ「プレイヤー1」など。
+    /// ロビーの一覧・頭の上の名前のタグで使う。
+    /// </summary>
+    public string NameOf(ulong clientId)
+    {
+        foreach (SpaceJunkPlayerSlot slot in slots)
+        {
+            if (slot.ClientId == clientId && slot.Name.Length > 0)
+            {
+                return slot.Name.ToString();
+            }
+        }
+
+        foreach (FishingNetPlayer player in FishingNetPlayer.All)
+        {
+            if (player != null && player.OwnerClientId == clientId)
+            {
+                return player.DisplayName;
+            }
+        }
+
+        return $"参加者 {clientId}";
+    }
+
+    /// <summary>ホストが知っている、その人の名前（席を作るときに入れる）。</summary>
+    private FixedString64Bytes ServerNameFor(ulong clientId)
+    {
+        FixedString64Bytes result = default;
+
+        if (clientId == NetworkManager.LocalClientId)
+        {
+            // ホスト自身はRPCを待たずに、自分の設定から入れる
+            result.CopyFromTruncated(CleanName(GameSettings.PlayerName));
+        }
+        else if (serverNames.TryGetValue(clientId, out string name))
+        {
+            result.CopyFromTruncated(name);
+        }
+
+        return result;
+    }
+
+    /// <summary>名前の前後の空白を取り、長すぎれば切る。</summary>
+    private static string CleanName(string name)
+    {
+        string trimmed = (name ?? string.Empty).Trim();
+        return trimmed.Length > GameSettings.PlayerNameMaxLength
+            ? trimmed.Substring(0, GameSettings.PlayerNameMaxLength)
+            : trimmed;
+    }
+
+    /// <summary>自分の名前をホストへ送る（参加者のPC）。</summary>
+    private void SubmitMyName()
+    {
+        FixedString64Bytes name = default;
+        name.CopyFromTruncated(CleanName(GameSettings.PlayerName));
+        SubmitNameServerRpc(name);
+    }
+
+    [ServerRpc(RequireOwnership = false)]
+    private void SubmitNameServerRpc(FixedString64Bytes name, ServerRpcParams rpcParams = default)
+    {
+        ulong sender = rpcParams.Receive.SenderClientId;
+        string clean = CleanName(name.ToString());
+        serverNames[sender] = clean;
+
+        for (int i = 0; i < slots.Count; i++)
+        {
+            if (slots[i].ClientId != sender)
+            {
+                continue;
+            }
+
+            SpaceJunkPlayerSlot slot = slots[i];
+            slot.Name = default;
+            slot.Name.CopyFromTruncated(clean);
+            slots[i] = slot;
+        }
+    }
+
+    /// <summary>
+    /// **参加者のPC：自分の席の名前が、自分の設定と合っているか確かめる。** 合っていなければ送り直す。
+    /// 名前を送ったのが席ができる前で、ホストが取りこぼした場合などに備える（通信の答え合わせと同じ考え方）。
+    /// </summary>
+    private void ClientCheckMyName()
+    {
+        nameCheckTimer += Time.unscaledDeltaTime;
+        if (nameCheckTimer < NameCheckInterval)
+        {
+            return;
+        }
+        nameCheckTimer = 0f;
+
+        // 送るときと同じく切り詰めてから比べる（絵文字などで長さの上限を超えた名前を、送り続けないように）
+        FixedString64Bytes mine = default;
+        mine.CopyFromTruncated(CleanName(GameSettings.PlayerName));
+
+        foreach (SpaceJunkPlayerSlot slot in slots)
+        {
+            if (slot.ClientId != NetworkManager.LocalClientId)
+            {
+                continue;
+            }
+
+            if (!slot.Name.Equals(mine))
+            {
+                Debug.LogWarning("[NET][答え合わせ] 自分の名前が席に入っていなかったので、送り直しました。");
+                SubmitMyName();
+            }
+            return;
+        }
+    }
+
+    private void Update()
+    {
+        // 参加者のPC：自分の名前が席に入っているか確かめる
+        if (IsSpawned && !IsServer && IsClient && NetworkManager != null)
+        {
+            ClientCheckMyName();
+            return;
+        }
+
+        if (!IsSpawned || !IsServer || NetworkManager == null)
+        {
+            return;
+        }
+
+        slotCheckTimer += Time.unscaledDeltaTime;
+        if (slotCheckTimer < SlotCheckInterval)
+        {
+            return;
+        }
+        slotCheckTimer = 0f;
+
+        ServerCheckSlots();
+    }
+
+    /// <summary>
+    /// **席の一覧と、実際につながっている人の一覧を比べて合わせる。**
+    /// 入ってきた／抜けたの知らせ（OnClientConnected / OnClientDisconnected）を取りこぼしても、
+    /// 「抜けた人の席が残る（そのチームが誰もいないのに数えられる）」「席の無い人がいる（チームの色が付かない）」
+    /// のまま残らないようにする。入ってきた直後は一瞬食い違うので、続けて食い違ったときだけ直す。
+    /// </summary>
+    private void ServerCheckSlots()
+    {
+        IReadOnlyList<ulong> connected = NetworkManager.ConnectedClientsIds;
+
+        bool mismatch = false;
+        foreach (SpaceJunkPlayerSlot slot in slots)
+        {
+            if (!ContainsId(connected, slot.ClientId))
+            {
+                mismatch = true;
+                break;
+            }
+        }
+
+        if (!mismatch)
+        {
+            foreach (ulong clientId in connected)
+            {
+                if (TeamSlotIndex(clientId) < 0)
+                {
+                    mismatch = true;
+                    break;
+                }
+            }
+        }
+
+        if (!mismatch)
+        {
+            slotMismatchCount = 0;
+            return;
+        }
+
+        slotMismatchCount++;
+        if (slotMismatchCount < 2)
+        {
+            return;
+        }
+        slotMismatchCount = 0;
+
+        for (int i = slots.Count - 1; i >= 0; i--)
+        {
+            if (!ContainsId(connected, slots[i].ClientId))
+            {
+                Debug.LogWarning($"[NET][答え合わせ] もうつながっていない人（{slots[i].ClientId}）の席が残っていたので消しました。");
+                slots.RemoveAt(i);
+            }
+        }
+
+        foreach (ulong clientId in connected)
+        {
+            if (TeamSlotIndex(clientId) < 0)
+            {
+                Debug.LogWarning($"[NET][答え合わせ] 席の無い人（{clientId}）がいたので、席を作りました。");
+                AddSlot(clientId);
+            }
+        }
+    }
+
+    private static bool ContainsId(IReadOnlyList<ulong> ids, ulong id)
+    {
+        for (int i = 0; i < ids.Count; i++)
+        {
+            if (ids[i] == id)
+            {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    /// <summary>その人の席の番号（無ければ -1）。</summary>
+    private int TeamSlotIndex(ulong clientId)
+    {
+        for (int i = 0; i < slots.Count; i++)
+        {
+            if (slots[i].ClientId == clientId)
+            {
+                return i;
+            }
+        }
+        return -1;
     }
 
     private void OnClientDisconnected(ulong clientId)
@@ -372,7 +703,7 @@ public class SpaceJunkSession : NetworkBehaviour
             return;
         }
 
-        slots.Add(new SpaceJunkPlayerSlot { ClientId = clientId, Team = SmallestTeam() });
+        slots.Add(new SpaceJunkPlayerSlot { ClientId = clientId, Team = SmallestTeam(), Name = ServerNameFor(clientId) });
     }
 
     /// <summary>いま一番人数の少ないチームの番号。</summary>
@@ -419,7 +750,7 @@ public class SpaceJunkSession : NetworkBehaviour
         {
             if (!SpaceJunkTeams.IsValidTeam(slots[i].Team, teamCount.Value))
             {
-                slots[i] = new SpaceJunkPlayerSlot { ClientId = slots[i].ClientId, Team = SmallestTeam() };
+                slots[i] = new SpaceJunkPlayerSlot { ClientId = slots[i].ClientId, Team = SmallestTeam(), Name = slots[i].Name };
             }
         }
     }
@@ -436,7 +767,7 @@ public class SpaceJunkSession : NetworkBehaviour
         {
             if (slots[i].ClientId == clientId)
             {
-                slots[i] = new SpaceJunkPlayerSlot { ClientId = clientId, Team = team };
+                slots[i] = new SpaceJunkPlayerSlot { ClientId = clientId, Team = team, Name = slots[i].Name };
                 return;
             }
         }
@@ -454,7 +785,7 @@ public class SpaceJunkSession : NetworkBehaviour
 
         for (int i = 0; i < slots.Count; i++)
         {
-            slots[i] = new SpaceJunkPlayerSlot { ClientId = slots[i].ClientId, Team = assigned[i] };
+            slots[i] = new SpaceJunkPlayerSlot { ClientId = slots[i].ClientId, Team = assigned[i], Name = slots[i].Name };
         }
     }
 
@@ -482,8 +813,12 @@ public class SpaceJunkSession : NetworkBehaviour
         }
     }
 
-    /// <summary>使うマップを、選ぶ／選ばないで切り替える。</summary>
-    public void ServerToggleMap(string sceneName)
+    /// <summary>
+    /// 使うマップを、選ぶ／選ばないで切り替える。
+    /// <paramref name="remember"/> が true なら、次にホストをしたときのために保存する
+    /// （チーム数に合わないマップを自動で外すときは false。チーム数を戻したら、またチェックが付いた状態で始められるように）。
+    /// </summary>
+    public void ServerToggleMap(string sceneName, bool remember = true)
     {
         if (!IsServer || string.IsNullOrEmpty(sceneName))
         {
@@ -491,17 +826,46 @@ public class SpaceJunkSession : NetworkBehaviour
         }
 
         FixedString64Bytes value = new FixedString64Bytes(sceneName);
+        bool removed = false;
 
         for (int i = 0; i < selectedMaps.Count; i++)
         {
             if (selectedMaps[i].Equals(value))
             {
                 selectedMaps.RemoveAt(i);
-                return;
+                removed = true;
+                break;
             }
         }
 
-        selectedMaps.Add(value);
+        if (!removed)
+        {
+            selectedMaps.Add(value);
+        }
+
+        if (remember)
+        {
+            SaveMapChoice();
+        }
+    }
+
+    /// <summary>
+    /// 「このマップで遊ぶ」を決める。**空を渡すと「ランダム」**（チェックの付いたマップから、ラウンドごとに選ぶ）。
+    /// <paramref name="remember"/> は <see cref="ServerToggleMap"/> と同じ。
+    /// </summary>
+    public void ServerSetFixedMap(string sceneName, bool remember = true)
+    {
+        if (!IsServer)
+        {
+            return;
+        }
+
+        fixedMap.Value = new FixedString64Bytes(sceneName ?? string.Empty);
+
+        if (remember)
+        {
+            SaveMapChoice();
+        }
     }
 
     // ------------------------------------------------------------
@@ -519,9 +883,9 @@ public class SpaceJunkSession : NetworkBehaviour
             return;
         }
 
-        if (selectedMaps.Count == 0)
+        if (!HasPlayableMapChoice)
         {
-            Debug.LogError("[JUNK] 使うマップが1つも選ばれていないので、試合を始められません。");
+            Debug.LogError("[JUNK] マップが選ばれていない（ランダムなのにチェックの付いたマップが無い）ので、試合を始められません。");
             return;
         }
 
@@ -636,16 +1000,25 @@ public class SpaceJunkSession : NetworkBehaviour
         List<string> candidates = new List<string>();
         string previous = currentMap.Value.ToString();
 
-        foreach (FixedString64Bytes map in selectedMaps)
+        // **1つに決めてあれば、毎ラウンドそのマップ**（2026/10/6）
+        if (!IsRandomMap)
         {
-            string name = map.ToString();
-
-            if (selectedMaps.Count > 1 && name == previous)
+            candidates.Add(FixedMap);
+        }
+        else
+        {
+            // ランダム：チェックの付いたマップから。2つ以上あれば、直前と同じマップは選ばない
+            foreach (FixedString64Bytes map in selectedMaps)
             {
-                continue;
-            }
+                string name = map.ToString();
 
-            candidates.Add(name);
+                if (selectedMaps.Count > 1 && name == previous)
+                {
+                    continue;
+                }
+
+                candidates.Add(name);
+            }
         }
 
         if (candidates.Count == 0)
