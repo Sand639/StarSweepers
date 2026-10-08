@@ -28,7 +28,7 @@
 | 検証シーン | `Assets/Scenes/Test/GameTimerUITest.unity` |
 | プレハブ | `Assets/Resources/GameTimerUI.prefab` |
 | フォント | `Assets/TextMesh Pro/Resources/Fonts & Materials/LiberationSans SDF.asset`（TextMeshPro Essential Resources） |
-| 画像 | 背景 `Assets/Scenes/Test/shotaro/UI_Timer_Back.png`。ゲージ用リング `GameTimerGauge.png` はセットアップツールが作成 |
+| 画像 | 背景 `Assets/Scenes/Test/shotaro/UI_Timer_Back.png`、白いリングゲージ `Assets/Scenes/Test/shotaro/UI_Timer_Radial.png` |
 
 ## 設定できる値（インスペクターの項目）
 
@@ -43,7 +43,7 @@
 
 ## 仕組み（分かる人向け）
 
-`SetRemainingTime` が残り時間と割合を更新し、段階が変わった瞬間に `Action<int>` と `UnityEvent<int>` の両方を呼ぶ。`UpdateVisuals(float progress)` はゲージ、文字、シェーダー用の `_Progress` と `_TimerColor` をまとめて更新する。ゲージは Radial 360、Top 起点、`fillClockwise = false`。残り部分を起点から反時計回りに描くことで、消える部分が12時から時計回りに進む。完成見本画像 `UI_Timer_IMG.png` は描画に使わず、TextMeshPro の文字と透過リング素材を重ねる。
+`SetRemainingTime` が残り時間と割合を更新し、段階が変わった瞬間に `Action<int>` と `UnityEvent<int>` の両方を呼ぶ。`UpdateVisuals(float progress)` はゲージ、文字、シェーダー用の `_Progress` と `_TimerColor` をまとめて更新する。ゲージは白いリング画像 `UI_Timer_Radial.png` を使い、Radial 360、Top 起点、時計回り、`fillAmount = progress` とする。残り部分が12時から時計回りに描かれるため、時間が減ると空きが時計回りに広がる。完成見本画像 `UI_Timer_IMG.png` は描画に使わず、TextMeshPro の文字とリング素材を重ねる。
 
 ## できていないこと・既知の問題
 
@@ -58,3 +58,4 @@
 | 2026/10/8 | 鈴木 翔太郎（実装補助：Codex） | 2分の仮タイマー、3段階の色、段階変更イベント、検証シーンとプレハブを追加 |
 | 2026/10/8 | 鈴木 翔太郎（実装補助：Codex） | 完成見本画像をゲージから外し、TextMeshProと透過リングへ分離。12時から時計回りに空く向きへ調整 |
 | 2026/10/8 | 鈴木 翔太郎（実装補助：Codex） | TextMeshProのフォント資産を設定し、色見本に近い落ち着いた3色へ調整 |
+| 2026/10/8 | 鈴木 翔太郎（実装補助：Codex） | 提供された `UI_Timer_Radial.png` をゲージに設定し、残り割合の時計回り表示に合わせてFill方向を修正 |

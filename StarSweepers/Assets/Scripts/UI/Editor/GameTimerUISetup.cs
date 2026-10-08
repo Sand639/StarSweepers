@@ -10,7 +10,7 @@ public static class GameTimerUISetup
 {
     private const string AssetFolder = "Assets/Scenes/Test/shotaro";
     private const string BackdropPath = AssetFolder + "/UI_Timer_Back.png";
-    private const string GaugePath = AssetFolder + "/GameTimerGauge.png";
+    private const string GaugePath = AssetFolder + "/UI_Timer_Radial.png";
     private const string PrefabPath = "Assets/Resources/GameTimerUI.prefab";
     private const string FontPath = "Assets/TextMesh Pro/Resources/Fonts & Materials/LiberationSans SDF.asset";
     private const string TmpSettingsPath = "Assets/TextMesh Pro/Resources/TMP Settings.asset";
@@ -36,6 +36,18 @@ public static class GameTimerUISetup
         EditorSceneManager.SaveScene(scene, ScenePath);
         AssetDatabase.SaveAssets();
         Debug.Log($"タイマーUIのプレハブと検証シーンを作成しました: {PrefabPath} / {ScenePath}");
+        if (Application.isBatchMode)
+            EditorApplication.Exit(0);
+    }
+
+    [MenuItem("Tools/StarSweepers/タイマーUIプレハブを更新")]
+    public static void UpdateTimerPrefabOnly()
+    {
+        ConfigureSprite(GaugePath);
+        AssetDatabase.Refresh();
+        UpdatePrefab();
+        AssetDatabase.SaveAssets();
+        Debug.Log($"タイマーUIプレハブを更新しました: {PrefabPath}");
         if (Application.isBatchMode)
             EditorApplication.Exit(0);
     }
@@ -181,7 +193,7 @@ public static class GameTimerUISetup
         gauge.type = Image.Type.Filled;
         gauge.fillMethod = Image.FillMethod.Radial360;
         gauge.fillOrigin = (int)Image.Origin360.Top;
-        gauge.fillClockwise = false;
+        gauge.fillClockwise = true;
         gauge.fillAmount = 1f;
         RectTransform textRect = textTransform.GetComponent<RectTransform>();
         textRect.anchorMin = textRect.anchorMax = new Vector2(0.5f, 0.5f);
