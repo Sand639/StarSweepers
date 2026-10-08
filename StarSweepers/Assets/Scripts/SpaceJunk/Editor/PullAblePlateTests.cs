@@ -1,13 +1,130 @@
 using System.Collections;
+using System.Linq;
 using System.Reflection;
+using Type = System.Type;
 using NUnit.Framework;
+using Unity.Netcode;
+using Unity.Netcode.Components;
 using UnityEditor;
+using UnityEditor.SceneManagement;
 using UnityEngine;
+using UnityEngine.SceneManagement;
 
 public class PullAblePlateTests
 {
     private const string PlatePrefabPath = "Assets/Prefabs/SpaceJunk/Gimmick/PullAblePlate.prefab";
     private const string AnchorPrefabPath = "Assets/Prefabs/SpaceJunk/Gimmick/PullAblePlateAnchor.prefab";
+    private const string Stage05ScenePath = "Assets/Scenes/Prototype/SpaceJunk/Stage/STAGE_05.unity";
+
+    [Test]
+    public void PlateIsANetworkBehaviour()
+    {
+        Assert.That(typeof(NetworkBehaviour).IsAssignableFrom(typeof(PullAblePlate)), Is.True);
+    }
+
+    [Test]
+    public void PlateRequiresNetworkObjectAndRigidbody()
+    {
+        Type[] requiredTypes = typeof(PullAblePlate)
+            .GetCustomAttributes<RequireComponent>()
+            .SelectMany(attribute => new[]
+            {
+                attribute.m_Type0,
+                attribute.m_Type1,
+                attribute.m_Type2
+            })
+            .Where(type => type != null)
+            .ToArray();
+
+        Assert.That(requiredTypes, Does.Contain(typeof(NetworkObject)));
+        Assert.That(requiredTypes, Does.Contain(typeof(Rigidbody)));
+    }
+
+    [TestCase("RequestPullServerRpc")]
+    [TestCase("RequestPullTowardServerRpc")]
+    public void PullRequestRpcAllowsNonOwnerClients(string methodName)
+    {
+        MethodInfo method = typeof(PullAblePlate).GetMethod(
+            methodName,
+            BindingFlags.Instance | BindingFlags.NonPublic);
+
+        Assert.That(method, Is.Not.Null, $"{methodName} が存在する必要がある");
+        ServerRpcAttribute attribute = method.GetCustomAttribute<ServerRpcAttribute>();
+        Assert.That(attribute, Is.Not.Null, $"{methodName} は ServerRpc である必要がある");
+        Assert.That(attribute.RequireOwnership, Is.False,
+            "場外または別 Plate の Player も要求できるため、所有権を要求してはいけない");
+    }
+
+    [Test]
+    public void MovingStateHasANetworkSynchronizedValue()
+    {
+        bool hasSynchronizedMovingState = typeof(PullAblePlate)
+            .GetFields(BindingFlags.Instance | BindingFlags.NonPublic)
+            .Any(field => field.FieldType == typeof(NetworkVariable<bool>));
+
+        Assert.That(hasSynchronizedMovingState, Is.True);
+    }
+
+    [TestCase(false, false, false, true, TestName = "OfflinePassengerMoves")]
+    [TestCase(true, true, true, true, TestName = "OnlineOwnedPassengerMoves")]
+    [TestCase(true, true, false, false, TestName = "OnlineRemotePassengerDoesNotMove")]
+    [TestCase(true, false, false, true, TestName = "OnlinePassengerWithoutSpawnedNetworkObjectMoves")]
+    public void PassengerMovementUsesTheLocalOwnershipPolicy(
+        bool plateIsOnline,
+        bool passengerIsOnline,
+        bool passengerIsOwner,
+        bool expected)
+    {
+        MethodInfo method = typeof(PullAblePlate).GetMethod(
+            "ShouldMovePassengerOnThisPeer",
+            BindingFlags.Public | BindingFlags.Static);
+
+        Assert.That(method, Is.Not.Null);
+        bool actual = (bool)method.Invoke(
+            null,
+            new object[] { plateIsOnline, passengerIsOnline, passengerIsOwner });
+        Assert.That(actual, Is.EqualTo(expected));
+    }
+
+    [Test]
+    public void FirstObservedOnlinePositionProducesNoPassengerDelta()
+    {
+        MethodInfo method = typeof(PullAblePlate).GetMethod(
+            "CalculateObservedDelta",
+            BindingFlags.Public | BindingFlags.Static);
+
+        Assert.That(method, Is.Not.Null);
+        Vector3 actual = (Vector3)method.Invoke(
+            null,
+            new object[]
+            {
+                false,
+                new Vector3(-100f, 0f, -100f),
+                new Vector3(10f, 0f, 20f)
+            });
+
+        Assert.That(actual, Is.EqualTo(Vector3.zero));
+    }
+
+    [Test]
+    public void LaterObservedOnlinePositionProducesItsExactDelta()
+    {
+        MethodInfo method = typeof(PullAblePlate).GetMethod(
+            "CalculateObservedDelta",
+            BindingFlags.Public | BindingFlags.Static);
+
+        Assert.That(method, Is.Not.Null);
+        Vector3 actual = (Vector3)method.Invoke(
+            null,
+            new object[]
+            {
+                true,
+                new Vector3(2f, 3f, 4f),
+                new Vector3(5f, 8f, 10f)
+            });
+
+        Assert.That(actual, Is.EqualTo(new Vector3(3f, 5f, 6f)));
+    }
 
     [TestCase(PullAblePlateDirection.Front, 0f, 1f)]
     [TestCase(PullAblePlateDirection.FrontRight, 1f, 1f)]
@@ -535,6 +652,69 @@ public class PullAblePlateTests
         foreach (string propertyName in activeProperties)
         {
             Assert.That(serializedPlate.FindProperty(propertyName).boolValue, Is.True, propertyName);
+        }
+    }
+
+    [Test]
+    public void PlatePrefabUsesServerAuthoritativePositionSyncOnly()
+    {
+        GameObject prefab = AssetDatabase.LoadAssetAtPath<GameObject>(PlatePrefabPath);
+
+        Assert.That(prefab, Is.Not.Null);
+        Assert.That(prefab.GetComponent<NetworkObject>(), Is.Not.Null);
+        NetworkTransform networkTransform = prefab.GetComponent<NetworkTransform>();
+        Assert.That(networkTransform, Is.Not.Null);
+        Assert.That(networkTransform.AuthorityMode, Is.EqualTo(NetworkTransform.AuthorityModes.Server));
+        Assert.That(networkTransform.SyncPositionX, Is.True);
+        Assert.That(networkTransform.SyncPositionY, Is.True);
+        Assert.That(networkTransform.SyncPositionZ, Is.True);
+        Assert.That(networkTransform.SyncRotAngleX, Is.False);
+        Assert.That(networkTransform.SyncRotAngleY, Is.False);
+        Assert.That(networkTransform.SyncRotAngleZ, Is.False);
+        Assert.That(networkTransform.SyncScaleX, Is.False);
+        Assert.That(networkTransform.SyncScaleY, Is.False);
+        Assert.That(networkTransform.SyncScaleZ, Is.False);
+    }
+
+    [Test]
+    public void Stage05PlateHasUniqueNonZeroSceneNetworkIds()
+    {
+        Scene scene = EditorSceneManager.OpenScene(Stage05ScenePath, OpenSceneMode.Additive);
+        try
+        {
+            Assert.That(scene.isDirty, Is.False,
+                "NetworkObject と配置 ID は STAGE_05 に保存済みである必要がある");
+            PullAblePlate[] plates = scene.GetRootGameObjects()
+                .SelectMany(root => root.GetComponentsInChildren<PullAblePlate>(true))
+                .ToArray();
+            Assert.That(plates, Has.Length.EqualTo(1));
+
+            NetworkObject plateNetworkObject = plates[0].GetComponent<NetworkObject>();
+            Assert.That(plateNetworkObject, Is.Not.Null);
+            SerializedObject serializedPlateNetworkObject = new SerializedObject(plateNetworkObject);
+            uint globalId = (uint)serializedPlateNetworkObject
+                .FindProperty("GlobalObjectIdHash").longValue;
+            uint sourceId = (uint)serializedPlateNetworkObject
+                .FindProperty("InScenePlacedSourceGlobalObjectIdHash").longValue;
+
+            Assert.That(globalId, Is.Not.EqualTo(0u));
+            Assert.That(sourceId, Is.Not.EqualTo(0u));
+
+            NetworkObject[] duplicateIds = scene.GetRootGameObjects()
+                .SelectMany(root => root.GetComponentsInChildren<NetworkObject>(true))
+                .Where(networkObject => networkObject != plateNetworkObject)
+                .Where(networkObject =>
+                {
+                    SerializedProperty property = new SerializedObject(networkObject)
+                        .FindProperty("GlobalObjectIdHash");
+                    return property != null && (uint)property.longValue == globalId;
+                })
+                .ToArray();
+            Assert.That(duplicateIds, Is.Empty);
+        }
+        finally
+        {
+            EditorSceneManager.CloseScene(scene, true);
         }
     }
 
