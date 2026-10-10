@@ -194,10 +194,13 @@ public class TitleScreen : MonoBehaviour
         }
     }
 
+    /// <summary>
+    /// カーソルを画面に閉じ込めない。**Windows のカーソルの見え隠れは <see cref="UiPointer"/> が受け持つ**
+    /// （いつも隠して、代わりにスコープレンズのポインターを出す。2026/10/11）。
+    /// </summary>
     private static void ShowCursor()
     {
         Cursor.lockState = CursorLockMode.None;
-        Cursor.visible = true;
     }
 
     // ------------------------------------------------------------

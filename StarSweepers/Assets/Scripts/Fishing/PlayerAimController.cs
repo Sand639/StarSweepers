@@ -17,7 +17,8 @@ using UnityEngine.InputSystem;
 ///
 /// - 右スティックを倒すと**コントローラーのカーソル**に切り替わる。マウスのカーソルは隠し、
 ///   代わりに**地面へ照準マーク**（<see cref="reticleSprite"/>）を描く
-/// - マウスを動かすかクリックすると、**マウスのカーソル**に戻る（照準マークは消える）
+/// - マウスを動かすかクリックすると、**マウスのカーソル**に戻る
+/// - **照準マークは、マウスのときも地面に出す**（2026/10/11。Windows のカーソルは <see cref="UiPointer"/> が隠している）
 ///
 /// 使い方：プレイヤーに付けて、見下ろしカメラを Aim Camera に入れるだけ。
 /// </summary>
@@ -99,7 +100,7 @@ public class PlayerAimController : MonoBehaviour
         if (pad != null && GameSettings.ControllerOperation == ControllerOperationType.TypeB)
         {
             UpdateTypeBAim(pad);
-            UpdateReticle();
+            UpdateReticle(typeB: true);
             return;
         }
 
@@ -138,7 +139,6 @@ public class PlayerAimController : MonoBehaviour
         }
 
         UsingStickCursor = false;
-        Cursor.visible = true;
     }
 
     private void OnDisable()
@@ -152,7 +152,6 @@ public class PlayerAimController : MonoBehaviour
         if (UsingStickCursor)
         {
             UsingStickCursor = false;
-            Cursor.visible = true;
         }
     }
 
@@ -178,12 +177,12 @@ public class PlayerAimController : MonoBehaviour
              mouse.leftButton.wasPressedThisFrame || mouse.rightButton.wasPressedThisFrame))
         {
             UsingStickCursor = false;
-            Cursor.visible = true;
         }
 
         // ポーズ中はスティックでカーソルを動かさない（ポーズ画面の選択に使うため）
         Gamepad pad = Gamepad.current;
-        if (pad == null || GamePause.BlocksInput)
+        // タイトル・ロビーの設定画面などが開いている間は、右スティックは画面のポインター（UiPointer）に使う
+        if (pad == null || GamePause.BlocksInput || UiPointer.MenuActive)
         {
             return;
         }
@@ -199,7 +198,6 @@ public class PlayerAimController : MonoBehaviour
             // 切り替えた瞬間は、いまの狙点（なければ画面の中央）から動かし始める
             UsingStickCursor = true;
             stickCursor = StartPosition();
-            Cursor.visible = false;
         }
 
         stickCursor += stick * (stickCursorSpeed * Screen.height * Time.unscaledDeltaTime);
@@ -280,12 +278,21 @@ public class PlayerAimController : MonoBehaviour
     }
 
     /// <summary>
-    /// **地面に照準マークを描く。** コントローラーのカーソルのときだけ出す
-    /// （マウスのときは、マウスのカーソルが見えているので要らない）。
+    /// **地面に照準マークを描く。** マウスでもコントローラーでも出す（2026/10/11 から。Windows のカーソルは
+    /// <see cref="UiPointer"/> がいつも隠しているので、マウスのときもこれが狙いの目印になる）。
+    /// タイプB（左スティックで向きを決める）のときは、指す場所が無いので出さない。
+    /// 遊びの照準を出している間は、画面のポインター（<see cref="UiPointer"/>）に知らせて、そちらは隠してもらう。
     /// </summary>
-    private void UpdateReticle()
+    private void UpdateReticle(bool typeB = false)
     {
-        bool show = UsingStickCursor && HasAim && reticleSprite != null && !GamePause.BlocksInput;
+        bool playing = !GamePause.BlocksInput && !UiPointer.MenuActive;
+        bool show = !typeB && playing && HasAim && reticleSprite != null;
+
+        // 照準マークの絵が入っていないプレイヤー（古い検証シーンなど）では知らせない。画面のポインターが代わりに出る
+        if (show || (typeB && playing))
+        {
+            UiPointer.ReportGameplayAim();
+        }
 
         if (!show)
         {
