@@ -563,7 +563,10 @@ public class PauseMenu : MonoBehaviour
         CreateMenuItem(settingsPage.transform, ControllerOperationLabel(), 90f - (ItemHeight + ItemGap) * 2f,
             ToggleControllerOperation);
 
-        CreateMenuItem(settingsPage.transform, "もどる", 90f - (ItemHeight + ItemGap) * 3f,
+        CreateMenuItem(settingsPage.transform, AimReticleLabel(), 90f - (ItemHeight + ItemGap) * 3f,
+            ToggleAimReticle);
+
+        CreateMenuItem(settingsPage.transform, "もどる", 90f - (ItemHeight + ItemGap) * 4f,
             () => ShowSettings(false));
     }
 
@@ -579,6 +582,21 @@ public class PauseMenu : MonoBehaviour
         GameSettings.ControllerOperation = GameSettings.ControllerOperation == ControllerOperationType.TypeA
             ? ControllerOperationType.TypeB
             : ControllerOperationType.TypeA;
+        BuildSettingsPageRefresh();
+    }
+
+    private static string AimReticleLabel()
+    {
+        return GameSettings.AimReticle == AimReticleType.TypeB
+            ? "レティクル：タイプB"
+            : "レティクル：タイプA";
+    }
+
+    private void ToggleAimReticle()
+    {
+        GameSettings.AimReticle = GameSettings.AimReticle == AimReticleType.TypeA
+            ? AimReticleType.TypeB
+            : AimReticleType.TypeA;
         BuildSettingsPageRefresh();
     }
 
