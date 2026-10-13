@@ -137,7 +137,7 @@ public class ThrowController : MonoBehaviour
     [Tooltip("引っ張るときに少し上向きに加える力")]
     [SerializeField] private float pullLift = 3f;
 
-    [Tooltip("引っ張ってから、頭上を越えて後ろへ抜けるまでの秒数")]
+    [Tooltip("引っ張りの動きの長さ（秒）。**この半分の秒数で頭上まで来て、そこから後ろへ投げ出す**（2026/10/13 から）")]
     [Min(0.05f)]
     [SerializeField] private float pullTravelSeconds = 0.6f;
 
@@ -311,6 +311,25 @@ public class ThrowController : MonoBehaviour
 
     /// <summary>次に引っ掛けたときに「投げる」ほうか（右で撃った）。false なら「引っ張る」ほう（左で撃った）。</summary>
     private bool nextIsThrow;
+
+    // ---- 横取り（宇宙ごみ式。2026/10/13・大槻さん） ----
+
+    /// <summary>ほかの人が持っている物資に、フックがくっついて待っているときの相手。待っていなければ null。</summary>
+    private HookableObject contestTarget;
+
+    /// <summary>横取りをホストに頼んで、返事を待っているか。</summary>
+    private bool stealPending;
+
+    private float stealPendingTimer;
+
+    /// <summary>横取りしたときのゲージの真ん中への近さ（そのまま引っ張る強さに使う）。</summary>
+    private float stealAccuracy;
+
+    /// <summary>横取りの返事を待つ最長の秒数。届かなければあきらめてフックを戻す。</summary>
+    private const float StealReplyTimeout = 2f;
+
+    /// <summary>いま、ほかの人が持っている物資にくっついて待っているか（横取りの待ち）。</summary>
+    public bool IsContesting => contestTarget != null;
 
     /// <summary>いま引き寄せ中か。UI などが参照する。</summary>
     public bool IsPulling => active;
@@ -502,6 +521,12 @@ public class ThrowController : MonoBehaviour
     {
         if (!active)
         {
+            return;
+        }
+
+        if (contestTarget != null)
+        {
+            UpdateContest();
             return;
         }
 
@@ -725,6 +750,222 @@ public class ThrowController : MonoBehaviour
         }
 
         EndPull();
+    }
+
+    // ------------------------------------------------------------
+    // 横取り（宇宙ごみ式。2026/10/13・大槻さん）
+    // ------------------------------------------------------------
+
+    /// <summary>
+    /// **ほかの人が持っている物資に、フックがくっついて待つ。** <see cref="HookController"/> が、当たったときに呼ぶ。
+    ///
+    /// ・くっついただけでは、持っている人のフックは外れない（2026/10/13 まで：当たった瞬間に外れていた）
+    /// ・ゲージが出る。**引っ張る（左・LT）と横取り**：持っている人のフックが外れ、自分がそのまま引っ張る（強さはそのときのゲージ）
+    /// ・持っている人が先に投げ終わった（手を離した）ら、くっついていたフックは戻る
+    /// </summary>
+    public void BeginContest(HookableObject item)
+    {
+        distanceBasedPullActive = false;
+        target = null;
+        pullableTarget = null;
+        anchorTarget = null;
+        contestTarget = item;
+        stealPending = false;
+        active = item != null;
+        timer = 0f;
+        armDelay = 0.12f;
+        heavy = false;
+        heavyWeight = 1f;
+        stage = TwoButtonStage.AimPull;
+
+        if (active)
+        {
+            StartBar();
+        }
+    }
+
+    private void UpdateContest()
+    {
+        if (contestTarget == null || contestTarget.IsVanished)
+        {
+            EndContest();
+            return;
+        }
+
+        if (GamePause.BlocksInput)
+        {
+            return;
+        }
+
+        if (hook != null && hook.IsStunned)
+        {
+            EndContest();
+            return;
+        }
+
+        if (stealPending)
+        {
+            stealPendingTimer -= Time.deltaTime;
+            if (stealPendingTimer <= 0f)
+            {
+                Debug.Log("[FISH] 横取りの返事が来なかったので、フックを戻します。");
+                EndContest();
+            }
+            return;
+        }
+
+        // 持っている人が先に手を離した（投げ終わった・落とした）ら、くっついていたフックは戻る
+        if (!IsHeldByOther(contestTarget))
+        {
+            EndContest();
+            return;
+        }
+
+        if (armDelay > 0f)
+        {
+            armDelay -= Time.deltaTime;
+        }
+
+        TickBar();
+        if (armDelay <= 0f && PullPressed())
+        {
+            RequestSteal(Accuracy(BarPosition()));
+        }
+    }
+
+    /// <summary>その物資を、いま自分以外の人が持っているか。</summary>
+    private bool IsHeldByOther(HookableObject item)
+    {
+        FishingNetSupply netSupply = hook != null && hook.IsOnline ? item.GetComponent<FishingNetSupply>() : null;
+        if (netSupply != null && netSupply.IsSpawned)
+        {
+            return netSupply.IsClaimed && netSupply.HookedByPlayerIndex != hook.LocalPlayerIndex;
+        }
+
+        return FindLocalHolder(item) != null;
+    }
+
+    /// <summary>このPCで、その物資を持っている（引っ張っている）自分以外の係。いなければ null。</summary>
+    private ThrowController FindLocalHolder(HookableObject item)
+    {
+        foreach (ThrowController puller in FindObjectsByType<ThrowController>(FindObjectsSortMode.None))
+        {
+            if (puller != this && puller.active && puller.target == item)
+            {
+                return puller;
+            }
+        }
+
+        return null;
+    }
+
+    /// <summary>
+    /// **横取りする。** オンラインではホストに頼み（持っている人のフックを外して、自分のものにしてもらう）、返事を待つ。
+    /// オンラインでないとき（このPCだけ）は、その場で持っている人の手を離させて引っ張り始める。
+    /// </summary>
+    private void RequestSteal(float accuracy)
+    {
+        stealAccuracy = accuracy;
+
+        if (hook != null && hook.UI != null)
+        {
+            hook.UI.ShowTiming(false);
+        }
+
+        FishingNetSupply netSupply = hook != null && hook.IsOnline ? contestTarget.GetComponent<FishingNetSupply>() : null;
+        if (netSupply != null && netSupply.IsSpawned)
+        {
+            stealPending = true;
+            stealPendingTimer = StealReplyTimeout;
+            netSupply.RequestSteal(hook.LocalPlayerIndex);
+            return;
+        }
+
+        // オンラインでないとき：持っている人の手を、爆風と同じやり方で（力を加えずに）離させる
+        ReleaseTargetForExplosion(contestTarget);
+        StartStolenPull();
+    }
+
+    /// <summary>
+    /// **横取りの返事。** <see cref="FishingNetSupply"/> が、頼んだ本人のPCで呼ぶ。
+    /// 許されたら引っ張り始める。断られた（もう誰も持っていなかった・消えた）ら、フックを戻す。
+    /// </summary>
+    public void OnStealResult(HookableObject item, bool granted)
+    {
+        if (contestTarget == null || contestTarget != item || !stealPending)
+        {
+            return;
+        }
+
+        if (granted)
+        {
+            StartStolenPull();
+        }
+        else
+        {
+            EndContest();
+        }
+    }
+
+    /// <summary>横取りできた。自分の物として引っ掛け直し、**そのまま引っ張る**（強さは横取りしたときのゲージ）。</summary>
+    private void StartStolenPull()
+    {
+        HookableObject item = contestTarget;
+        contestTarget = null;
+        stealPending = false;
+
+        if (item == null || item.IsVanished || hook == null)
+        {
+            active = false;
+            if (hook != null)
+            {
+                hook.NotifyThrowFinished();
+            }
+            return;
+        }
+
+        Debug.Log($"[FISH] 横取りした：真ん中への近さ {stealAccuracy:0.00}");
+
+        hook.AttachStolen(item);
+        nextIsThrow = false;
+        Begin(item);
+
+        if (!active || target == null || distanceBasedPullActive || anchorTarget != null)
+        {
+            return;
+        }
+
+        if (heavy)
+        {
+            StartHeavyDrag(heavyDragStrength * stealAccuracy);
+            return;
+        }
+
+        pullAccuracy = stealAccuracy;
+        stage = TwoButtonStage.PullTravel;
+        liftTimer = 0f;
+
+        if (hook.UI != null)
+        {
+            hook.UI.ShowTiming(false);
+        }
+    }
+
+    /// <summary>横取りをやめて、フックを戻す（相手が先に手を離した・消えた・スタンした など）。</summary>
+    private void EndContest()
+    {
+        contestTarget = null;
+        stealPending = false;
+        active = false;
+
+        if (hook != null)
+        {
+            if (hook.UI != null)
+            {
+                hook.UI.ShowTiming(false);
+            }
+            hook.NotifyThrowFinished();
+        }
     }
 
     private void UpdatePullableTarget()
@@ -1091,11 +1332,15 @@ public class ThrowController : MonoBehaviour
 
             case TwoButtonStage.PullTravel:
                 liftTimer += Time.deltaTime;
-                float travel = Mathf.Clamp01(liftTimer / pullTravelSeconds);
 
-                // 釣り式と同じ軌道（ゲージ 0〜1 ぶん）：弧を描いて頭上を通り、後ろへ抜ける。
+                // 釣り式と同じ軌道の**前半だけ**（ゲージ 0〜0.5 ぶん）：弧を描いて**頭上まで**来たら、そこから後ろへ投げ出す。
+                // （2026/10/13 まで：決まった道すじで後ろまで動かしてから投げていたが、
+                //  そこで速さと向きが急に変わって「飛び方がおかしい」と見えた。大槻さんの報告）
+                // 頭上まで来る速さは前と同じ（Pull Travel Seconds の半分で頭上）
+                float travel = Mathf.Clamp01(liftTimer / (pullTravelSeconds * 0.5f));
+
                 // 途中で壁に当たったら、フックを外してその場に落とす
-                if (!UpdateReelPosition(travel))
+                if (!UpdateReelPosition(travel * 0.5f))
                 {
                     FinishAsBlocked();
                     break;
@@ -1178,7 +1423,8 @@ public class ThrowController : MonoBehaviour
     /// </summary>
     private void FinishAsPull(float accuracy)
     {
-        Vector3 away = target.transform.position - hook.PlayerRoot.position;
+        // 頭上で手を離すので、**物資が来た方向の、そのまま先（プレイヤーの後ろ）**へ飛ばす
+        Vector3 away = hook.PlayerRoot.position - reelStart;
         away.y = 0f;
         if (away.sqrMagnitude < 0.0001f)
         {
@@ -1312,7 +1558,19 @@ public class ThrowController : MonoBehaviour
 
         if (netSupply != null)
         {
-            netSupply.RequestThrow(direction, force, lift, hook.LocalPlayerIndex);
+            // 手を離した位置も伝える（ホストに届いている位置は少し遅れているため。2026/10/13）
+            netSupply.RequestThrow(direction, force, lift, hook.LocalPlayerIndex,
+                hasReleasePosition: true, releasePosition: body.position);
+
+            // **参加者のPCでは、ホストが受け取るまでその場で止めておく。**
+            // 物理を戻したままだと、ホストが力を加えるまでの間に自分の画面で落ち始め、
+            // そのあとホストの位置へ戻されてガクッと見えていた（2026/10/13）。持ち主がホストへ移れば、自動で止まったままになる
+            if (netSupply.IsSpawned && !netSupply.IsServer)
+            {
+                body.linearVelocity = Vector3.zero;
+                body.angularVelocity = Vector3.zero;
+                body.isKinematic = true;
+            }
         }
         else
         {
@@ -1465,6 +1723,20 @@ public class ThrowController : MonoBehaviour
             return;
         }
 
+        // 横取りの待ち（ほかの人の物資にくっついているだけ）なら、物理には触らずにやめる
+        if (contestTarget != null)
+        {
+            contestTarget = null;
+            stealPending = false;
+            active = false;
+
+            if (hook != null && hook.UI != null)
+            {
+                hook.UI.ShowTiming(false);
+            }
+            return;
+        }
+
         SetAnchorGravitySuppressed(false);
         target = null;
         anchorTarget = null;
@@ -1486,6 +1758,20 @@ public class ThrowController : MonoBehaviour
     {
         if (!active)
         {
+            return;
+        }
+
+        // 横取りの待ち（ほかの人の物資にくっついているだけ）なら、物理には触らずにやめる
+        if (contestTarget != null)
+        {
+            contestTarget = null;
+            stealPending = false;
+            active = false;
+
+            if (hook != null && hook.UI != null)
+            {
+                hook.UI.ShowTiming(false);
+            }
             return;
         }
 

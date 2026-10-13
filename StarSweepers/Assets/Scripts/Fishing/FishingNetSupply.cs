@@ -166,16 +166,17 @@ public class FishingNetSupply : NetworkBehaviour
     /// </summary>
     public void RequestThrow(Vector3 direction, float force, float lift, int playerIndex,
         bool preserveVelocity = false, Vector3 inheritedVelocity = default,
-        Vector3 inheritedAngularVelocity = default)
+        Vector3 inheritedAngularVelocity = default, bool hasReleasePosition = false, Vector3 releasePosition = default)
     {
         RequestThrowServerRpc(direction, force, lift, playerIndex, localClaimRevision,
-            preserveVelocity, inheritedVelocity, inheritedAngularVelocity);
+            preserveVelocity, inheritedVelocity, inheritedAngularVelocity, hasReleasePosition, releasePosition);
     }
 
     [ServerRpc(RequireOwnership = false)]
     private void RequestThrowServerRpc(Vector3 direction, float force, float lift,
         int playerIndex, uint claimRevision, bool preserveVelocity, Vector3 inheritedVelocity,
-        Vector3 inheritedAngularVelocity, ServerRpcParams rpcParams = default)
+        Vector3 inheritedAngularVelocity, bool hasReleasePosition, Vector3 releasePosition,
+        ServerRpcParams rpcParams = default)
     {
         // 掛けている本人からの指示だけを受け付ける
         if (claimRevision != explosionRevision.Value || hookedByPlayerIndex.Value != playerIndex)
@@ -184,6 +185,14 @@ public class FishingNetSupply : NetworkBehaviour
         }
 
         TakeBackOwnership();
+
+        // **手を離した位置から飛ばす**（2026/10/13）。ホストに届いている位置は少し遅れているので、
+        // そのまま力を加えると、離した場所より手前から飛び出したように見える（引っ張った後の飛び方がおかしい、の一因）
+        if (hasReleasePosition && body != null)
+        {
+            body.position = releasePosition;
+            transform.position = releasePosition;
+        }
 
         hookedByPlayerIndex.Value = -1;
         lastThrownByPlayerIndex.Value = playerIndex;
@@ -243,6 +252,68 @@ public class FishingNetSupply : NetworkBehaviour
     /// 宇宙ごみ式（<see cref="ThrowStyle.TwoButtons"/>）の <see cref="HookController"/> だけが呼ぶ（2026/9/22）。
     /// 釣りでは呼ばれないので、釣りの動きは変わらない。
     /// </summary>
+    // ------------------------------------------------------------
+    // 横取り（宇宙ごみ式。2026/10/13・大槻さん）
+    // ------------------------------------------------------------
+
+    /// <summary>
+    /// **横取りをホストに頼む。** ほかの人がつかんでいる物資にくっついて待っていた人が、引っ張ったときに呼ぶ
+    /// （<see cref="ThrowController"/>）。返事は <see cref="StealResultClientRpc"/> で、頼んだ本人のPCに届く。
+    /// </summary>
+    public void RequestSteal(int playerIndex)
+    {
+        localClaimPlayerIndex = playerIndex;
+        RequestStealServerRpc(playerIndex);
+    }
+
+    /// <summary>
+    /// ホスト側の受け口。まだほかの人がつかんでいれば、**その人のフックを外して（爆風と同じ外し方。力は加えない）**、
+    /// 頼んだ人のものにする（持ち主もその人へ移す）。もう誰もつかんでいなければ断る（くっついていたフックは戻る）。
+    /// </summary>
+    [ServerRpc(RequireOwnership = false)]
+    private void RequestStealServerRpc(int playerIndex, ServerRpcParams rpcParams = default)
+    {
+        bool heldByOther = IsClaimed && hookedByPlayerIndex.Value != playerIndex;
+        if (!heldByOther || hookable.IsVanished)
+        {
+            StealResultClientRpc(playerIndex, false, explosionRevision.Value, RpcToSender(rpcParams));
+            return;
+        }
+
+        Debug.Log($"[FISH] 参加番号 {playerIndex} が、参加番号 {hookedByPlayerIndex.Value} のつかんでいる物資を横取りしました。");
+
+        // 持っている人のフックを外す（全員のPCで、その人の引き寄せが止まる）
+        ServerApplyExplosion(Vector3.zero);
+
+        // 頼んだ人のものにする
+        hookedByPlayerIndex.Value = playerIndex;
+        ulong sender = rpcParams.Receive.SenderClientId;
+        if (sender != NetworkManager.ServerClientId)
+        {
+            NetworkObject.ChangeOwnership(sender);
+        }
+
+        StealResultClientRpc(playerIndex, true, explosionRevision.Value, RpcToSender(rpcParams));
+    }
+
+    /// <summary>横取りの返事（頼んだ本人のPCだけ）。許されたら、その人が引っ張り始める。</summary>
+    [ClientRpc]
+    private void StealResultClientRpc(int playerIndex, bool granted, uint revision, ClientRpcParams rpcParams = default)
+    {
+        if (granted)
+        {
+            // 外したあとの新しい番号で、自分の引っ掛けとして扱う（このあとの投げ・離すの知らせが受け付けられるように）
+            localClaimRevision = revision;
+            localClaimPlayerIndex = playerIndex;
+        }
+
+        HookController hook = FindLocalHookController(playerIndex);
+        if (hook != null && hook.Thrower != null)
+        {
+            hook.Thrower.OnStealResult(hookable, granted);
+        }
+    }
+
     public void RequestInterfere(int playerIndex)
     {
         RequestInterfereServerRpc(playerIndex);

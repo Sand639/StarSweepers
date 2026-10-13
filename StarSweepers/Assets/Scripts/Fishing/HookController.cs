@@ -102,6 +102,12 @@ public class HookController : MonoBehaviour
     private HookableObject attached;
     private IHookPullable attachedPullable;
 
+    /// <summary>
+    /// **ほかの人が持っている物資に、くっついて待っているときの相手**（横取りの待ち。宇宙ごみ式。2026/10/13）。
+    /// 自分の物ではないので <see cref="attached"/> には入れない（外すときに、持ち主の引っ掛けまで外さないように）。
+    /// </summary>
+    private HookableObject contestItem;
+
     /// <summary>オートエイムで発射したときの相手。飛んでいる間だけ入っていて、フックはこれを追いかける。</summary>
     private HookableObject autoTarget;
 
@@ -486,7 +492,7 @@ public class HookController : MonoBehaviour
             }
 
             HookableObject touched = hit.collider.GetComponentInParent<HookableObject>();
-            if (touched != null && !touched.IsHooked && !touched.IsVanished)
+            if (touched != null && !touched.IsVanished && (!touched.IsHooked || CanContest))
             {
                 OnHookableTouched(touched);
                 return;
@@ -530,6 +536,20 @@ public class HookController : MonoBehaviour
             }
 
             hookPosition = attachedPullable.HookAnchorPoint;
+            return;
+        }
+
+        // 横取りの待ち：ほかの人が持っている物資にくっついていく（やめるのは ThrowController が決める）
+        if (contestItem != null)
+        {
+            if (contestItem.IsVanished)
+            {
+                contestItem = null;
+                phase = HookPhase.Returning;
+                return;
+            }
+
+            hookPosition = contestItem.AnchorPoint;
             return;
         }
 
@@ -603,8 +623,20 @@ public class HookController : MonoBehaviour
     /// <summary>飛んでいるフックが物資に触れたときに呼ばれる。</summary>
     private void OnHookableTouched(HookableObject hookable)
     {
-        if (phase != HookPhase.Flying || hookable == null || hookable.IsHooked || hookable.IsVanished)
+        if (phase != HookPhase.Flying || hookable == null || hookable.IsVanished)
         {
+            return;
+        }
+
+        // **このPCで、ほかの人がつかんでいる物資**（オンラインでないとき・1台で複数人のとき）。
+        // 宇宙ごみ式なら、くっついて待つ（引っ張ったら横取り。2026/10/13）。釣り式では今までどおり素通りする
+        FishingNetSupply onlineSupply = IsOnline ? hookable.GetComponent<FishingNetSupply>() : null;
+        if (hookable.IsHooked && onlineSupply == null)
+        {
+            if (CanContest)
+            {
+                BeginContest(hookable);
+            }
             return;
         }
 
@@ -628,15 +660,21 @@ public class HookController : MonoBehaviour
                 // 引っ掛け中なのが**自分**なら（離したのがまだ届いていない など）、ふつうにつかみ直す（2026/10/6）
                 if (netSupply.IsClaimed && netSupply.HookedByPlayerIndex != LocalPlayerIndex)
                 {
-                    // **宇宙ごみ式では、ほかの人がつかんでいる物資にフックが当たったら、その人の引っ掛けを外す**
-                    // （2026/9/22・大槻さん）。こちらのフックは引っ掛けずに戻る。
+                    // **宇宙ごみ式では、ほかの人がつかんでいる物資にフックが当たったら、くっついて待つ。**
+                    // 引っ張ったら横取り（持っている人のフックが外れ、自分が引っ張る）。2026/10/13・大槻さん
+                    // （2026/9/22〜10/12 は、当たった瞬間に持っている人の引っ掛けを外していた）。
                     // 釣り式では今までどおり、何もせず素通りする
-                    if (throwController != null && throwController.BreaksOthersGrab)
+                    if (CanContest)
                     {
-                        netSupply.RequestInterfere(LocalPlayerIndex);
-                        phase = HookPhase.Returning;
+                        BeginContest(hookable);
                     }
 
+                    return;
+                }
+
+                // このPCで「引っ掛け中」になっている（自分がつかんでいる途中など）。今までどおり何もしない
+                if (hookable.IsHooked)
+                {
                     return;
                 }
 
@@ -707,6 +745,7 @@ public class HookController : MonoBehaviour
 
         attached = null;
         attachedPullable = null;
+        contestItem = null;
         autoTarget = null;
         charge = 0f;
         phase = HookPhase.Idle;
@@ -726,7 +765,46 @@ public class HookController : MonoBehaviour
     {
         attached = null;
         attachedPullable = null;
+        contestItem = null;
         phase = HookPhase.Returning;
+    }
+
+    // ------------------------------------------------------------
+    // 横取り（宇宙ごみ式。2026/10/13・大槻さん）
+    // ------------------------------------------------------------
+
+    /// <summary>同じプレイヤーの投げる係（横取りの返事を渡すのに使う）。</summary>
+    public ThrowController Thrower => throwController;
+
+    /// <summary>ほかの人がつかんでいる物資に当たったとき、くっついて待てるか（宇宙ごみ式だけ）。</summary>
+    private bool CanContest => throwController != null && throwController.BreaksOthersGrab;
+
+    /// <summary>
+    /// **ほかの人がつかんでいる物資に、くっついて待つ。** 持っている人のフックは、まだ外さない。
+    /// 引っ張ったら横取り（<see cref="ThrowController.BeginContest"/>）。
+    /// </summary>
+    private void BeginContest(HookableObject hookable)
+    {
+        attached = null;
+        attachedPullable = null;
+        contestItem = hookable;
+        hookPosition = hookable.AnchorPoint;
+        phase = HookPhase.Attached;
+        throwController.BeginContest(hookable);
+    }
+
+    /// <summary>
+    /// **横取りできた物資を、自分の物として引っ掛け直す。** <see cref="ThrowController"/> が、横取りが決まったときに呼ぶ
+    /// （このあと、そのまま引っ張り始める）。
+    /// </summary>
+    public void AttachStolen(HookableObject item)
+    {
+        contestItem = null;
+        attachedPullable = null;
+        attached = item;
+        item.SetHooked(true);
+        hookPosition = item.AnchorPoint;
+        phase = HookPhase.Attached;
     }
 
     /// <summary>
