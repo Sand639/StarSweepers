@@ -17,6 +17,9 @@ public enum TitlePartRole
     PageFindLan = 6,
     PageSettings = 7,
     PageFindFriends = 8,
+    // 2026/10/13 からのタイトル画面
+    PageStart = 9,
+    PageMode = 10,
 
     // 文字（コードが書き換える）
     PlayerNameText = 20,
@@ -53,6 +56,22 @@ public enum TitlePartRole
     BusyMessage = 51,
     BusyButton = 52,
     BusyButtonLabel = 53,
+
+    // 2026/10/13 からのタイトル画面（1人プレイ／マルチプレイ・部屋の一覧・小さい窓）
+    StartMessage = 60,
+    SoloPreview = 61,
+    MultiPreview = 62,
+    RoomListPanel = 63,
+    RoomListContent = 64,
+    RoomListMessage = 65,
+    RoomCardTemplate = 66,
+    RoomCardName = 67,
+    RoomCardPlayers = 68,
+    CreateRoomButton = 69,
+    CreateWindow = 70,
+    CreateWindowNote = 71,
+    PasswordWindow = 72,
+    PasswordWindowTitle = 73,
 }
 
 /// <summary>

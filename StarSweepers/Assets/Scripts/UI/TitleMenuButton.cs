@@ -44,6 +44,17 @@ public enum TitleButtonAction
     TabGraphics = 31,
     TabGeneral = 32,
     ApplyScreen = 33,
+
+    // 2026/10/13 からのタイトル画面（名前とスタート → 1人プレイ／マルチプレイ → 部屋の一覧）
+    Start = 40,
+    PlaySolo = 41,
+    ShowMulti = 42,
+    OpenCreateRoom = 43,
+    CreateRoomInternet = 44,
+    CreateRoomLan = 45,
+    CloseWindow = 46,
+    JoinRoom = 47,
+    ConfirmJoinPassword = 48,
 }
 
 /// <summary>
@@ -152,6 +163,9 @@ public class TitleMenuButton : MonoBehaviour,
         selectedLook = selected;
         Refresh();
     }
+
+    /// <summary>いま、マウス（ポインター）が重なっているか、十字キーで選ばれているか。タイトルの「1人プレイ／マルチプレイ」の右側の表示に使う。</summary>
+    public bool IsHighlighted => pointerOver || selectedByNavigation;
 
     public void OnPointerEnter(PointerEventData eventData)
     {
