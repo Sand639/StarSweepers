@@ -1,5 +1,6 @@
 using System.Collections.Generic;
 using System.IO;
+using ProjectEL4S.InputControl;
 using Unity.Netcode;
 using UnityEngine;
 using UnityEngine.SceneManagement;
@@ -16,6 +17,8 @@ using UnityEngine.SceneManagement;
 ///   ・**マップの候補を拾う**（マップの一覧 <see cref="SpaceJunkMapList"/> のうち、ロビーに出す・ビルドに入っている・そのチーム数で遊べるもの）
 ///   ・ラウンドが始まったら、つなぐ画面（LanConnectionUi）を隠す
 ///   ・ロビーのシーンに画面が置かれていなければ、プレハブから出す（置き忘れの保険）
+///   ・**このPCで遊ぶ人数（1台で複数人）**の小窓を出し、人数をホストへ伝える（<see cref="LocalMultiplayer"/>）。
+///     プレハブの画面には入れず、OnGUI の小窓で出している（2026/10/7。ロビーの画面のプレハブを触らずに済むように）
 /// </summary>
 public class SpaceJunkLobbyUI : MonoBehaviour
 {
@@ -57,6 +60,17 @@ public class SpaceJunkLobbyUI : MonoBehaviour
     /// <summary>通信の様子の窓。ゲーム設定を開いている間は隠す（重なって読めないため）。</summary>
     private NetworkStatusHud statusHud;
 
+    /// <summary>「このPCで遊ぶ人数」を最後に伝えた試合の係と人数。変わったとき・係が新しくなったときだけ伝え直す。</summary>
+    private SpaceJunkSession sentLocalCountSession;
+    private int sentLocalCount;
+
+    [Header("このPCで遊ぶ人数の小窓")]
+    [Tooltip("小窓の大きさ（1920×1080 のときの倍率）")]
+    [SerializeField] private float localPlayersUiScale = 1f;
+
+    private readonly DraggableGuiPanel localPlayersPanel = new DraggableGuiPanel("このPCで遊ぶ人数", 1f, -12f, 260f, 340f);
+    private GUIStyle labelStyle;
+
     private void Awake()
     {
         connectionUi = GetComponent<LanConnectionUi>();
@@ -94,6 +108,132 @@ public class SpaceJunkLobbyUI : MonoBehaviour
         {
             statusHud.enabled = !SpaceJunkLobbyScreen.IsSettingsOpen;
         }
+
+        SyncLocalPlayerCount();
+    }
+
+    // ------------------------------------------------------------
+    // このPCで遊ぶ人数（1台で複数人。2026/10/7）
+    // ------------------------------------------------------------
+
+    /// <summary>
+    /// **このPCで遊ぶ人数を、ホストへ伝える。** 人数を変えたときと、新しくつないだ（係が新しくなった）ときだけ。
+    /// ホストは足りないプレイヤーを出し、多すぎるぶんを消す（<see cref="SpaceJunkSession.RequestLocalPlayerCount"/>）。
+    /// </summary>
+    private void SyncLocalPlayerCount()
+    {
+        SpaceJunkSession session = SpaceJunkSession.Current;
+        if (session == null || !session.IsSpawned || session.State != SpaceJunkMatchState.Lobby)
+        {
+            return;
+        }
+
+        int count = LocalMultiplayer.PlayerCount;
+        if (session == sentLocalCountSession && count == sentLocalCount)
+        {
+            return;
+        }
+
+        // 1人のままで新しくつないだときは、伝えることが無い（ホストは最初から1人ぶん出している）
+        if (session != sentLocalCountSession && count == 1)
+        {
+            sentLocalCountSession = session;
+            sentLocalCount = count;
+            return;
+        }
+
+        session.RequestLocalPlayerCount(count);
+        sentLocalCountSession = session;
+        sentLocalCount = count;
+    }
+
+    /// <summary>
+    /// 「このPCで遊ぶ人数」の小窓。ロビーにいる間だけ出す（ホストも参加者も、自分のPCの人数を決める）。
+    /// ゲーム設定を開いている間・タイトル画面が出ている間は隠す（重なって読めないため）。
+    /// </summary>
+    private void OnGUI()
+    {
+        SpaceJunkSession session = SpaceJunkSession.Current;
+        if (session == null || !session.IsSpawned || session.State != SpaceJunkMatchState.Lobby ||
+            SpaceJunkRound.Current != null || SpaceJunkLobbyScreen.IsSettingsOpen || TitleScreen.IsVisible)
+        {
+            return;
+        }
+
+        if (labelStyle == null)
+        {
+            labelStyle = new GUIStyle(GUI.skin.label) { fontSize = 13, wordWrap = true };
+        }
+
+        localPlayersPanel.Draw(localPlayersUiScale, _ => DrawLocalPlayers());
+    }
+
+    /// <summary>
+    /// 人数の「－」「＋」と、席ごとにつながっている機器。
+    /// 2人以上にすると、キーボード・マウス・コントローラを押した順に P1・P2… に分けて読む。
+    /// </summary>
+    private void DrawLocalPlayers()
+    {
+        GUILayout.BeginHorizontal();
+        if (GUILayout.Button("－", GUILayout.Width(32f)))
+        {
+            LocalMultiplayer.PlayerCount--;
+        }
+        GUILayout.Label($"　{LocalMultiplayer.PlayerCount} 人", labelStyle, GUILayout.Width(56f));
+        if (GUILayout.Button("＋", GUILayout.Width(32f)))
+        {
+            LocalMultiplayer.PlayerCount++;
+        }
+        GUILayout.EndHorizontal();
+
+        if (!LocalMultiplayer.IsActive)
+        {
+            GUILayout.Label("2人以上にすると、キーボード・マウス・コントローラを人ごとに分けて遊べます", labelStyle);
+            return;
+        }
+
+        InputSeatManager seats = InputSeatManager.Instance;
+        if (seats == null)
+        {
+            return;
+        }
+
+        if (seats.IsRegistering)
+        {
+            GUILayout.Label(seats.RegistrationPrompt, labelStyle);
+            if (GUILayout.Button("登録をやめる"))
+            {
+                seats.CancelRegistration();
+            }
+            return;
+        }
+
+        Color saved = GUI.color;
+        for (int i = 0; i < seats.SeatCount; i++)
+        {
+            InputSeat seat = seats.GetSeat(i);
+            GUI.color = seat.Color;
+            GUILayout.Label($"P{i + 1}：キーボード {Mark(seat.HasKeyboard)}　マウス {Mark(seat.HasMouse)}　コントローラ {Mark(seat.HasGamepad)}", labelStyle);
+        }
+        GUI.color = saved;
+
+        GUILayout.Label("キーを押す／マウスを動かす／コントローラのボタンを押した順に P1・P2… に入ります", labelStyle);
+
+        GUILayout.BeginHorizontal();
+        if (GUILayout.Button("キーボード・マウスを登録"))
+        {
+            seats.BeginRegistration();
+        }
+        if (GUILayout.Button("割り当てをやり直す"))
+        {
+            seats.ResetAssignments();
+        }
+        GUILayout.EndHorizontal();
+    }
+
+    private static string Mark(bool connected)
+    {
+        return connected ? "○" : "－";
     }
 
     private void OnSceneLoaded(Scene scene, LoadSceneMode mode)

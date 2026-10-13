@@ -1018,9 +1018,10 @@ public class SpaceJunkLobbyScreen : MonoBehaviour
         }
     }
 
-    private static bool IsLocalPlayer(ulong clientId)
+    /// <summary>その人（人ごとの番号）が、このPCで操作している人か（1台で複数人なら、このPCの全員）。</summary>
+    private static bool IsLocalPlayer(ulong key)
     {
-        return NetworkManager.Singleton != null && NetworkManager.Singleton.LocalClientId == clientId;
+        return NetworkManager.Singleton != null && NetworkManager.Singleton.LocalClientId == LocalMultiplayer.ClientOf(key);
     }
 
     /// <summary>コントローラーがつながっていれば、設定の最初の項目を選んでおく（十字キーで動かせるように）。</summary>

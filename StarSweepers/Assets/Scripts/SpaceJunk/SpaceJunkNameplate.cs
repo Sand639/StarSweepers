@@ -97,7 +97,8 @@ public class SpaceJunkNameplate : MonoBehaviour
         }
 
         SpaceJunkSession session = SpaceJunkSession.Current;
-        bool show = session != null && owner.IsSpawned && (showOwnName || !owner.IsOwner);
+        // 1台で複数人のときは、このPCの人どうしを見分けられるように自分たちの名前も出す（2026/10/7）
+        bool show = session != null && owner.IsSpawned && (showOwnName || !owner.IsOwner || LocalMultiplayer.IsActive);
 
         if (visual.activeSelf != show)
         {
@@ -118,13 +119,14 @@ public class SpaceJunkNameplate : MonoBehaviour
             transform.rotation = view.transform.rotation;
         }
 
-        string label = session.NameOf(owner.OwnerClientId);
+        // 人ごとの番号で引く（1台で複数人の2人目以降も、自分の名前とチームが出るように）
+        string label = session.NameOf(owner.PlayerKey);
         if (text.text != label)
         {
             text.text = label;
             shadow.text = label;
         }
 
-        text.color = useTeamColor ? SpaceJunkTeams.TeamColor(session.TeamOf(owner.OwnerClientId)) : fixedColor;
+        text.color = useTeamColor ? SpaceJunkTeams.TeamColor(session.TeamOf(owner.PlayerKey)) : fixedColor;
     }
 }

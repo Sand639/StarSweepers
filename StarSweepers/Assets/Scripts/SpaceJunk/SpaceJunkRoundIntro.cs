@@ -248,7 +248,8 @@ public class SpaceJunkRoundIntro : MonoBehaviour
     {
         foreach (FishingNetPlayer player in FishingNetPlayer.All)
         {
-            if (player != null && player.IsOwner)
+            // 1台で複数人なら、そのPCの1人目に寄る（カメラはそのPCの1人目に付いているため）
+            if (player != null && player.IsOwner && player.LocalSeat == 0)
             {
                 return player.transform;
             }

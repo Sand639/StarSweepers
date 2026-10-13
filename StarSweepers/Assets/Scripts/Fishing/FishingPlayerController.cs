@@ -43,6 +43,7 @@ public class FishingPlayerController : MonoBehaviour, ILaunchable
     private CharacterController characterController;
     private InputActionMap playerMap;
     private InputAction moveAction;
+    private PlayerInputSource input;
     private float verticalVelocity;
     private Vector3 launchVelocity;
     private bool anchorMovementActive;
@@ -71,6 +72,9 @@ public class FishingPlayerController : MonoBehaviour, ILaunchable
         {
             stun = GetComponent<PlayerStun>();
         }
+
+        // 操作の読み口。単体操作か、1台のPCで複数人（席）かをここで切り替える
+        input = PlayerInputSource.Get(this);
 
         if (inputActions == null)
         {
@@ -137,17 +141,17 @@ public class FishingPlayerController : MonoBehaviour, ILaunchable
         // 試合が終わったあと（結果画面）も動かせない
         if (!anchorMovementActive && (stun == null || !stun.IsStunned) && FishingMatch.PlayAllowed)
         {
-            Gamepad pad = Gamepad.current;
+            Gamepad pad = input.Gamepad;
             bool typeB = pad != null && GameSettings.ControllerOperation == ControllerOperationType.TypeB;
-            Vector2 input = typeB ? pad.leftStick.ReadValue() : moveAction.ReadValue<Vector2>();
+            Vector2 move = typeB ? pad.leftStick.ReadValue() : input.ReadMove(moveAction);
 
             // タイプBはLTを押している間、左スティックを向き調整だけに使う。
             if (typeB && pad.leftTrigger.isPressed)
             {
-                input = Vector2.zero;
+                move = Vector2.zero;
             }
 
-            direction = new Vector3(input.x, 0f, input.y);
+            direction = new Vector3(move.x, 0f, move.y);
             if (direction.sqrMagnitude > 1f)
             {
                 direction.Normalize();
