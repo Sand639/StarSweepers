@@ -203,6 +203,12 @@ public class HookController : MonoBehaviour
     /// <summary>最後にフックを放したときのチャージ量（0〜1）。アンカーなどが使う。</summary>
     public float Charge => charge;
 
+    /// <summary>**いま離したら、フックがどこまで飛ぶか**（m）。溜めている間に地面へ長さを見せる <see cref="HookChargeStrip"/> が使う。</summary>
+    public float ReachAtCurrentCharge => Mathf.Lerp(minRange, maxRange, charge);
+
+    /// <summary>狙いの切り替え（近く／遠く／手動）。</summary>
+    public HookAimAssist AimAssist => aimAssist;
+
     private void Awake()
     {
         if (aim == null)
@@ -232,6 +238,12 @@ public class HookController : MonoBehaviour
         if (aimAssist == null)
         {
             aimAssist = gameObject.AddComponent<HookAimAssist>();
+        }
+
+        // 溜めている間の、地面の長方形（レティクル タイプB）。狙いの切り替えと同じく、無ければここで付ける
+        if (GetComponent<HookChargeStrip>() == null)
+        {
+            gameObject.AddComponent<HookChargeStrip>();
         }
 
         if (inputActions == null)
@@ -397,7 +409,7 @@ public class HookController : MonoBehaviour
         launchDirection.y = 0f;
         launchDirection.Normalize();
 
-        targetDistance = Mathf.Lerp(minRange, maxRange, charge);
+        targetDistance = ReachAtCurrentCharge;
 
         // **オートエイム（近く／遠く）なら、選んだ物資へ向けて飛ばす。**
         // 相手がいれば、チャージ量に関係なく届くところまで伸ばす。

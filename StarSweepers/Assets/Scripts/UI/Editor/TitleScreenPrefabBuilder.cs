@@ -79,14 +79,15 @@ public static class TitleScreenPrefabBuilder
 
     /// <summary>
     /// **プレハブの作りの版。** 作りが大きく変わったとき（部品を足したなど）だけ上げる。
-    /// 1：最初の版 ／ 2：パスワードの欄 ／ 3：パブリック・プライベートの2つのチェック ／ 4：フレンドのサーバー（Steam）（2026/10/6）
+    /// 1：最初の版 ／ 2：パスワードの欄 ／ 3：パブリック・プライベートの2つのチェック ／ 4：フレンドのサーバー（Steam）（2026/10/6） ／ 5：ゲーム全般に「レティクル」の行（2026/10/13）
     /// **版 3 からは作り直さず、<see cref="Upgrade"/> で足りない部品だけを足す**（手で直した配置を消さない）。版を上げたら Upgrade に足す処理を書くこと
     /// </summary>
-    public const int PrefabVersion = 4;
+    public const int PrefabVersion = 5;
 
     /// <summary>
     /// **作り直さずに、足りない部品だけを足す。**
     /// 版 3 → 4：「サーバーを探す」に「フレンドのサーバーを探す」のボタンと、その画面を足す。
+    /// 版 4 → 5：設定のゲーム全般に「レティクル」の行を足す（操作タイプの行を複製して、その下に置く）。
     /// </summary>
     private static void Upgrade(int fromVersion)
     {
@@ -108,6 +109,11 @@ public static class TitleScreenPrefabBuilder
                 {
                     page.transform.SetSiblingIndex(busy.transform.GetSiblingIndex());
                 }
+            }
+
+            if (fromVersion < 5 && FindSettingRow(root, TitleSettingKind.AimReticle) == null)
+            {
+                AddAimReticleRow(root);
             }
 
             root.GetComponent<TitleScreen>().EditorSetPrefabVersion(PrefabVersion);
@@ -154,6 +160,60 @@ public static class TitleScreenPrefabBuilder
             lanRect.anchoredPosition -= new Vector2(0f, lanRect.sizeDelta.y + 22f);
             return;
         }
+    }
+
+    /// <summary>
+    /// 「操作タイプ（コントローラー）」の行を複製して「レティクル」にし、そのすぐ下に置く。
+    /// それより下にある行は1行ぶん下へずらし、入れ物の高さも1行ぶん伸ばす。
+    /// </summary>
+    private static void AddAimReticleRow(GameObject root)
+    {
+        TitleSettingRow source = FindSettingRow(root, TitleSettingKind.ControllerType);
+        if (source == null)
+        {
+            return;
+        }
+
+        RectTransform sourceRect = (RectTransform)source.transform;
+        RectTransform parent = (RectTransform)sourceRect.parent;
+        float step = sourceRect.sizeDelta.y + 12f;
+
+        foreach (RectTransform sibling in parent)
+        {
+            if (sibling.anchoredPosition.y < sourceRect.anchoredPosition.y)
+            {
+                sibling.anchoredPosition -= new Vector2(0f, step);
+            }
+        }
+
+        GameObject copy = Object.Instantiate(source.gameObject, parent);
+        copy.name = "レティクル";
+        copy.transform.SetSiblingIndex(sourceRect.GetSiblingIndex() + 1);
+        ((RectTransform)copy.transform).anchoredPosition = sourceRect.anchoredPosition - new Vector2(0f, step);
+
+        Transform label = copy.transform.Find("Label");
+        if (label != null && label.TryGetComponent(out Text labelText))
+        {
+            labelText.text = "レティクル";
+        }
+
+        TitleSettingRow row = copy.GetComponent<TitleSettingRow>();
+        row.EditorSetup(TitleSettingKind.AimReticle, row.ValueText, null, row.Previous, row.Next);
+
+        parent.sizeDelta += new Vector2(0f, step);
+    }
+
+    private static TitleSettingRow FindSettingRow(GameObject root, TitleSettingKind kind)
+    {
+        foreach (TitleSettingRow row in root.GetComponentsInChildren<TitleSettingRow>(true))
+        {
+            if (row.Kind == kind)
+            {
+                return row;
+            }
+        }
+
+        return null;
     }
 
     private static TitlePart FindPart(GameObject root, TitlePartRole role)
@@ -641,6 +701,7 @@ public static class TitleScreenPrefabBuilder
         Column general = SettingsGroup(page.transform, "GeneralGroup", TitlePartRole.SettingsGeneral);
         AddSliderRow(general, "マウス感度", TitleSettingKind.MouseSensitivity, 0.2f, 3f, 1f);
         AddStepperRow(general, "操作タイプ（コントローラー）", TitleSettingKind.ControllerType);
+        AddStepperRow(general, "レティクル", TitleSettingKind.AimReticle);
         general.Finish();
         general.Rect.gameObject.SetActive(false);
 

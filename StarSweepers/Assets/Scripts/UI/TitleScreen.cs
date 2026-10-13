@@ -20,7 +20,7 @@ using UnityEngine.UI;
 /// | メイン | サーバーを作る／サーバーを探す／設定／ゲームを終了。右下にバージョン |
 /// | サーバーを作る | 名前・最大人数（2〜8）・サーバーの名前・つなぎかた（インターネット／LAN）・プライベートにするか → 作成。1人で練習もここから |
 /// | サーバーを探す | プライベートサーバー（参加コード）／パブリックサーバー（一覧から選ぶ）／LAN（IPアドレス）の3つから選んで参加 |
-/// | 設定 | サウンド（音量）／グラフィック（解像度・画面モード・フレームレート上限・垂直同期・画質）／ゲーム全般（マウス感度・操作タイプ） |
+/// | 設定 | サウンド（音量）／グラフィック（解像度・画面モード・フレームレート上限・垂直同期・画質）／ゲーム全般（マウス感度・操作タイプ・レティクル） |
 ///
 /// ## 画面はプレハブ（2026/10/6 から）
 ///
@@ -1229,6 +1229,12 @@ public class TitleScreen : MonoBehaviour
                     : ControllerOperationType.TypeA;
                 break;
 
+            case TitleSettingKind.AimReticle:
+                GameSettings.AimReticle = GameSettings.AimReticle == AimReticleType.TypeA
+                    ? AimReticleType.TypeB
+                    : AimReticleType.TypeA;
+                break;
+
             case TitleSettingKind.Resolution:
                 if (resolutions.Length > 0)
                 {
@@ -1278,6 +1284,9 @@ public class TitleScreen : MonoBehaviour
                 break;
             case TitleSettingKind.ControllerType:
                 text = GameSettings.ControllerOperation == ControllerOperationType.TypeB ? "タイプB" : "タイプA";
+                break;
+            case TitleSettingKind.AimReticle:
+                text = GameSettings.AimReticle == AimReticleType.TypeB ? "タイプB" : "タイプA";
                 break;
             case TitleSettingKind.Resolution:
                 text = resolutions.Length == 0
