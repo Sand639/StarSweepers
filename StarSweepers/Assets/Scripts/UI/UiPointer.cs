@@ -245,6 +245,15 @@ public class UiPointer : MonoBehaviour
             SendVirtual(lastSentPosition, false, 0f);
         }
 
+        // **マウスを触ったら、十字キーで選んでいた印（ポーズ画面の「▶」など）を外す。**（2026/10/13・大槻さんの報告）
+        // 画面を開いたときにコントローラー用に一番上を選んでおくので、マウスで別の項目を指しても印が残っていた。
+        // 入力欄だけは外さない（選ばれていないと文字を打てない）
+        if (!gameplayAim && RealMouseWasUsed(realMouse))
+        {
+            navigating = false;
+            KeepSelectionForPointer();
+        }
+
         if (gameplayAim)
         {
             // 遊んでいる間は、右スティックは照準に使う。見えないマウスは片付ける

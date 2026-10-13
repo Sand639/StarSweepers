@@ -56,6 +56,12 @@ public class TitleScreen : MonoBehaviour
     /// <summary>インターネットの部屋の一覧を、何秒ごとに取り直すか。</summary>
     private const float InternetRefreshSeconds = 5f;
 
+    /// <summary>
+    /// 一覧を取れなかったとき、次に取り直すまでの秒数。
+    /// 短い間に何度も頼むと、相手のサービスに「頼みすぎ（429 Too Many Requests）」と断られるため、長めに待つ。
+    /// </summary>
+    private const float InternetRetrySeconds = 15f;
+
     /// <summary>いまタイトル画面が出ているか。ポーズ画面やロビーの画面が、これを見て自分を隠す。</summary>
     public static bool IsVisible { get; private set; }
 
@@ -136,7 +142,8 @@ public class TitleScreen : MonoBehaviour
     private string internetProblem = string.Empty;
     private bool searching;
     private bool searchedOnce;
-    private float refreshTimer;
+    /// <summary>次にインターネットの部屋の一覧を取ってよい時刻（Time.unscaledTime）。一覧を開き直しても、これより前には取らない。</summary>
+    private float nextQueryTime;
     private bool lanListening;
     private string roomsSignature = string.Empty;
     private RoomEntry pendingJoin;
@@ -597,7 +604,6 @@ public class TitleScreen : MonoBehaviour
         SetLanListening(true);
 
         roomsSignature = null;
-        refreshTimer = 0f;
         UpdateRoomList();
 
         GameObject plus = PartObject(TitlePartRole.CreateRoomButton);
@@ -632,10 +638,10 @@ public class TitleScreen : MonoBehaviour
     /// <summary>一覧を開いている間、インターネットの部屋を取り直し、LAN の部屋と合わせて並べ直す。</summary>
     private void UpdateRoomList()
     {
-        refreshTimer -= Time.unscaledDeltaTime;
-        if (refreshTimer <= 0f && !searching)
+        // 「マルチプレイ」を何度押しても、決まった間隔より短くは取り直さない（2026/10/13・連打で 429 になった）
+        if (Time.unscaledTime >= nextQueryTime && !searching)
         {
-            refreshTimer = InternetRefreshSeconds;
+            nextQueryTime = Time.unscaledTime + InternetRefreshSeconds;
             SearchInternetRooms();
         }
 
@@ -678,7 +684,9 @@ public class TitleScreen : MonoBehaviour
 
         if (sessions == null)
         {
-            internetProblem = string.IsNullOrEmpty(internet.Message) ? "インターネットの部屋を取れませんでした" : internet.Message;
+            internetProblem = (string.IsNullOrEmpty(internet.Message) ? "インターネットの部屋を取れませんでした" : internet.Message) +
+                              $"。{InternetRetrySeconds:0}秒後に自動でもう一度探します";
+            nextQueryTime = Time.unscaledTime + InternetRetrySeconds;
             internet.ClearFailure();
         }
         else
