@@ -94,7 +94,7 @@ public class SkillCheckZone
 ///
 ///   ・左クリック（LT）で撃つ … くっついた場所で**止まって**ゲージ → 左で押すと、釣り式と同じ軌道で
 ///     **頭上を越えて後ろへ抜け**、そのまま後ろへ飛ぶ（強いほど遠く）
-///   ・右クリック（RT）で撃つ … 頭上まで来て**止まって**ゲージ → 右で押すと、
+///   ・右クリック（RT）で撃つ … 頭上まで来て**止まって**ゲージ（**往復しない。右端まで押さなかったら後ろへ落とす**。2026/10/13）→ 右で押すと、
 ///     **投げた瞬間にプレイヤーが向いている方向**へ**投げる**（強いほど遠く。2026/10/1 から。Throw Toward Facing を OFF にすると、くっついていた場所の向きへ投げ返す）
 ///
 /// 押すまでずっと待つ（時間切れなし）。**ほかの人のフックが当たる**か、爆風を受けると外れる。
@@ -154,6 +154,10 @@ public class ThrowController : MonoBehaviour
 
     [Tooltip("投げるとき、真ん中ちょうどで押したときの力")]
     [SerializeField] private float twoButtonThrowForceMax = 22f;
+
+    [Tooltip("**投げるときのゲージは往復しない。** 右端まで行っても押さなかったら、プレイヤーの後ろへこの力で落とす（2026/10/13・大槻さん）")]
+    [Min(0f)]
+    [SerializeField] private float throwDropBehindForce = 3f;
 
     [Header("重い物（宇宙ごみ式のとき。HeavyHookable が付いた物）")]
     [Tooltip("重さ1のとき、ゲージのマーカーが1秒間に進む量（1で1秒かけて左端→右端）。**往復せず、右端まで行ったら終わる**")]
@@ -1019,6 +1023,12 @@ public class ThrowController : MonoBehaviour
             return Mathf.Clamp01(barTimer * speed);
         }
 
+        if (stage == TwoButtonStage.AimThrow)
+        {
+            // 投げるときも**往復しない**。左端から右端へ1回だけ進み、右端まで行ったら後ろへ落とす（2026/10/13・大槻さん）
+            return Mathf.Clamp01(barTimer * barSweepsPerSecond);
+        }
+
         return Mathf.PingPong(barTimer * barSweepsPerSecond, 1f);
     }
 
@@ -1130,6 +1140,11 @@ public class ThrowController : MonoBehaviour
                 {
                     FinishAsTwoButtonThrow(Accuracy(BarPosition()));
                 }
+                else if (BarPosition() >= 1f)
+                {
+                    // 右端まで押さなかった。**プレイヤーの後ろへ落とす**
+                    FinishAsDropBehind();
+                }
                 break;
         }
     }
@@ -1208,6 +1223,25 @@ public class ThrowController : MonoBehaviour
         Debug.Log($"投げた：真ん中への近さ {accuracy:0.00}（力 {force:0.0}）／{(throwTowardFacing ? "向いている方向" : "くっついていた場所の方向")}へ");
 
         Launch(direction.normalized, force, throwLift);
+    }
+
+    /// <summary>
+    /// **投げずに、プレイヤーの後ろへ落とす。** 頭上で持ったまま、投げるゲージが右端まで行ったとき（2026/10/13・大槻さん）。
+    /// 向いている方向の反対へ、軽く押して手を離す。
+    /// </summary>
+    private void FinishAsDropBehind()
+    {
+        Vector3 behind = -hook.CurrentAimDirection;
+        behind.y = 0f;
+        if (behind.sqrMagnitude < 0.0001f)
+        {
+            behind = -hook.PlayerRoot.forward;
+            behind.y = 0f;
+        }
+
+        Debug.Log("投げるゲージが右端まで行ったので、後ろへ落とした");
+
+        Launch(behind.normalized, throwDropBehindForce, 0f);
     }
 
     /// <summary>
