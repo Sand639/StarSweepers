@@ -76,12 +76,17 @@ public class PlayerAimController : MonoBehaviour
     // 地面に描く照準マーク。プレイヤーの子にすると体と一緒に回ってしまうので、外に置く
     private SpriteRenderer reticle;
 
+    // 操作の読み口（単体操作か、1台のPCで複数人の席か）
+    private PlayerInputSource input;
+
     private void Awake()
     {
         if (aimCamera == null)
         {
             aimCamera = Camera.main;
         }
+
+        input = PlayerInputSource.Get(this);
     }
 
     /// <summary>
@@ -96,7 +101,7 @@ public class PlayerAimController : MonoBehaviour
 
     private void Update()
     {
-        Gamepad pad = Gamepad.current;
+        Gamepad pad = input.Gamepad;
         if (pad != null && GameSettings.ControllerOperation == ControllerOperationType.TypeB)
         {
             UpdateTypeBAim(pad);
@@ -104,7 +109,11 @@ public class PlayerAimController : MonoBehaviour
             return;
         }
 
-        UpdateCursorSource();
+        // 席で読むときは、マウスと右スティックのカーソルを席の側がまとめてくれるので切り替えは要らない
+        if (!input.UsesSeat)
+        {
+            UpdateCursorSource();
+        }
         UpdateAim();
         UpdateReticle();
     }
@@ -234,15 +243,10 @@ public class PlayerAimController : MonoBehaviour
         {
             screenPoint = stickCursor;
         }
-        else
+        else if (!input.TryReadPointer(out screenPoint))
         {
-            Mouse mouse = Mouse.current;
-            if (mouse == null)
-            {
-                return;
-            }
-
-            screenPoint = mouse.position.ReadValue();
+            // 単体操作ならマウス、席ならその席のマウスか右スティックのカーソル
+            return;
         }
 
         Ray ray = aimCamera.ScreenPointToRay(screenPoint);
