@@ -35,6 +35,7 @@ public static class TitleScreenPrefabBuilder
     private static readonly Color WarningColor = new Color(1f, 0.45f, 0.4f, 1f);
     private static readonly Color TitleColor = new Color(1f, 0.95f, 0.55f, 1f);
     private static readonly Color PanelColor = new Color(0.08f, 0.08f, 0.10f, 0.75f);
+    private static readonly Color InputColor = new Color(0.20f, 0.21f, 0.25f, 0.95f);
     private static readonly Color RoomPanelColor = new Color(0f, 0.59f, 0.70f, 0.92f);
     private static readonly Color TintColor = new Color(0f, 0f, 0f, 0.25f);
     private static readonly Vector2 ModeButtonSize = new Vector2(380f, 90f);
@@ -256,11 +257,10 @@ public static class TitleScreenPrefabBuilder
     {
         GameObject page = NewPage("StartPage", root, TitlePartRole.PageStart);
 
-        // ロゴ（画像に変えるときは、この文字を消して Image を置く）
-        Text title = NewText("Title", page.transform, "Star Sweepers", 120, TitleColor, TextAnchor.MiddleCenter);
-        title.fontStyle = FontStyle.Bold;
-        title.gameObject.AddComponent<Outline>().effectDistance = new Vector2(4f, -4f);
-        Place(title.rectTransform, new Vector2(0.5f, 0.5f), new Vector2(0f, 220f), new Vector2(1400f, 220f), new Vector2(0.5f, 0.5f));
+        // タイトルのロゴは背景の絵（title.png）に入っているので、文字は置かない。
+        // 名前の欄と START の後ろに暗い箱を置いて、絵の上でも読めるようにする
+        Image box = NewImage("StartBox", page.transform, new Color(0.04f, 0.05f, 0.08f, 0.82f));
+        Place(box.rectTransform, new Vector2(0.5f, 0.5f), new Vector2(0f, -135f), new Vector2(760f, 300f), new Vector2(0.5f, 0.5f));
 
         NewInput(page.transform, "名前を入力する", TitleInputKind.PlayerName, new Vector2(0f, -60f), new Vector2(640f, 80f));
 
@@ -286,6 +286,10 @@ public static class TitleScreenPrefabBuilder
     private static GameObject BuildModePage(Transform root)
     {
         GameObject page = NewPage("ModePage", root, TitlePartRole.PageMode);
+
+        // 背景のタイトルの絵が、右の表示や部屋の一覧と重ならないように暗くする
+        Image backdrop = NewImage("Backdrop", page.transform, new Color(0.03f, 0.04f, 0.07f, 0.9f));
+        Stretch(backdrop.rectTransform);
 
         Column column = new Column("Buttons", page.transform, ModeButtonSize.x, 26f,
             new Vector2(0f, 1f), new Vector2(160f, -220f), new Vector2(0f, 1f));
@@ -500,7 +504,7 @@ public static class TitleScreenPrefabBuilder
     /// <summary>入力欄（右端に「いま何文字か」）。位置は親の真ん中からのずれ。</summary>
     private static void NewInput(Transform parent, string placeholder, TitleInputKind kind, Vector2 position, Vector2 size)
     {
-        Image background = NewImage("Input " + kind, parent, PanelColor);
+        Image background = NewImage("Input " + kind, parent, InputColor);
         Place(background.rectTransform, new Vector2(0.5f, 0.5f), position, size, new Vector2(0.5f, 0.5f));
 
         Text text = NewText("Text", background.transform, string.Empty, FontSize + 4, TextColor, TextAnchor.MiddleCenter);
