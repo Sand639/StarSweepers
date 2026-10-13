@@ -46,6 +46,7 @@ MonoBehaviour:
   m_EditorClassIdentifier: Assembly-CSharp::UiPointer
   pointerSprite: {fileID: 21300000, guid: ea058e29a629a39489deeb92aad9d53f, type: 3}
   pointerSize: 56
+  recolorSprite: 1
   pointerColor: {r: 1, g: 1, b: 1, a: 1}
   stickSpeed: 1.2
   stickDeadZone: 0.2

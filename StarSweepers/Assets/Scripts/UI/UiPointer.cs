@@ -11,7 +11,9 @@ using UnityEngine.UI;
 /// ・**タイトル画面・ロビーの設定画面・ポーズ画面**では、画面にこの絵を出す
 ///   （遊んでいる間は、プレイヤーの照準 <see cref="PlayerAimController"/> が地面に同じ絵を出すので、こちらは出さない）
 /// ・**マウス**…マウスの位置に出る。クリックはいつもどおり
-/// ・**コントローラー**…**右スティックで動かし、LT（左クリックと同じ）か A で押す**。十字キーの上下でスクロール
+/// ・**コントローラー**…**右スティックで動かし、LT（左クリックと同じ）か A で押す**。LB／RB でスクロール
+/// ・**左スティック・十字キーでは選択肢を選ぶ**（何も選ばれていなければ、いちばん上の選択肢から。A で決定。<see cref="UpdateNavigation"/>）
+/// ・画面のポインターは**白**で出す（絵の形だけを使って白く塗る。暗い画面で見やすいように）
 ///
 /// ## コントローラーで押せる仕組み
 ///
@@ -36,7 +38,11 @@ public class UiPointer : MonoBehaviour
     [Min(4f)]
     [SerializeField] private float pointerSize = 56f;
 
-    [Tooltip("ポインターの色。白なら絵の色のまま")]
+    [Tooltip("ON：絵の形だけを使い、下の Pointer Color の一色で塗る（黒い絵でも白く出せる。暗い画面で見やすいように白にしてある）。" +
+             "OFF：絵の色のまま（Pointer Color を掛け合わせる）")]
+    [SerializeField] private bool recolorSprite = true;
+
+    [Tooltip("ポインターの色")]
     [SerializeField] private Color pointerColor = Color.white;
 
     [Header("コントローラー")]
@@ -48,7 +54,7 @@ public class UiPointer : MonoBehaviour
     [Range(0f, 0.9f)]
     [SerializeField] private float stickDeadZone = 0.2f;
 
-    [Tooltip("十字キーの上下で、1秒にどれだけスクロールするか（マウスのホイールの目盛りの数）")]
+    [Tooltip("LB／RB で、1秒にどれだけスクロールするか（マウスのホイールの目盛りの数）")]
     [Min(0f)]
     [SerializeField] private float scrollNotchesPerSecond = 8f;
 
@@ -72,6 +78,10 @@ public class UiPointer : MonoBehaviour
     private static int panelHoverFrame = -10;
 
     private bool usingStick;
+
+    // 左スティック・十字キーで選択肢を選んでいるか（その間はポインターを隠す）
+    private bool navigating;
+    private bool leftStickWasOut;
     private Vector2 stickPosition;
 
     private Mouse virtualMouse;
@@ -173,11 +183,43 @@ public class UiPointer : MonoBehaviour
         pointerRect.sizeDelta = new Vector2(pointerSize, pointerSize);
 
         pointerImage = imageObject.GetComponent<Image>();
-        pointerImage.sprite = pointerSprite;
+        pointerImage.sprite = recolorSprite && pointerSprite != null ? MakeSilhouette(pointerSprite) : pointerSprite;
         pointerImage.color = pointerColor;
         pointerImage.preserveAspect = true;
         pointerImage.raycastTarget = false;
         pointerImage.enabled = false;
+    }
+
+    /// <summary>
+    /// **絵の形（透けていない所）だけを残した、真っ白の絵を作る。** Image の色を掛け合わせると、その色一色になる。
+    /// 元の画像は読み取り不可の設定のままでよいように、いったん画面外の描画先へ写してから読む。
+    /// </summary>
+    private static Sprite MakeSilhouette(Sprite source)
+    {
+        Texture2D texture = source.texture;
+        RenderTexture target = RenderTexture.GetTemporary(texture.width, texture.height, 0, RenderTextureFormat.ARGB32);
+        RenderTexture previous = RenderTexture.active;
+
+        Graphics.Blit(texture, target);
+        RenderTexture.active = target;
+
+        Texture2D copy = new Texture2D(texture.width, texture.height, TextureFormat.RGBA32, false);
+        copy.ReadPixels(new Rect(0f, 0f, texture.width, texture.height), 0, 0);
+
+        RenderTexture.active = previous;
+        RenderTexture.ReleaseTemporary(target);
+
+        Color32[] pixels = copy.GetPixels32();
+        for (int i = 0; i < pixels.Length; i++)
+        {
+            pixels[i] = new Color32(255, 255, 255, pixels[i].a);
+        }
+        copy.SetPixels32(pixels);
+        copy.Apply();
+
+        Rect rect = source.rect;
+        Vector2 pivot = new Vector2(source.pivot.x / rect.width, source.pivot.y / rect.height);
+        return Sprite.Create(copy, rect, pivot, source.pixelsPerUnit);
     }
 
     // ------------------------------------------------------------
@@ -207,11 +249,13 @@ public class UiPointer : MonoBehaviour
         {
             // 遊んでいる間は、右スティックは照準に使う。見えないマウスは片付ける
             usingStick = false;
+            navigating = false;
             RemoveVirtualMouse();
         }
         else
         {
             UpdateStick(realMouse);
+            UpdateNavigation(realMouse);
         }
 
         if (usingStick)
@@ -223,7 +267,7 @@ public class UiPointer : MonoBehaviour
 
         // 遊んでいる間でも、マウスが OnGUI の小さな枠（カメラの切り替えなど）の上にあるときは出す
         bool overPanel = !usingStick && panelHoverFrame >= Time.frameCount - 2;
-        bool show = pointerSprite != null && (!gameplayAim || overPanel);
+        bool show = pointerSprite != null && !navigating && (!gameplayAim || overPanel);
 
         pointerImage.enabled = show;
         if (show)
@@ -235,7 +279,7 @@ public class UiPointer : MonoBehaviour
         }
     }
 
-    /// <summary>右スティックでポインターを動かし、LT／A で押す。十字キーの上下でスクロールする。</summary>
+    /// <summary>右スティックでポインターを動かし、LT／A で押す。LB／RB でスクロールする。</summary>
     private void UpdateStick(Mouse realMouse)
     {
         Gamepad pad = Gamepad.current;
@@ -270,13 +314,183 @@ public class UiPointer : MonoBehaviour
 
         bool left = pad.leftTrigger.isPressed || pad.buttonSouth.isPressed;
 
-        float scrollDirection = (pad.dpad.up.isPressed ? 1f : 0f) - (pad.dpad.down.isPressed ? 1f : 0f);
+        // 十字キーは選択肢を選ぶのに使うので、スクロールは LB（上）／RB（下）
+        float scrollDirection = (pad.leftShoulder.isPressed ? 1f : 0f) - (pad.rightShoulder.isPressed ? 1f : 0f);
         // Windows のホイール1目盛りは 120
         float scroll = scrollDirection * scrollNotchesPerSecond * 120f * Time.unscaledDeltaTime;
 
         if (stickPosition != lastSentPosition || left != lastSentLeft || scroll != 0f || virtualMouse == null)
         {
             SendVirtual(stickPosition, left, scroll);
+        }
+    }
+
+    // ------------------------------------------------------------
+    // 左スティック・十字キーで選択肢を選ぶ
+    // ------------------------------------------------------------
+
+    /// <summary>
+    /// **左スティック・十字キーで選択肢を選ぶ。**（2026/10/13・大槻さんの依頼）
+    ///
+    /// ・何も選ばれていないときに倒す（押す）と、**画面でいちばん上の選択肢**が選ばれる
+    ///   （タイトルなら「サーバーを作る」）
+    /// ・そこから先、上下左右に動かすのは画面の部品の仕組み（Unity の UI のナビゲーション）に任せる。A で決定
+    /// ・選んでいる間はポインターを隠す。マウスか右スティックを動かすと、ポインターに戻る
+    /// ・一覧（スクロールする枠）の中の選択肢を選んだら、見える所までスクロールする
+    /// </summary>
+    private void UpdateNavigation(Mouse realMouse)
+    {
+        if (navigating && (usingStick || RealMouseWasUsed(realMouse)))
+        {
+            navigating = false;
+        }
+
+        Gamepad pad = Gamepad.current;
+        if (pad == null)
+        {
+            navigating = false;
+            return;
+        }
+
+        bool stickOut = pad.leftStick.ReadValue().magnitude >= 0.5f;
+        bool pressed = (stickOut && !leftStickWasOut) ||
+                       pad.dpad.up.wasPressedThisFrame || pad.dpad.down.wasPressedThisFrame ||
+                       pad.dpad.left.wasPressedThisFrame || pad.dpad.right.wasPressedThisFrame;
+        leftStickWasOut = stickOut;
+
+        if (pressed)
+        {
+            if (!navigating)
+            {
+                // ポインターから切り替えた：押しっぱなしを離し、ポインターが重なっていた部品の「重ねた見た目」も外す
+                usingStick = false;
+                ParkVirtualMouse();
+                navigating = true;
+            }
+
+            if (!HasUsableSelection())
+            {
+                SelectTopmost();
+            }
+        }
+
+        if (navigating)
+        {
+            ScrollToSelected();
+        }
+    }
+
+    /// <summary>
+    /// 見えないマウスを画面の外へ置く。**ポインターが重なっていた部品の「重ねた見た目」を外す**ため
+    /// （画面の部品は、本物のマウスと見えないマウスをまとめて1つのポインターとして扱うので、最後に動いたほうの位置になる）。
+    /// </summary>
+    private void ParkVirtualMouse()
+    {
+        if (virtualMouse == null)
+        {
+            virtualMouse = InputSystem.AddDevice<Mouse>("ScopePointerMouse");
+        }
+
+        Vector2 outside = new Vector2(-10000f, -10000f);
+        InputSystem.QueueStateEvent(virtualMouse, new MouseState { position = outside });
+        lastSentPosition = outside;
+        lastSentLeft = false;
+    }
+
+    /// <summary>いま選ばれている選択肢が、見えていて押せるか。</summary>
+    private static bool HasUsableSelection()
+    {
+        EventSystem eventSystem = EventSystem.current;
+        GameObject selected = eventSystem != null ? eventSystem.currentSelectedGameObject : null;
+        if (selected == null || !selected.activeInHierarchy)
+        {
+            return false;
+        }
+
+        Selectable selectable = selected.GetComponent<Selectable>();
+        return selectable == null || selectable.IsInteractable();
+    }
+
+    /// <summary>画面に出ている押せる選択肢のうち、**いちばん上**（同じ高さなら左）を選ぶ。</summary>
+    private static void SelectTopmost()
+    {
+        EventSystem eventSystem = EventSystem.current;
+        if (eventSystem == null)
+        {
+            return;
+        }
+
+        Selectable best = null;
+        Vector2 bestPosition = Vector2.zero;
+
+        foreach (Selectable selectable in Selectable.allSelectablesArray)
+        {
+            if (selectable == null || !selectable.isActiveAndEnabled || !selectable.IsInteractable() ||
+                selectable.navigation.mode == Navigation.Mode.None ||
+                !(selectable.transform is RectTransform rect))
+            {
+                continue;
+            }
+
+            Canvas canvas = selectable.GetComponentInParent<Canvas>();
+            if (canvas == null || !canvas.isActiveAndEnabled)
+            {
+                continue;
+            }
+
+            Camera camera = canvas.renderMode == RenderMode.ScreenSpaceOverlay ? null : canvas.worldCamera;
+            Vector2 position = RectTransformUtility.WorldToScreenPoint(camera, rect.TransformPoint(rect.rect.center));
+
+            bool higher = best == null ||
+                          position.y > bestPosition.y + 1f ||
+                          (Mathf.Abs(position.y - bestPosition.y) <= 1f && position.x < bestPosition.x);
+            if (higher)
+            {
+                best = selectable;
+                bestPosition = position;
+            }
+        }
+
+        if (best != null)
+        {
+            eventSystem.SetSelectedGameObject(best.gameObject);
+        }
+    }
+
+    /// <summary>選ばれた選択肢がスクロールする一覧の中にあれば、見える所までスクロールする（上下だけ）。</summary>
+    private static void ScrollToSelected()
+    {
+        EventSystem eventSystem = EventSystem.current;
+        GameObject selected = eventSystem != null ? eventSystem.currentSelectedGameObject : null;
+        if (selected == null || !(selected.transform is RectTransform item))
+        {
+            return;
+        }
+
+        ScrollRect scroll = selected.GetComponentInParent<ScrollRect>();
+        if (scroll == null || scroll.content == null || !scroll.vertical)
+        {
+            return;
+        }
+
+        RectTransform viewport = scroll.viewport != null ? scroll.viewport : (RectTransform)scroll.transform;
+        Bounds bounds = RectTransformUtility.CalculateRelativeRectTransformBounds(viewport, item);
+        Rect view = viewport.rect;
+
+        float shift = 0f;
+        if (bounds.max.y > view.yMax)
+        {
+            shift = bounds.max.y - view.yMax;      // 上にはみ出している → 一覧を下げる
+        }
+        else if (bounds.min.y < view.yMin)
+        {
+            shift = bounds.min.y - view.yMin;      // 下にはみ出している → 一覧を上げる
+        }
+
+        if (Mathf.Abs(shift) > 0.5f)
+        {
+            scroll.StopMovement();
+            scroll.content.anchoredPosition -= new Vector2(0f, shift);
         }
     }
 
