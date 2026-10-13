@@ -111,7 +111,7 @@ public sealed class GameTimerUI : MonoBehaviour
             gaugeImage.fillMethod = Image.FillMethod.Radial360;
             gaugeImage.fillOrigin = (int)Image.Origin360.Top;
             // 残り量を上から時計回りに描くため、減少時は空きが時計回りに広がる。
-            gaugeImage.fillClockwise = true;
+            gaugeImage.fillClockwise = false;
             gaugeImage.fillAmount = progress;
             gaugeImage.color = phaseColor;
 
