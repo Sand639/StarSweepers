@@ -7,10 +7,20 @@ public enum ControllerOperationType
     TypeB = 1
 }
 
+/// <summary>釣りフックの狙いの見せ方（レティクル）。</summary>
+public enum AimReticleType
+{
+    /// <summary>今までどおり。地面の照準マークだけ。</summary>
+    TypeA = 0,
+
+    /// <summary>溜めている間、足元から狙う方向へ地面に長方形を伸ばす（<see cref="HookChargeStrip"/>。2026/10/13）。</summary>
+    TypeB = 1
+}
+
 /// <summary>
 /// **設定画面で変えられる値**を、どこからでも見られるようにしたもの。
 ///
-/// 音量・マウス感度・コントローラー操作方法を保存する。
+/// 音量・マウス感度・コントローラー操作方法・レティクルを保存する。
 ///
 /// | 設定 | 効く場所 |
 /// | **音量** | ゲーム全体（`AudioListener.volume`） |
@@ -28,11 +38,13 @@ public static class GameSettings
     private const string VolumeKey = "StarSweepers.Volume";
     private const string SensitivityKey = "StarSweepers.MouseSensitivity";
     private const string ControllerOperationKey = "StarSweepers.ControllerOperationType";
+    private const string AimReticleKey = "StarSweepers.AimReticleType";
 
     private static float volume = 1f;
     private static float mouseSensitivity = 1f;
     private static bool loaded;
     private static ControllerOperationType controllerOperationType = ControllerOperationType.TypeA;
+    private static AimReticleType aimReticleType = AimReticleType.TypeA;
 
     /// <summary>コントローラーの操作方法。タイプAが従来の操作。</summary>
     public static ControllerOperationType ControllerOperation
@@ -49,6 +61,23 @@ public static class GameSettings
                 ? ControllerOperationType.TypeB
                 : ControllerOperationType.TypeA;
             PlayerPrefs.SetInt(ControllerOperationKey, (int)controllerOperationType);
+            PlayerPrefs.Save();
+        }
+    }
+
+    /// <summary>釣りフックのレティクル。タイプAが従来の見せ方。</summary>
+    public static AimReticleType AimReticle
+    {
+        get
+        {
+            Load();
+            return aimReticleType;
+        }
+        set
+        {
+            Load();
+            aimReticleType = value == AimReticleType.TypeB ? AimReticleType.TypeB : AimReticleType.TypeA;
+            PlayerPrefs.SetInt(AimReticleKey, (int)aimReticleType);
             PlayerPrefs.Save();
         }
     }
@@ -106,6 +135,9 @@ public static class GameSettings
         controllerOperationType = PlayerPrefs.GetInt(ControllerOperationKey, 0) == 1
             ? ControllerOperationType.TypeB
             : ControllerOperationType.TypeA;
+        aimReticleType = PlayerPrefs.GetInt(AimReticleKey, 0) == 1
+            ? AimReticleType.TypeB
+            : AimReticleType.TypeA;
 
         AudioListener.volume = volume;
     }

@@ -12,13 +12,14 @@ public enum TitleSettingKind
     FrameRateLimit = 5,
     VSync = 6,
     Quality = 7,
+    AimReticle = 8,
 }
 
 /// <summary>
 /// **タイトル画面の設定の1行に「何の設定か」を付ける印。**
 ///
 /// ・つまみ（Slider）を入れた行 … 音量・マウス感度・フレームレート上限
-/// ・＜ ＞ のボタンを入れた行 … 操作タイプ・解像度・スクリーンモード・垂直同期・画質
+/// ・＜ ＞ のボタンを入れた行 … 操作タイプ・レティクル・解像度・スクリーンモード・垂直同期・画質
 ///
 /// 値の読み書きは <see cref="TitleScreen"/> がする。Value Text に、いまの値（「80 %」など）が入る。
 /// </summary>
