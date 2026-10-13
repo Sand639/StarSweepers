@@ -79,7 +79,7 @@ public class TitleScreenPrefabTests
 
         Assert.That(kinds, Does.Contain(TitleInputKind.PlayerName));
         Assert.That(kinds, Does.Contain(TitleInputKind.ServerName), "部屋を作る窓の、部屋の名前の欄（2026/10/13 にパスワードの欄から変えた）");
-        Assert.That(kinds, Does.Not.Contain(TitleInputKind.CreatePassword), "部屋を作るときはパスワードを付けない");
+        Assert.That(kinds.Contains(TitleInputKind.CreatePassword), Is.False, "部屋を作るときはパスワードを付けない");
         Assert.That(kinds, Does.Contain(TitleInputKind.JoinPassword));
     }
 }

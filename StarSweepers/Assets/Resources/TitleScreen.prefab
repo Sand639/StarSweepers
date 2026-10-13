@@ -169,7 +169,7 @@ GameObject:
   - component: {fileID: 4031521960798602623}
   - component: {fileID: 2809125826075865048}
   m_Layer: 0
-  m_Name: Input CreatePassword
+  m_Name: Input ServerName
   m_TagString: Untagged
   m_Icon: {fileID: 0}
   m_NavMeshLayer: 0
@@ -315,7 +315,7 @@ MonoBehaviour:
   m_Script: {fileID: 11500000, guid: 686cd7b2f72d42b0aaeeb508a58c467a, type: 3}
   m_Name: 
   m_EditorClassIdentifier: Assembly-CSharp::TitleInput
-  kind: 4
+  kind: 1
   counter: {fileID: 4457725152224863202}
 --- !u!1 &394756387189268051
 GameObject:
@@ -1991,7 +1991,7 @@ MonoBehaviour:
   m_Name: 
   m_EditorClassIdentifier: Assembly-CSharp::TitleScreen
   useOsJapaneseFont: 1
-  prefabVersion: 5
+  prefabVersion: 6
 --- !u!1 &2925441546249776698
 GameObject:
   m_ObjectHideFlags: 0
@@ -2929,7 +2929,7 @@ MonoBehaviour:
     m_HorizontalOverflow: 0
     m_VerticalOverflow: 0
     m_LineSpacing: 1
-  m_Text: "\u30D1\u30B9\u30EF\u30FC\u30C9\u306A\u3057"
+  m_Text: "\u90E8\u5C4B\u306E\u540D\u524D"
 --- !u!1 &4213419806003113348
 GameObject:
   m_ObjectHideFlags: 0
@@ -2942,7 +2942,7 @@ GameObject:
   - component: {fileID: 2922230971697452046}
   - component: {fileID: 4994899261618525005}
   m_Layer: 0
-  m_Name: PasswordLabel
+  m_Name: RoomNameLabel
   m_TagString: Untagged
   m_Icon: {fileID: 0}
   m_NavMeshLayer: 0
@@ -3008,7 +3008,7 @@ MonoBehaviour:
     m_HorizontalOverflow: 0
     m_VerticalOverflow: 0
     m_LineSpacing: 1
-  m_Text: "\u30D1\u30B9\u30EF\u30FC\u30C9\uFF08\u7A7A\u306A\u3089\u306A\u3057\u3002\u30A4\u30F3\u30BF\u30FC\u30CD\u30C3\u30C8\u306E\u90E8\u5C4B\u3060\u3051\uFF09"
+  m_Text: "\u90E8\u5C4B\u306E\u540D\u524D\uFF08\u7A7A\u306A\u3089\u300C\u81EA\u5206\u306E\u540D\u524D\u306E\u90E8\u5C4B\u300D\uFF09"
 --- !u!1 &4949023231461221146
 GameObject:
   m_ObjectHideFlags: 0
