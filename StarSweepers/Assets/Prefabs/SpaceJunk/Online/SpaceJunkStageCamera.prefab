@@ -11,6 +11,8 @@ GameObject:
   - component: {fileID: 1153634048381135175}
   - component: {fileID: 6581399142656258234}
   - component: {fileID: 274889651137596418}
+  - component: {fileID: 4013693125783834162}
+  - component: {fileID: 5033161268948801877}
   - component: {fileID: 2144252493291625130}
   - component: {fileID: 2144252493291625131}
   - component: {fileID: 3235397086538409408}
@@ -95,6 +97,62 @@ AudioListener:
   m_PrefabAsset: {fileID: 0}
   m_GameObject: {fileID: 2683871940017614737}
   m_Enabled: 1
+--- !u!114 &4013693125783834162
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 2683871940017614737}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: dedffb7996dfa44499ba2f4f36644dfa, type: 3}
+  m_Name: 
+  m_EditorClassIdentifier: Assembly-CSharp::SpaceJunkWholeStageCamera
+  target: {fileID: 0}
+  displayName: 
+  inCycle: 1
+  pitch: 60
+  screenMargin: 0.04
+  ignoreLargerThan: 200
+  faceOwnSide: 0
+  turnSharpness: 4
+--- !u!114 &5033161268948801877
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 2683871940017614737}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: c15fa73ddaca8c54a8130a391885bcc4, type: 3}
+  m_Name: 
+  m_EditorClassIdentifier: Assembly-CSharp::SpaceJunkTeamGroupCamera
+  target: {fileID: 0}
+  displayName: 
+  inCycle: 1
+  pitch: 58
+  faceOwnSide: 1
+  turnSharpness: 6
+  selfWeight: 0.5
+  includeTeammates: 1
+  teammateMaxDistance: 40
+  ignoreBelowHeight: -4
+  memberPadding: 1.5
+  memberHeight: 2
+  deadZoneWidth: 6
+  deadZoneDepth: 4
+  followSharpness: 5
+  heightSharpness: 1.5
+  minDistance: 18
+  maxDistance: 36
+  screenMargin: 0.12
+  zoomOutSharpness: 4
+  zoomInSharpness: 1
+  zoomInDelay: 0.8
+  zoomInDeadBand: 0.1
+  drawGizmos: 1
 --- !u!114 &2144252493291625130
 MonoBehaviour:
   m_ObjectHideFlags: 0
@@ -108,6 +166,8 @@ MonoBehaviour:
   m_Name: 
   m_EditorClassIdentifier: Assembly-CSharp::SpaceJunkTeamFollowCamera
   target: {fileID: 0}
+  displayName: 
+  inCycle: 1
   offset: {x: 0, y: 16, z: -9}
   pitch: 60
   followSharpness: 10
@@ -124,13 +184,10 @@ MonoBehaviour:
   m_Script: {fileID: 11500000, guid: 025057f05d664a75a05a73753e0e518d, type: 3}
   m_Name: 
   m_EditorClassIdentifier: Assembly-CSharp::SpaceJunkCameraModeSwitch
-  startMode: 0
+  firstMode: {fileID: 4013693125783834162}
   toggleKey: 17
   toggleButton: 13
-  wholePitch: 60
-  screenMargin: 0.04
-  ignoreLargerThan: 200
-  moveSharpness: 6
+  blendSeconds: 0.6
 --- !u!114 &3235397086538409408
 MonoBehaviour:
   m_ObjectHideFlags: 0

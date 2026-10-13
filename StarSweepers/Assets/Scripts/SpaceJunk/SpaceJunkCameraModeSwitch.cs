@@ -1,38 +1,33 @@
+using System.Collections.Generic;
 using UnityEngine;
 using UnityEngine.InputSystem;
 using UnityEngine.InputSystem.LowLevel;
 
 /// <summary>
-/// **全体カメラと自陣カメラを、キーで切り替える部品。** 宇宙ごみの STAGE_01〜05 のカメラに付ける（2026/10/6・大槻さん）。
+/// **カメラの種類を、キーで順に切り替える部品。** 宇宙ごみの STAGE_01〜05 のカメラに付ける。
 ///
-/// | モード | 見え方 |
+/// 2026/10/6（大槻さん）に「全体カメラ ⇔ 自陣カメラ」の切り替えとして作り、
+/// 2026/10/7（小野田さん）に**カメラの種類を部品に分けた**。この部品は「どれを使うか」と「切り替えのつなぎ」だけを受け持つ。
+///
+/// | 種類（同じカメラに付いている部品） | 見え方 |
 /// | --- | --- |
-/// | 全体カメラ（**最初はこちら**） | **ステージ全体が画面に収まる位置**から、北向きに見下ろす。動かない |
-/// | 自陣カメラ | 自分のプレイヤーを追いかけ、**自陣が画面の手前に来る**ように回る（<see cref="SpaceJunkTeamFollowCamera"/>） |
+/// | 全体（<see cref="SpaceJunkWholeStageCamera"/>） | ステージ全体が画面に収まる位置から見下ろす |
+/// | チーム（<see cref="SpaceJunkTeamGroupCamera"/>） | 自陣が手前のまま、自分と味方がいつも画面に入る |
+/// | 自分（<see cref="SpaceJunkTeamFollowCamera"/>） | 自陣が手前のまま、自分だけを追う |
 ///
-/// ・**C キー**（コントローラーは **Back**）で切り替える。切り替えるとカメラがなめらかに移る
+/// ・**C キー**（コントローラーは **Back**）で、**カメラに付いている順に**次の種類へ切り替える
+/// ・切り替えるとき、前のカメラの位置から「切り替えの秒数」かけてなめらかに移る
 /// ・切り替えは**自分の画面だけ**（ほかの人のカメラは変わらない）
-/// ・全体カメラの位置は、**シーンが始まったときにステージの大きさを測って自動で決める**（ステージの形を変えても直さなくてよい）。
-///   プレイヤー・素材・爆弾・列車など、動く物は測る対象に入れない
+/// ・各種類の「切り替えに入れる」を OFF にすると、その種類は飛ばす。順番はインスペクターで部品を上下に動かして変える
 ///
-/// 移動（W＝画面の奥）はカメラの向きに合わせて回るので、どちらのモードでも画面どおりに動ける。
+/// 移動（W＝画面の奥）はカメラの向きに合わせて回るので、どの種類でも画面どおりに動ける。
 /// </summary>
 [RequireComponent(typeof(Camera))]
 public class SpaceJunkCameraModeSwitch : MonoBehaviour
 {
-    /// <summary>カメラのモード。</summary>
-    public enum Mode
-    {
-        /// <summary>ステージ全体を映す</summary>
-        WholeStage = 0,
-
-        /// <summary>自陣が手前に来るように、自分を追いかける</summary>
-        Team = 1,
-    }
-
     [Header("切り替え")]
-    [Tooltip("始まったときのモード")]
-    [SerializeField] private Mode startMode = Mode.WholeStage;
+    [Tooltip("始まったときのカメラ（同じカメラに付いている種類の部品をドラッグする）。空なら切り替えの順でいちばん上")]
+    [SerializeField] private SpaceJunkCameraMode firstMode;
 
     [Tooltip("切り替えるキー")]
     [SerializeField] private Key toggleKey = Key.C;
@@ -40,40 +35,33 @@ public class SpaceJunkCameraModeSwitch : MonoBehaviour
     [Tooltip("切り替えるコントローラーのボタン")]
     [SerializeField] private GamepadButton toggleButton = GamepadButton.Select;
 
-    [Header("全体カメラ")]
-    [Tooltip("見下ろす角度（度）")]
-    [SerializeField] private float wholePitch = 60f;
+    [Tooltip("切り替えたときに、前のカメラの位置から移り終わるまでの秒数。0 ですぐ切り替わる")]
+    [Min(0f)]
+    [SerializeField] private float blendSeconds = 0.6f;
 
-    [Tooltip("画面の端に空けるすき間（画面の幅を1としたときの割合）")]
-    [SerializeField] private float screenMargin = 0.04f;
-
-    [Tooltip("これより大きい物は、ステージの大きさを測るときに入れない（遠くの背景など）")]
-    [SerializeField] private float ignoreLargerThan = 200f;
-
-    [Tooltip("モードを切り替えたときに、カメラが移るなめらかさ。大きいほどすぐ移る")]
-    [SerializeField] private float moveSharpness = 6f;
-
-    /// <summary>いまのモード。</summary>
-    public Mode CurrentMode { get; private set; }
+    /// <summary>いまの種類。</summary>
+    public SpaceJunkCameraMode Current { get; private set; }
 
     /// <summary>画面の案内に出す、切り替えのキーの名前（例：「C／Back」）。カメラが無ければ空。</summary>
     public static string LocalToggleKeyName => current != null ? current.toggleLabel : string.Empty;
 
+    /// <summary>画面の案内に出す、いまの種類と切り替えられる種類（例：「いま：チーム（全体／チーム／自分）」）。</summary>
+    public static string LocalModeSummary => current != null ? current.Summary() : string.Empty;
+
     /// <summary>いま動いている切り替え部品（シーンが切り替わる間は、古い物と新しい物が一瞬重なるため）。</summary>
     private static SpaceJunkCameraModeSwitch current;
 
+    private readonly List<SpaceJunkCameraMode> modes = new List<SpaceJunkCameraMode>();
+    private readonly System.Text.StringBuilder summary = new System.Text.StringBuilder();
     private string toggleLabel;
 
-    private Camera view;
-    private SpaceJunkTeamFollowCamera teamCamera;
-    private Vector3 wholePosition;
-    private Quaternion wholeRotation;
-    private bool wholeReady;
+    private Vector3 blendFromPosition;
+    private Quaternion blendFromRotation;
+    private float blendTime;
+    private bool blending;
 
     private void Awake()
     {
-        view = GetComponent<Camera>();
-        teamCamera = GetComponent<SpaceJunkTeamFollowCamera>();
         toggleLabel = $"{toggleKey}／{GamepadInput.Label(toggleButton)}";
         current = this;
     }
@@ -89,8 +77,15 @@ public class SpaceJunkCameraModeSwitch : MonoBehaviour
 
     private void Start()
     {
-        MeasureWholeStage();
-        SetMode(startMode, snap: true);
+        RefreshModes();
+
+        SpaceJunkCameraMode start = firstMode != null && firstMode.InCycle ? firstMode : null;
+        if (start == null && modes.Count > 0)
+        {
+            start = modes[0];
+        }
+
+        SetMode(start, snap: true);
     }
 
     private void Update()
@@ -101,162 +96,109 @@ public class SpaceJunkCameraModeSwitch : MonoBehaviour
 
         if (pressed)
         {
-            SetMode(CurrentMode == Mode.WholeStage ? Mode.Team : Mode.WholeStage, snap: false);
+            Next();
         }
     }
 
     private void LateUpdate()
     {
-        if (CurrentMode != Mode.WholeStage || !wholeReady)
+        if (Current == null || !Current.TryGetPose(Time.deltaTime, out Vector3 position, out Quaternion rotation))
         {
             return;
         }
 
-        float t = 1f - Mathf.Exp(-moveSharpness * Time.deltaTime);
-        transform.SetPositionAndRotation(
-            Vector3.Lerp(transform.position, wholePosition, t),
-            Quaternion.Slerp(transform.rotation, wholeRotation, t));
+        if (blending)
+        {
+            blendTime += Time.deltaTime;
+            float k = blendSeconds > 0f ? Mathf.SmoothStep(0f, 1f, blendTime / blendSeconds) : 1f;
+            position = Vector3.Lerp(blendFromPosition, position, k);
+            rotation = Quaternion.Slerp(blendFromRotation, rotation, k);
+            blending = k < 1f;
+        }
+
+        transform.SetPositionAndRotation(position, rotation);
     }
 
-    /// <summary>モードを変える。<paramref name="snap"/> なら、なめらかにせずその場所へ飛ぶ。</summary>
-    public void SetMode(Mode mode, bool snap)
+    /// <summary>次の種類へ切り替える（付いている順。最後の次は最初に戻る）。</summary>
+    public void Next()
     {
-        CurrentMode = mode;
-
-        // 自陣カメラは、自陣モードのときだけ動かす（全体モードでは位置を決めない）
-        if (teamCamera != null)
+        RefreshModes();
+        if (modes.Count == 0)
         {
-            teamCamera.enabled = mode == Mode.Team;
+            return;
         }
 
-        if (mode == Mode.WholeStage && snap && wholeReady)
-        {
-            transform.SetPositionAndRotation(wholePosition, wholeRotation);
-        }
+        int index = modes.IndexOf(Current);
+        SetMode(modes[(index + 1) % modes.Count], snap: false);
     }
 
-    // ------------------------------------------------------------
-    // 全体カメラの位置を決める
-    // ------------------------------------------------------------
+    /// <summary>種類を変える。<paramref name="snap"/> なら、なめらかにせずその場所へ飛ぶ。</summary>
+    public void SetMode(SpaceJunkCameraMode mode, bool snap)
+    {
+        if (mode == null)
+        {
+            return;
+        }
+
+        Current = mode;
+        mode.Activate();
+
+        blending = !snap && blendSeconds > 0f;
+        blendTime = 0f;
+        blendFromPosition = transform.position;
+        blendFromRotation = transform.rotation;
+    }
 
     /// <summary>
-    /// **ステージの見た目が占める範囲を測り、その角8つが全部画面に収まる、いちばん近い位置を求める。**
-    /// （宇宙ごみの全体固定カメラのマップを作ったときと同じ求め方。こちらは実行したときに測る）
+    /// 追いかける相手を、付いている種類**全部**に渡す。
+    /// （<c>SpaceJunkPlayerSetup</c> は自分カメラにだけ渡しているが、ほかの種類は自分のプレイヤーを自分で探すので、呼ばなくても動く）
     /// </summary>
-    private void MeasureWholeStage()
+    public void SetTarget(Transform target)
     {
-        if (!TryGetStageBounds(out Bounds stage))
+        foreach (SpaceJunkCameraMode mode in GetComponents<SpaceJunkCameraMode>())
         {
-            // 測れなければ、置いてある位置を全体カメラの位置にする
-            wholePosition = transform.position;
-            wholeRotation = transform.rotation;
-            wholeReady = true;
-            return;
+            mode.SetTarget(target);
         }
-
-        wholeRotation = Quaternion.Euler(wholePitch, 0f, 0f);
-        Vector3 back = wholeRotation * Vector3.back;
-        Vector3[] corners = CornersOf(stage);
-
-        Vector3 savedPosition = transform.position;
-        Quaternion savedRotation = transform.rotation;
-
-        float near = 1f;
-        float far = 500f;
-
-        for (int i = 0; i < 40; i++)
-        {
-            float middle = (near + far) * 0.5f;
-            transform.SetPositionAndRotation(stage.center + back * middle, wholeRotation);
-
-            if (AllInView(corners))
-            {
-                far = middle;
-            }
-            else
-            {
-                near = middle;
-            }
-        }
-
-        transform.SetPositionAndRotation(savedPosition, savedRotation);
-
-        wholePosition = stage.center + back * far;
-        wholeReady = true;
-
-        // 遠くに置くので、奥が切れないよう描く距離を広げておく
-        view.farClipPlane = Mathf.Max(view.farClipPlane, far + stage.extents.magnitude * 2f);
     }
 
-    /// <summary>ステージの見た目の範囲。動く物（プレイヤー・物資・列車）や画面の表示は入れない。</summary>
-    private bool TryGetStageBounds(out Bounds bounds)
+    /// <summary>切り替えに入れる種類を、付いている順に集め直す（再生中に ON/OFF を変えても効くように）。</summary>
+    private void RefreshModes()
     {
-        bounds = default;
-        bool found = false;
+        modes.Clear();
 
-        foreach (Renderer renderer in FindObjectsByType<Renderer>(FindObjectsInactive.Exclude, FindObjectsSortMode.None))
+        foreach (SpaceJunkCameraMode mode in GetComponents<SpaceJunkCameraMode>())
         {
-            if (renderer == null || !renderer.enabled || !renderer.gameObject.scene.IsValid() ||
-                renderer.gameObject.scene != gameObject.scene)
+            if (mode.InCycle)
             {
-                continue;
-            }
-
-            if (renderer.transform.IsChildOf(transform) ||
-                renderer.GetComponentInParent<Canvas>() != null ||
-                renderer.GetComponentInParent<HookableObject>() != null ||
-                renderer.GetComponentInParent<FishingPlayerController>() != null ||
-                renderer.GetComponentInParent<SpaceJunkTrain>() != null)
-            {
-                continue;
-            }
-
-            Bounds b = renderer.bounds;
-            if (b.size.x > ignoreLargerThan || b.size.z > ignoreLargerThan)
-            {
-                continue;
-            }
-
-            if (!found)
-            {
-                bounds = b;
-                found = true;
-            }
-            else
-            {
-                bounds.Encapsulate(b);
+                modes.Add(mode);
             }
         }
-
-        return found;
     }
 
-    private bool AllInView(Vector3[] corners)
+    private string Summary()
     {
-        foreach (Vector3 corner in corners)
+        if (Current == null)
         {
-            Vector3 v = view.WorldToViewportPoint(corner);
-
-            if (v.z <= view.nearClipPlane ||
-                v.x < screenMargin || v.x > 1f - screenMargin ||
-                v.y < screenMargin || v.y > 1f - screenMargin)
-            {
-                return false;
-            }
+            return string.Empty;
         }
-        return true;
-    }
 
-    private static Vector3[] CornersOf(Bounds b)
-    {
-        Vector3 min = b.min;
-        Vector3 max = b.max;
-        return new[]
+        summary.Clear();
+        summary.Append("いま：").Append(Current.DisplayName);
+
+        if (modes.Count > 1)
         {
-            new Vector3(min.x, min.y, min.z), new Vector3(max.x, min.y, min.z),
-            new Vector3(min.x, min.y, max.z), new Vector3(max.x, min.y, max.z),
-            new Vector3(min.x, max.y, min.z), new Vector3(max.x, max.y, min.z),
-            new Vector3(min.x, max.y, max.z), new Vector3(max.x, max.y, max.z),
-        };
+            summary.Append("（");
+            for (int i = 0; i < modes.Count; i++)
+            {
+                if (i > 0)
+                {
+                    summary.Append("／");
+                }
+                summary.Append(modes[i].DisplayName);
+            }
+            summary.Append("）");
+        }
+
+        return summary.ToString();
     }
 }

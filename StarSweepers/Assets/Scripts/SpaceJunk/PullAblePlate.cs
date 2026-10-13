@@ -1,5 +1,6 @@
 using System.Collections;
 using System.Collections.Generic;
+using Unity.Netcode;
 using UnityEngine;
 
 public enum PullAblePlateDirection
@@ -16,7 +17,8 @@ public enum PullAblePlateDirection
 
 /// <summary>8方向から拉扯でき、上にいる Player も一緒に運ぶ移動床。</summary>
 [RequireComponent(typeof(Rigidbody))]
-public class PullAblePlate : MonoBehaviour
+[RequireComponent(typeof(NetworkObject))]
+public class PullAblePlate : NetworkBehaviour
 {
     private const float CollisionSkin = 0.01f;
     private static readonly HashSet<PullAblePlate> EnabledPlates = new();
@@ -49,9 +51,13 @@ public class PullAblePlate : MonoBehaviour
     [SerializeField] private PullAblePlatePullPoint frontLeftPullPoint;
 
     private readonly Dictionary<Transform, CharacterController> passengers = new();
+    private readonly NetworkVariable<bool> networkIsMoving = new(false);
     private Rigidbody body;
+    private bool localIsMoving;
+    private bool hasObservedPosition;
+    private Vector3 observedPosition;
 
-    public bool IsMoving { get; private set; }
+    public bool IsMoving => IsSpawned ? networkIsMoving.Value : localIsMoving;
 
     private void Awake()
     {
@@ -61,15 +67,52 @@ public class PullAblePlate : MonoBehaviour
     private void OnEnable()
     {
         EnabledPlates.Add(this);
+        ResetPositionObservation();
         RefreshPullPointStates();
     }
 
     private void OnDisable()
     {
         StopAllCoroutines();
-        IsMoving = false;
+        SetMoving(false);
+        hasObservedPosition = false;
         EnabledPlates.Remove(this);
         passengers.Clear();
+    }
+
+    public override void OnNetworkSpawn()
+    {
+        localIsMoving = false;
+        ResetPositionObservation();
+        if (IsServer)
+        {
+            networkIsMoving.Value = false;
+        }
+    }
+
+    public override void OnNetworkDespawn()
+    {
+        StopAllCoroutines();
+        localIsMoving = false;
+        hasObservedPosition = false;
+    }
+
+    private void LateUpdate()
+    {
+        if (!IsSpawned)
+        {
+            hasObservedPosition = false;
+            return;
+        }
+
+        Vector3 currentPosition = transform.position;
+        Vector3 delta = CalculateObservedDelta(
+            hasObservedPosition,
+            observedPosition,
+            currentPosition);
+        observedPosition = currentPosition;
+        hasObservedPosition = true;
+        MovePassengers(delta);
     }
 
     private void OnValidate()
@@ -79,10 +122,49 @@ public class PullAblePlate : MonoBehaviour
 
     public bool Pull(PullAblePlateDirection direction)
     {
+        if (!IsDirectionActive(direction))
+        {
+            return false;
+        }
+
+        if (IsSpawned && !IsServer)
+        {
+            RequestPullServerRpc(direction);
+            return true;
+        }
+
         return StartMove(CalculateDirection(direction, transform.rotation));
     }
 
     public bool PullToward(Vector3 target)
+    {
+        if (IsSpawned && !IsServer)
+        {
+            RequestPullTowardServerRpc(target);
+            return true;
+        }
+
+        return StartMoveToward(target);
+    }
+
+    [ServerRpc(RequireOwnership = false)]
+    private void RequestPullServerRpc(PullAblePlateDirection direction)
+    {
+        if (!IsDirectionActive(direction))
+        {
+            return;
+        }
+
+        StartMove(CalculateDirection(direction, transform.rotation));
+    }
+
+    [ServerRpc(RequireOwnership = false)]
+    private void RequestPullTowardServerRpc(Vector3 target)
+    {
+        StartMoveToward(target);
+    }
+
+    private bool StartMoveToward(Vector3 target)
     {
         Vector3 direction = target - transform.position;
         direction.y = 0f;
@@ -200,9 +282,28 @@ public class PullAblePlate : MonoBehaviour
         return worldDirection.sqrMagnitude > 0.0001f ? worldDirection.normalized : Vector3.zero;
     }
 
+    public static bool ShouldMovePassengerOnThisPeer(
+        bool plateIsOnline,
+        bool passengerIsOnline,
+        bool passengerIsOwner)
+    {
+        return !plateIsOnline || !passengerIsOnline || passengerIsOwner;
+    }
+
+    public static Vector3 CalculateObservedDelta(
+        bool hasPreviousPosition,
+        Vector3 previousPosition,
+        Vector3 currentPosition)
+    {
+        return hasPreviousPosition ? currentPosition - previousPosition : Vector3.zero;
+    }
+
     private bool StartMove(Vector3 direction)
     {
-        if (IsMoving || direction.sqrMagnitude <= 0.0001f || moveDistance <= 0f)
+        if ((IsSpawned && !IsServer) ||
+            IsMoving ||
+            direction.sqrMagnitude <= 0.0001f ||
+            moveDistance <= 0f)
         {
             return false;
         }
@@ -225,7 +326,7 @@ public class PullAblePlate : MonoBehaviour
 
     private IEnumerator MoveTo(Vector3 destination)
     {
-        IsMoving = true;
+        SetMoving(true);
         Vector3 start = body.position;
         Vector3 current = start;
         float elapsed = 0f;
@@ -238,7 +339,7 @@ public class PullAblePlate : MonoBehaviour
             Vector3 next = Vector3.Lerp(start, destination, t);
             if (ApplyMoveStep(next, current))
             {
-                IsMoving = false;
+                SetMoving(false);
                 yield break;
             }
 
@@ -246,7 +347,16 @@ public class PullAblePlate : MonoBehaviour
         }
 
         ApplyMoveStep(destination, current);
-        IsMoving = false;
+        SetMoving(false);
+    }
+
+    private void SetMoving(bool moving)
+    {
+        localIsMoving = moving;
+        if (IsSpawned && IsServer && networkIsMoving.Value != moving)
+        {
+            networkIsMoving.Value = moving;
+        }
     }
 
     private bool ApplyMoveStep(Vector3 nextPosition)
@@ -266,7 +376,11 @@ public class PullAblePlate : MonoBehaviour
             transform.position = allowedPosition;
         }
 
-        MovePassengers(allowedDelta);
+        if (!IsSpawned)
+        {
+            MovePassengers(allowedDelta);
+        }
+
         return blocked;
     }
 
@@ -332,6 +446,14 @@ public class PullAblePlate : MonoBehaviour
                 continue;
             }
 
+            NetworkObject passengerNetworkObject = passenger.Key.GetComponentInParent<NetworkObject>();
+            bool passengerIsOnline = passengerNetworkObject != null && passengerNetworkObject.IsSpawned;
+            bool passengerIsOwner = passengerNetworkObject == null || passengerNetworkObject.IsOwner;
+            if (!ShouldMovePassengerOnThisPeer(IsSpawned, passengerIsOnline, passengerIsOwner))
+            {
+                continue;
+            }
+
             passenger.Value.Move(delta);
         }
 
@@ -344,6 +466,12 @@ public class PullAblePlate : MonoBehaviour
         {
             passengers.Remove(playerRoot);
         }
+    }
+
+    private void ResetPositionObservation()
+    {
+        observedPosition = transform.position;
+        hasObservedPosition = false;
     }
 
     private void RefreshPullPointStates()

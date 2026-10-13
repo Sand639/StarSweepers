@@ -1554,6 +1554,22 @@ PrefabInstance:
       propertyPath: m_Name
       value: PullAblePlate
       objectReference: {fileID: 0}
+    - target: {fileID: 5023155396371016215, guid: 348289765b4263e43afe47906d27e553, type: 3}
+      propertyPath: m_InScenePlaced
+      value: 1
+      objectReference: {fileID: 0}
+    - target: {fileID: 5023155396371016215, guid: 348289765b4263e43afe47906d27e553, type: 3}
+      propertyPath: GlobalObjectIdHash
+      value: 1081756347
+      objectReference: {fileID: 0}
+    - target: {fileID: 5023155396371016215, guid: 348289765b4263e43afe47906d27e553, type: 3}
+      propertyPath: SceneMigrationSynchronization
+      value: 0
+      objectReference: {fileID: 0}
+    - target: {fileID: 5023155396371016215, guid: 348289765b4263e43afe47906d27e553, type: 3}
+      propertyPath: InScenePlacedSourceGlobalObjectIdHash
+      value: 2545849649
+      objectReference: {fileID: 0}
     - target: {fileID: 7100000000000000002, guid: 348289765b4263e43afe47906d27e553, type: 3}
       propertyPath: backActive
       value: 0

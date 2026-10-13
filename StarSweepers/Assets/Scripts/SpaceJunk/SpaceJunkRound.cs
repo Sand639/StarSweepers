@@ -459,7 +459,10 @@ public partial class SpaceJunkRound : NetworkBehaviour
         // 集めた種類の印も付けておく（画面の表示に使う）
         collected[team] = collected[team] | KindBit(kind);
 
-        int bonus = ServerEventBonusOnCollect(team, kind, item);
+        // ステージに置いた重いデブリなら、その得点（イベントのボーナスとは重ねない）
+        int bonus = ServerTryStageHeavyCollect(team, item, out int heavyBonus)
+            ? heavyBonus
+            : ServerEventBonusOnCollect(team, kind, item);
 
         // 真ん中の特殊デブリ（SpaceJunkBonusDebris）なら、その点数も足す
         if (item != null && item.TryGetComponent(out SpaceJunkBonusDebris bonusDebris))

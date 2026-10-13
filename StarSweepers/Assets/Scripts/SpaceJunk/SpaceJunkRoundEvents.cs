@@ -311,6 +311,15 @@ public partial class SpaceJunkRound
     /// <summary>重いデブリを1個入れたときの得点（ホストの設定を全員へ配る。画面の表示用）。</summary>
     private readonly NetworkVariable<int> heavyPoints = new NetworkVariable<int>(20);
 
+    /// <summary>
+    /// **ステージに置いた重いデブリ**（イベントとは別。置き場所の部品 <see cref="SpaceJunkBombPoints"/> が出す。2026/10/8）の番号。
+    /// 重さ・得点・見た目はイベントの重いデブリと同じ設定を使う。イベントが終わっても重いまま。
+    /// </summary>
+    private readonly NetworkList<ulong> stageHeavyIds = new NetworkList<ulong>();
+
+    /// <summary>ステージに置いた重いデブリの重さ。並びは <see cref="stageHeavyIds"/> と同じ。</summary>
+    private readonly NetworkList<float> stageHeavyWeights = new NetworkList<float>();
+
     /// <summary>このPCで、いま重い物にしているデブリ。</summary>
     private readonly HashSet<ulong> appliedHeavyIds = new HashSet<ulong>();
 
@@ -343,6 +352,8 @@ public partial class SpaceJunkRound
         setStep.Clear();
         heavyIds.Clear();
         heavyWeights.Clear();
+        stageHeavyIds.Clear();
+        stageHeavyWeights.Clear();
 
         for (int i = 0; i < SpaceJunkTeams.MaxTeams * SpaceJunkMaterials.Count; i++)
         {
@@ -402,6 +413,9 @@ public partial class SpaceJunkRound
     /// <summary>時間が来たらイベントを始め、続く秒数が過ぎたら終わらせる。<see cref="Update"/> から呼ぶ。</summary>
     private void ServerUpdateEvents()
     {
+        // ステージに置いた重いデブリは、イベントに関係なく、場外へ落ちて消えたら一覧から外す
+        ServerPruneLost(stageHeavyIds, stageHeavyWeights);
+
         if (activeEvent.Value != SpaceJunkEventKind.None)
         {
             if (!serverEventFinished && !IsEventRunning)
@@ -690,6 +704,56 @@ public partial class SpaceJunkRound
         }
     }
 
+    /// <summary>
+    /// **ステージに置いた重いデブリとして登録する**（ホストだけ。置き場所の部品 <see cref="SpaceJunkBombPoints"/> から呼ぶ）。
+    /// 重さはイベントの設定の X〜Y からランダム。見た目は一覧を見て各PCが付ける（<see cref="UpdateHeavyMarks"/>）。
+    /// </summary>
+    public void ServerAddStageHeavy(NetworkObject item)
+    {
+        if (!IsServer || !IsSpawned || item == null || !item.IsSpawned)
+        {
+            return;
+        }
+
+        float weight = Mathf.Max(0.1f, EventSettings.PickHeavyWeight());
+        stageHeavyIds.Add(item.NetworkObjectId);
+        stageHeavyWeights.Add(weight);
+
+        Debug.Log($"[JUNK] ステージの重いデブリ（重さ {weight:0.#}）を出しました。");
+    }
+
+    /// <summary>
+    /// ステージに置いた重いデブリなら、一覧から外して true を返す。<paramref name="bonus"/> は1点との差のぶん
+    /// （合計が重いデブリの得点になる。イベントの重いデブリと同じ点）。
+    /// </summary>
+    private bool ServerTryStageHeavyCollect(int team, NetworkObject item, out int bonus)
+    {
+        bonus = 0;
+        if (item == null)
+        {
+            return false;
+        }
+
+        int index = stageHeavyIds.IndexOf(item.NetworkObjectId);
+        if (index < 0)
+        {
+            return false;
+        }
+
+        float weight = index < stageHeavyWeights.Count ? stageHeavyWeights[index] : 1f;
+        stageHeavyIds.RemoveAt(index);
+        if (index < stageHeavyWeights.Count)
+        {
+            stageHeavyWeights.RemoveAt(index);
+        }
+
+        int points = EventSettings.HeavyPointsFor(weight);
+        Debug.Log($"[JUNK] {SpaceJunkTeams.TeamName(team)} がステージの重いデブリ（重さ {weight:0.#}）を入れました（{points} 点）。");
+
+        bonus = Mathf.Max(0, points - PointPerItem);
+        return true;
+    }
+
     /// <summary>重いデブリなら、1点との差のぶんを返す（合計が特殊デブリの得点になる）。</summary>
     private int ServerHeavyCollect(int team, NetworkObject item)
     {
@@ -738,31 +802,9 @@ public partial class SpaceJunkRound
         var spawned = NetworkManager.SpawnManager.SpawnedObjects;
         SpaceJunkEventSettings settings = EventSettings;
 
-        for (int i = 0; i < heavyIds.Count; i++)
-        {
-            ulong id = heavyIds[i];
-
-            if (appliedHeavyIds.Contains(id) || !spawned.TryGetValue(id, out NetworkObject networkObject) || networkObject == null)
-            {
-                continue;
-            }
-
-            float weight = i < heavyWeights.Count ? heavyWeights[i] : 1f;
-
-            if (!networkObject.TryGetComponent(out HeavyHookable heavy))
-            {
-                heavy = networkObject.gameObject.AddComponent<HeavyHookable>();
-            }
-            heavy.Apply(weight, settings.HeavyScale(weight));
-
-            if (!networkObject.TryGetComponent(out SpaceJunkHighValueMark mark))
-            {
-                mark = networkObject.gameObject.AddComponent<SpaceJunkHighValueMark>();
-            }
-            mark.Show(settings.heavyColor);
-
-            appliedHeavyIds.Add(id);
-        }
+        // イベントの重いデブリと、ステージに置いた重いデブリ（見た目は同じ）
+        ApplyHeavyMarks(heavyIds, heavyWeights, spawned, settings);
+        ApplyHeavyMarks(stageHeavyIds, stageHeavyWeights, spawned, settings);
 
         if (appliedHeavyIds.Count == 0)
         {
@@ -773,7 +815,7 @@ public partial class SpaceJunkRound
 
         foreach (ulong id in appliedHeavyIds)
         {
-            if (heavyIds.Contains(id))
+            if (heavyIds.Contains(id) || stageHeavyIds.Contains(id))
             {
                 continue;
             }
@@ -800,6 +842,37 @@ public partial class SpaceJunkRound
             {
                 appliedHeavyIds.Remove(id);
             }
+        }
+    }
+
+    /// <summary>一覧のうち、このPCでまだ重い物にしていないデブリを、重い物にする（大きさ・質量・色）。</summary>
+    private void ApplyHeavyMarks(NetworkList<ulong> ids, NetworkList<float> weights,
+        Dictionary<ulong, NetworkObject> spawned, SpaceJunkEventSettings settings)
+    {
+        for (int i = 0; i < ids.Count; i++)
+        {
+            ulong id = ids[i];
+
+            if (appliedHeavyIds.Contains(id) || !spawned.TryGetValue(id, out NetworkObject networkObject) || networkObject == null)
+            {
+                continue;
+            }
+
+            float weight = i < weights.Count ? weights[i] : 1f;
+
+            if (!networkObject.TryGetComponent(out HeavyHookable heavy))
+            {
+                heavy = networkObject.gameObject.AddComponent<HeavyHookable>();
+            }
+            heavy.Apply(weight, settings.HeavyScale(weight));
+
+            if (!networkObject.TryGetComponent(out SpaceJunkHighValueMark mark))
+            {
+                mark = networkObject.gameObject.AddComponent<SpaceJunkHighValueMark>();
+            }
+            mark.Show(settings.heavyColor);
+
+            appliedHeavyIds.Add(id);
         }
     }
 }

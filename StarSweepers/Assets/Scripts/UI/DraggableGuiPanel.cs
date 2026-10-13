@@ -143,6 +143,13 @@ public class DraggableGuiPanel
         rect.x = Mathf.Clamp(rect.x, 40f - rect.width, viewWidth - 40f);
         rect.y = Mathf.Clamp(rect.y, 0f, viewHeight - TitleBarHeight);
 
+        // マウスが枠の上にあれば、画面のポインター（スコープレンズ）を出してもらう。
+        // Windows のカーソルは隠してあるので、遊んでいる間でも枠のボタンを押せるように（2026/10/11）
+        if (Event.current.type == EventType.Repaint && rect.Contains(Event.current.mousePosition))
+        {
+            UiPointer.ReportPanelHover();
+        }
+
         GUI.matrix = saved;
     }
 

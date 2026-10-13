@@ -12,6 +12,8 @@ using UnityEngine.Serialization;
 /// ・動かされた物はそのまま残る（投げたり、爆発させたりできる）
 /// ・**Respawn When Moved を OFF にすると、消えたときだけ出し直す**（真ん中の特殊デブリ用。動かすたびに増えないように）
 /// ・**One Random Point を ON にすると、子の場所のうち毎回ランダムな1か所にだけ出す**（STAGE_03 の特殊デブリ）
+/// ・**Make Heavy を ON にすると、出した物を重いデブリ（イベントの特殊デブリと同じ）にする**（STAGE_01 の真ん中。
+///   Spawn Prefab が空なら、スポナーの素材からランダムに選ぶ）
 /// ・**ラウンドの結果が出たら、もう出さない**
 ///
 /// ## オンラインのとき
@@ -44,6 +46,12 @@ public class SpaceJunkBombPoints : MonoBehaviour
     [Tooltip("始まってから最初の物を出すまでの秒数（シーン切り替えが落ち着くのを待つ）")]
     [SerializeField] private float startDelaySeconds = 0.5f;
 
+    [Header("重いデブリにする")]
+    [Tooltip("ON：出した物を**重いデブリ**にする（イベントの特殊デブリと同じ。投げられず引きずるだけ・高得点・水色。" +
+             "重さ・得点・大きさはロビーのイベントの設定を使う）。Spawn Prefab が空なら、スポナーの素材からランダムに選ぶ。" +
+             "オンラインのときだけ効く（STAGE_01 の真ん中。2026/10/8）")]
+    [SerializeField] private bool makeHeavy = false;
+
     /// <summary>1か所分の状態。</summary>
     private class Point
     {
@@ -74,7 +82,7 @@ public class SpaceJunkBombPoints : MonoBehaviour
 
     private void Update()
     {
-        if (!CanSpawnOnThisPC() || spawnPrefab == null)
+        if (!CanSpawnOnThisPC() || (spawnPrefab == null && !makeHeavy))
         {
             return;
         }
@@ -159,12 +167,20 @@ public class SpaceJunkBombPoints : MonoBehaviour
             return;
         }
 
-        GameObject spawned = Instantiate(spawnPrefab, point.place.position, point.place.rotation);
+        GameObject prefab = ChoosePrefab();
+        if (prefab == null)
+        {
+            // 出す物が決まらない（スポナーがまだ無いなど）。少し待ってからやり直す
+            point.waitTimer = 0f;
+            return;
+        }
+
+        GameObject spawned = Instantiate(prefab, point.place.position, point.place.rotation);
         point.bomb = spawned.GetComponent<HookableObject>();
 
         if (point.bomb == null)
         {
-            Debug.LogWarning($"[JUNK] {spawnPrefab.name} に HookableObject が無いため、動かされたか分かりません。" +
+            Debug.LogWarning($"[JUNK] {prefab.name} に HookableObject が無いため、動かされたか分かりません。" +
                              "爆弾のプレハブを入れてください。");
         }
 
@@ -176,13 +192,38 @@ public class SpaceJunkBombPoints : MonoBehaviour
             if (networkObject != null)
             {
                 networkObject.Spawn(true);
+
+                // 重いデブリとしてラウンドに登録する（重さ・見た目・得点はラウンドの側が受け持つ）
+                if (makeHeavy && SpaceJunkRound.Current != null)
+                {
+                    SpaceJunkRound.Current.ServerAddStageHeavy(networkObject);
+                }
             }
             else
             {
-                Debug.LogWarning($"[JUNK] {spawnPrefab.name} に NetworkObject が無いため、ホストの画面にしか出ません。" +
+                Debug.LogWarning($"[JUNK] {prefab.name} に NetworkObject が無いため、ホストの画面にしか出ません。" +
                                  "オンライン用のプレハブを入れてください。");
             }
         }
+    }
+
+    /// <summary>
+    /// 出す物のプレハブ。Spawn Prefab が入っていればそれ。
+    /// 空で「重いデブリにする」が ON なら、スポナーの素材から出やすさに合わせて1つ選ぶ。
+    /// </summary>
+    private GameObject ChoosePrefab()
+    {
+        if (spawnPrefab != null)
+        {
+            return spawnPrefab;
+        }
+
+        if (makeHeavy && SpaceJunkSpawner.Current != null)
+        {
+            return SpaceJunkSpawner.Current.ChooseMaterialPrefab();
+        }
+
+        return null;
     }
 
     /// <summary>

@@ -1,5 +1,6 @@
 using UnityEngine;
 using UnityEngine.InputSystem;
+using UnityEngine.InputSystem.LowLevel;
 
 /// <summary>
 /// **狙いをつけなくても、フックが物資へ飛んでいくようにする係（オートエイム）。**
@@ -73,6 +74,7 @@ public class HookAimAssist : MonoBehaviour
 
     private HookController hook;
     private FishingNetPlayer netPlayer;
+    private PlayerInputSource input;
 
     private InputAction nearestAction;
     private InputAction manualAction;
@@ -121,6 +123,7 @@ public class HookAimAssist : MonoBehaviour
         hook = GetComponent<HookController>();
         netPlayer = GetComponent<FishingNetPlayer>();
         Mode = startMode;
+        input = PlayerInputSource.Get(this);
 
         // 入力はこの体専用に作る（アセットを共有しないので、他の人のぶんと干渉しない）
         nearestAction = MakeAction("AimNearest", nearestBindings);
@@ -191,6 +194,24 @@ public class HookAimAssist : MonoBehaviour
 
     private void ReadModeInput()
     {
+        // 1台で複数人（席で読む）ときは、その席のキーボードの 1・2・3 とコントローラの十字キーだけを見る
+        if (input.UsesSeat)
+        {
+            if (input.WasPressed(Key.Digit1, GamepadButton.DpadLeft))
+            {
+                Mode = AimMode.Nearest;
+            }
+            else if (input.WasPressed(Key.Digit2, GamepadButton.DpadUp))
+            {
+                Mode = AimMode.Manual;
+            }
+            else if (input.WasPressed(Key.Digit3, GamepadButton.DpadRight))
+            {
+                Mode = AimMode.Farthest;
+            }
+            return;
+        }
+
         if (nearestAction.WasPressedThisFrame())
         {
             Mode = AimMode.Nearest;
@@ -331,7 +352,9 @@ public class HookAimAssist : MonoBehaviour
             DrawMarker();
         }
 
-        if (showPanel && IsLocallyControlled && hook != null)
+        // 狙い方の表示は画面に1つ。1台で複数人のときは、そのPCの1人目のぶんだけ出す（重なって読めなくなるため）
+        bool firstLocal = netPlayer == null || netPlayer.LocalSeat == 0;
+        if (showPanel && IsLocallyControlled && firstLocal && hook != null)
         {
             DrawPanel();
         }
