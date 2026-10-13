@@ -23,7 +23,7 @@ using UnityEngine.UI;
 /// | 部屋の一覧 | 「マルチプレイ」を押すと右に出る。いまある部屋（インターネットの公開の部屋・同じネットワークの LAN の部屋）が並び、押すと入る。一番下の「＋」で部屋を作る |
 ///
 /// ・**1人プレイ**…押すとそのままロビーへ（このPCの中だけで動くホストになる）
-/// ・**部屋を作る**（「＋」）…小さい窓で「インターネット」か「LAN」を選ぶと、すぐ部屋ができてロビーへ。パスワードもその窓で入れられる（空ならなし。インターネットだけ）
+/// ・**部屋を作る**（「＋」）…小さい窓で「インターネット」か「LAN」を選ぶと、すぐ部屋ができてロビーへ。部屋の名前もその窓で入れられる（空なら「自分の名前の部屋」）。パスワードは付けない（2026/10/13〜）
 /// ・**パスワードの付いた部屋**に入るときは、小さい窓でパスワードを聞く
 ///
 /// ## 画面はプレハブ
@@ -52,6 +52,9 @@ public class TitleScreen : MonoBehaviour
 
     /// <summary>作る部屋の最大人数（作る窓では決めない。必要になったら窓に足す）。</summary>
     private const int RoomMaxPlayers = 4;
+
+    /// <summary>部屋の名前の最大の文字数。</summary>
+    private const int RoomNameMaxLength = 25;
 
     /// <summary>インターネットの部屋の一覧を、何秒ごとに取り直すか。</summary>
     private const float InternetRefreshSeconds = 5f;
@@ -134,7 +137,8 @@ public class TitleScreen : MonoBehaviour
     private Window window = Window.None;
 
     // 入力欄
-    private string createPassword = string.Empty;
+    /// <summary>作る部屋の名前（空なら「自分の名前の部屋」）。保存はしない。2026/10/13 にパスワードの欄から変えた。</summary>
+    private string createRoomName = string.Empty;
     private string joinPassword = string.Empty;
 
     // 部屋の一覧
@@ -339,11 +343,16 @@ public class TitleScreen : MonoBehaviour
 
     private static bool IsPassword(TitleInputKind kind)
     {
-        return kind == TitleInputKind.CreatePassword || kind == TitleInputKind.JoinPassword;
+        return kind == TitleInputKind.JoinPassword;
     }
 
     private static int MaxLengthOf(TitleInputKind kind)
     {
+        if (kind == TitleInputKind.ServerName)
+        {
+            return RoomNameMaxLength;
+        }
+
         return IsPassword(kind) ? InternetConnection.PasswordMaxLength : GameSettings.PlayerNameMaxLength;
     }
 
@@ -351,8 +360,8 @@ public class TitleScreen : MonoBehaviour
     {
         switch (kind)
         {
-            case TitleInputKind.CreatePassword:
-                return createPassword;
+            case TitleInputKind.ServerName:
+                return createRoomName;
             case TitleInputKind.JoinPassword:
                 return joinPassword;
             default:
@@ -364,8 +373,8 @@ public class TitleScreen : MonoBehaviour
     {
         switch (kind)
         {
-            case TitleInputKind.CreatePassword:
-                createPassword = value;
+            case TitleInputKind.ServerName:
+                createRoomName = value;
                 break;
             case TitleInputKind.JoinPassword:
                 joinPassword = value;
@@ -940,26 +949,24 @@ public class TitleScreen : MonoBehaviour
         manager.StartClient();
     }
 
-    /// <summary>作る部屋の名前（「名前の部屋」）。</summary>
-    private static string RoomName()
+    /// <summary>作る部屋の名前。部屋の名前の欄に入れた名前、空なら「自分の名前の部屋」。</summary>
+    private string RoomName()
     {
+        if (!string.IsNullOrWhiteSpace(createRoomName))
+        {
+            return createRoomName.Trim();
+        }
+
         string name = GameSettings.PlayerName;
         return string.IsNullOrWhiteSpace(name) ? "StarSweepers の部屋" : $"{name.Trim()}の部屋";
     }
 
     /// <summary>
-    /// 「インターネットで作る」。**公開の部屋**を作る（ほかの人の部屋の一覧に出る）。
-    /// パスワードを入れていれば、パスワード付きの部屋になる（ロビーで変えられる）。
+    /// 「インターネットで作る」。**公開の部屋**を、**パスワードなし**で作る（ほかの人の部屋の一覧に出る）。
+    /// （2026/10/13 から、作る窓ではパスワードを決めない。大槻さんの依頼）
     /// </summary>
     private void CreateInternetRoom()
     {
-        string problem = InternetConnection.PasswordProblem(createPassword.Trim());
-        if (problem != null)
-        {
-            SetText(TitlePartRole.CreateWindowNote, problem);
-            return;
-        }
-
         InternetConnection internet = Internet();
         if (internet == null)
         {
@@ -974,7 +981,7 @@ public class TitleScreen : MonoBehaviour
 
         CloseWindow();
         SetLanListening(false);
-        internet.HostGame(RoomName(), RoomMaxPlayers, false, createPassword.Trim());
+        internet.HostGame(RoomName(), RoomMaxPlayers, false, string.Empty);
     }
 
     /// <summary>「LANで作る」。同じネットワークのPCから入れるホストになり、部屋を LAN に知らせる。</summary>
@@ -1026,7 +1033,8 @@ public class TitleScreen : MonoBehaviour
         if (value == Window.Create)
         {
             SetText(TitlePartRole.CreateWindowNote,
-                "インターネット：どこからでも入れる部屋（ほかの人の一覧に出る）\nLAN：同じネットワークのPCだけが入れる部屋（パスワードは使わない）");
+                "インターネット：どこからでも入れる部屋（ほかの人の一覧に出る）\nLAN：同じネットワークのPCだけが入れる部屋\n" +
+                "部屋の名前が空なら「自分の名前の部屋」になります");
         }
 
         shown.SetActive(true);

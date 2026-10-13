@@ -49,8 +49,10 @@ public static class TitleScreenPrefabBuilder
     /// <summary>
     /// **プレハブの作りの版。** 作りが大きく変わったときだけ上げる。
     /// 1〜4：サーバーを作る・探す・設定の画面（〜2026/10/12）／ 5：名前とスタート → 1人プレイ／マルチプレイ → 部屋の一覧（2026/10/13）
+    /// ／ 6：部屋を作る窓のパスワードの欄を、部屋の名前の欄に変えた（2026/10/13）
+    /// **版 5 からは作り直さず、<see cref="Upgrade"/> で変わった所だけを直す**（手で直した配置を消さない）。版を上げたら Upgrade に直す処理を書くこと
     /// </summary>
-    public const int PrefabVersion = 5;
+    public const int PrefabVersion = 6;
 
     /// <summary>この版より古いプレハブは、作り直す（画面の作りがまるごと変わったため。手で直した配置は消える）。</summary>
     private const int RebuildBelowVersion = 5;
@@ -79,8 +81,69 @@ public static class TitleScreenPrefabBuilder
                                  "手で動かした配置や、変えた画像・色は消えています。");
                 Build();
             }
+            else if (existing != null && existing.PrefabVersion < PrefabVersion)
+            {
+                Upgrade(existing.PrefabVersion);
+            }
         };
     }
+
+    /// <summary>
+    /// **作り直さずに、変わった所だけを直す。**（手で動かした配置・画像・色はそのまま）
+    /// 版 5 → 6：部屋を作る窓の「パスワード」の欄を「部屋の名前」の欄に変える（入れる物・見出し・薄い字）。
+    /// </summary>
+    private static void Upgrade(int fromVersion)
+    {
+        GameObject root = PrefabUtility.LoadPrefabContents(PrefabPath);
+
+        try
+        {
+            if (fromVersion < 6)
+            {
+                ChangeCreatePasswordToRoomName(root);
+            }
+
+            root.GetComponent<TitleScreen>().EditorSetPrefabVersion(PrefabVersion);
+            PrefabUtility.SaveAsPrefabAsset(root, PrefabPath);
+            Debug.Log($"[UI] タイトル画面のプレハブを直しました（版 {fromVersion} → {PrefabVersion}。手で直した配置はそのまま）。");
+        }
+        finally
+        {
+            PrefabUtility.UnloadPrefabContents(root);
+        }
+    }
+
+    /// <summary>部屋を作る窓の、パスワードの欄（Kind：CreatePassword）を、部屋の名前の欄（Kind：ServerName）に変える。</summary>
+    private static void ChangeCreatePasswordToRoomName(GameObject root)
+    {
+        foreach (TitleInput input in root.GetComponentsInChildren<TitleInput>(true))
+        {
+            if (input.Kind != TitleInputKind.CreatePassword)
+            {
+                continue;
+            }
+
+            input.EditorSetup(TitleInputKind.ServerName, input.Counter);
+            input.gameObject.name = "Input " + TitleInputKind.ServerName;
+
+            if (input.Field.placeholder is Text placeholder)
+            {
+                placeholder.text = RoomNamePlaceholder;
+            }
+
+            // 同じ窓の見出し（PasswordLabel）
+            Transform label = input.transform.parent != null ? input.transform.parent.Find("PasswordLabel") : null;
+            if (label != null && label.TryGetComponent(out Text labelText))
+            {
+                labelText.text = RoomNameLabel;
+                label.name = "RoomNameLabel";
+            }
+        }
+    }
+
+    /// <summary>部屋を作る窓の、部屋の名前の欄の見出しと薄い字。</summary>
+    private const string RoomNameLabel = "部屋の名前（空なら「自分の名前の部屋」）";
+    private const string RoomNamePlaceholder = "部屋の名前";
 
     [MenuItem("Tools/StarSweepers/タイトル画面のプレハブを作り直す")]
     private static void BuildFromMenu()
@@ -98,9 +161,20 @@ public static class TitleScreenPrefabBuilder
     }
 
     /// <summary>
-    /// コマンドから作り直す（Unity を画面なしで動かすとき用：
-    /// `Unity.exe -batchmode -quit -projectPath ... -executeMethod TitleScreenPrefabBuilder.BuildFromCommandLine`）。
+    /// コマンドから、変わった所だけを直す（Unity を画面なしで動かすとき用：
+    /// `Unity.exe -batchmode -quit -projectPath ... -executeMethod TitleScreenPrefabBuilder.UpgradeFromCommandLine`）。
+    /// 作り直すときは BuildFromCommandLine。
     /// </summary>
+    public static void UpgradeFromCommandLine()
+    {
+        TitleScreen existing = AssetDatabase.LoadAssetAtPath<TitleScreen>(PrefabPath);
+        if (existing != null && existing.PrefabVersion < PrefabVersion)
+        {
+            Upgrade(existing.PrefabVersion);
+        }
+    }
+
+    /// <summary>コマンドから最初の状態で作り直す（手で直した配置は消える）。</summary>
     public static void BuildFromCommandLine()
     {
         Build();
@@ -358,14 +432,14 @@ public static class TitleScreenPrefabBuilder
         Mark(players, TitlePartRole.RoomCardPlayers);
     }
 
-    /// <summary>「＋」で開く小さい窓：パスワード（空ならなし）と、インターネット／LAN のどちらで作るか。</summary>
+    /// <summary>「＋」で開く小さい窓：部屋の名前（空なら「自分の名前の部屋」）と、インターネット／LAN のどちらで作るか。パスワードは付けない。</summary>
     private static GameObject BuildCreateWindow(Transform root)
     {
         RectTransform box = NewWindow("CreateWindow", root, TitlePartRole.CreateWindow, new Vector2(960f, 600f), "部屋を作る");
 
-        Text label = NewText("PasswordLabel", box, "パスワード（空ならなし。インターネットの部屋だけ）", FontSize, TextColor, TextAnchor.LowerLeft);
+        Text label = NewText("RoomNameLabel", box, RoomNameLabel, FontSize, TextColor, TextAnchor.LowerLeft);
         Place(label.rectTransform, new Vector2(0.5f, 1f), new Vector2(0f, -120f), new Vector2(800f, 40f), new Vector2(0.5f, 1f));
-        NewInput(box, "パスワードなし", TitleInputKind.CreatePassword, new Vector2(0f, 95f), new Vector2(800f, 70f));
+        NewInput(box, RoomNamePlaceholder, TitleInputKind.ServerName, new Vector2(0f, 95f), new Vector2(800f, 70f));
 
         TitleMenuButton internet = NewButton(box, "インターネットで作る", new Vector2(390f, 90f), ButtonFontSize - 2, TitleButtonAction.CreateRoomInternet);
         Place((RectTransform)internet.transform, new Vector2(0.5f, 0.5f), new Vector2(-200f, 10f), new Vector2(390f, 90f), new Vector2(0.5f, 0.5f));
