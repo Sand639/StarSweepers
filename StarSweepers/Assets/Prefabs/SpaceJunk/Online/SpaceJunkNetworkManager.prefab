@@ -108,7 +108,7 @@ MonoBehaviour:
   m_Script: {fileID: 11500000, guid: f986edbb80fd9ef4182c60f54376c24c, type: 3}
   m_Name: 
   m_EditorClassIdentifier: Assembly-CSharp::InternetConnection
-  maxPlayers: 8
+  maxPlayers: 6
   sessionName: StarSweepers
   isPrivate: 1
   region: 

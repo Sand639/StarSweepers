@@ -2448,7 +2448,7 @@ MonoBehaviour:
     m_HorizontalOverflow: 0
     m_VerticalOverflow: 0
     m_LineSpacing: 1
-  m_Text: "1/4\u4EBA"
+  m_Text: "1/6\u4EBA"
 --- !u!114 &6890659213522698072
 MonoBehaviour:
   m_ObjectHideFlags: 0

@@ -422,7 +422,32 @@ public class SpaceJunkSession : NetworkBehaviour
 
     private void OnClientConnected(ulong clientId)
     {
+        // **定員（6人）を超えてつながってきた人は、断って切る。**（2026/10/14・大槻さん「定員を6人に」）
+        // インターネットの部屋は中継サーバーが定員で止めてくれるが、LAN の部屋はつなぐ時点で止める仕組みが無く、
+        // 7人目もつながったまま「席が無い（体が出ない）」状態になっていた
+        if (IsServer && clientId != NetworkManager.ServerClientId && !HasSlot(clientId) &&
+            slots.Count >= SpaceJunkTeams.MaxPlayers)
+        {
+            Debug.LogWarning($"[JUNK] 定員（{SpaceJunkTeams.MaxPlayers}人）なので、接続番号 {clientId} を断りました。");
+            NetworkManager.DisconnectClient(clientId, $"満員です（最大{SpaceJunkTeams.MaxPlayers}人）");
+            return;
+        }
+
         AddSlot(clientId);
+    }
+
+    /// <summary>その接続番号の席が、もうあるか。</summary>
+    private bool HasSlot(ulong clientId)
+    {
+        foreach (SpaceJunkPlayerSlot slot in slots)
+        {
+            if (slot.ClientId == clientId)
+            {
+                return true;
+            }
+        }
+
+        return false;
     }
 
     // ------------------------------------------------------------

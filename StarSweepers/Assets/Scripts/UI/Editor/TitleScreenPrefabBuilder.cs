@@ -427,7 +427,7 @@ public static class TitleScreenPrefabBuilder
         name.rectTransform.offsetMax = new Vector2(-200f, 0f);
         Mark(name, TitlePartRole.RoomCardName);
 
-        Text players = NewText("Players", card.transform, "1/4人", FontSize + 4, TextColor, TextAnchor.MiddleRight);
+        Text players = NewText("Players", card.transform, "1/6人", FontSize + 4, TextColor, TextAnchor.MiddleRight);
         Place(players.rectTransform, new Vector2(1f, 0.5f), new Vector2(-28f, 0f), new Vector2(180f, 60f), new Vector2(1f, 0.5f));
         Mark(players, TitlePartRole.RoomCardPlayers);
     }

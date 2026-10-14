@@ -172,6 +172,26 @@ public class TitleScreen : MonoBehaviour
         EnsureEventSystem();
         ShowPage(Page.Start);
         ShowCursor();
+        ShowDisconnectReason();
+    }
+
+    /// <summary>前に出した切られた理由（同じ理由を、タイトルに戻るたびに出し直さないため）。</summary>
+    private static string shownDisconnectReason = string.Empty;
+
+    /// <summary>
+    /// **ホストに切られて戻ってきたときは、その理由を名前の欄の下に出す**（例：「満員です（最大6人）」。2026/10/14）。
+    /// </summary>
+    private void ShowDisconnectReason()
+    {
+        NetworkManager manager = NetworkManager.Singleton;
+        string reason = manager != null ? manager.DisconnectReason : string.Empty;
+        if (string.IsNullOrEmpty(reason) || reason == shownDisconnectReason)
+        {
+            return;
+        }
+
+        shownDisconnectReason = reason;
+        SetText(TitlePartRole.StartMessage, $"部屋に入れませんでした：{reason}");
     }
 
     private void OnDisable()
