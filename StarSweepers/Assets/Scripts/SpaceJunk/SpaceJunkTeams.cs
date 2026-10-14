@@ -8,7 +8,7 @@ using UnityEngine;
 ///
 /// ## 決まっているルール（2026/9/17・大槻さん）
 ///
-/// - **チームは最大4つ。** 遊べるのは最大8人
+/// - **チームは最大4つ。** 遊べるのは最大6人（2026/10/14 に8人から変えた。大槻さん）
 /// - **誰がどのチームに入るかは、ホストが自由に決める**（`SpaceJunkSession` が覚えている）
 /// - **チーム数を指定してランダムに割り振ることもできる**（<see cref="RandomAssign"/>）
 /// - **人数の偏り（3人対1人など）も許す。** ホストの判断に任せる
@@ -26,8 +26,8 @@ public static class SpaceJunkTeams
     /// <summary>チームの最大数。ゴールが4つなので、それ以上には増やせない。</summary>
     public const int MaxTeams = 4;
 
-    /// <summary>遊べる人数の上限。</summary>
-    public const int MaxPlayers = 8;
+    /// <summary>遊べる人数の上限（**6人で固定**。2026/10/14・大槻さん。タイトルで作る部屋の定員もこれ）。</summary>
+    public const int MaxPlayers = 6;
 
     /// <summary>ステージにあるゴールの数。チーム数が変わっても常にこの数。</summary>
     public const int GoalCount = 4;

@@ -50,8 +50,8 @@ public class TitleScreen : MonoBehaviour
     /// <summary>画面のプレハブの場所（Resources の中）。TitleScene に置き忘れたときに使う。</summary>
     public const string PrefabResourcePath = "TitleScreen";
 
-    /// <summary>作る部屋の最大人数（作る窓では決めない。必要になったら窓に足す）。</summary>
-    private const int RoomMaxPlayers = 4;
+    /// <summary>作る部屋の最大人数（作る窓では決めない。宇宙ごみ集めの定員と同じ6人。2026/10/14）。</summary>
+    private const int RoomMaxPlayers = SpaceJunkTeams.MaxPlayers;
 
     /// <summary>部屋の名前の最大の文字数。</summary>
     private const int RoomNameMaxLength = 25;
