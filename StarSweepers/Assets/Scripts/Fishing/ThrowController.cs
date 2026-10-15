@@ -108,6 +108,14 @@ public class SkillCheckZone
 ///     右端まで押さなかったときや端で押したときも、少しだけ引きずる（2026/9/29 に「中間まで」から固定の距離に変えた）
 ///
 ///   **釣りでは重い物を出していないので、釣りの動きは変わらない。**
+///
+/// ## ZRワンボタン（設定の「投げ方」。宇宙ごみ式のときだけ。2026/10/15・小野田さん）
+///
+///   ・撃つのは右クリック（RT・ZR）だけ。引っ掛けると**前へ投げる動き**に入る（弧を描いて頭上へ上がり、頭上で構える）
+///   ・その間にゲージが1回だけ動く。**枠の中で押すと後ろへ引っ張る**（真ん中ほど強い。いまの位置から速く頭上を越えて後ろへ）
+///   ・**押さなければ、ゲージが右端に着いたところで前へ投げる**（向いている方向）。枠の外で押すとミスで、同じく前へ投げる
+///   ・前へ投げるほうが時間がかかるので、後ろへ引っ張るほうが早く次へ移れる
+///   ・横取り・大型物件・重い物のゲージも、右クリック（RT・ZR）で押す
 /// </summary>
 public class ThrowController : MonoBehaviour
 {
@@ -158,6 +166,28 @@ public class ThrowController : MonoBehaviour
     [Tooltip("**投げるときのゲージは往復しない。** 右端まで行っても押さなかったら、プレイヤーの後ろへこの力で落とす（2026/10/13・大槻さん）")]
     [Min(0f)]
     [SerializeField] private float throwDropBehindForce = 3f;
+
+    [Header("ZRワンボタン（設定の「投げ方」が ZRワンボタン のとき。宇宙ごみ式だけ）")]
+    [Tooltip("引っ掛けてから、押さなかったときに前へ投げるまでの秒数。**ゲージはこの秒数で左端から右端へ1回だけ動く**。\n" +
+             "長いほど前へ投げるのに時間がかかり、途中で後ろへ引っ張るほうが得になる")]
+    [Min(0.1f)]
+    [SerializeField] private float oneButtonSwingSeconds = 1.4f;
+
+    [Tooltip("引っ掛けてから頭上まで持ち上がるまでの秒数。そのあとは頭上で構えて、ゲージが右端に着いたら前へ投げる")]
+    [Min(0.05f)]
+    [SerializeField] private float oneButtonLiftSeconds = 0.6f;
+
+    [Tooltip("スキルチェックの枠の真ん中（ゲージの上の位置。0で左端、1で右端）")]
+    [Range(0f, 1f)]
+    [SerializeField] private float oneButtonZoneCenter = 0.5f;
+
+    [Tooltip("スキルチェックの枠の広さ（真ん中からの片側）。**この中で押すと後ろへ引っ張る**（真ん中に近いほど強い）。外で押すとミスで、そのまま前へ投げる")]
+    [Range(0.01f, 0.5f)]
+    [SerializeField] private float oneButtonZoneHalfWidth = 0.2f;
+
+    [Tooltip("押さなかった（またはミスした）ときに、前へ投げる力")]
+    [Min(0f)]
+    [SerializeField] private float oneButtonForwardForce = 14f;
 
     [Header("重い物（宇宙ごみ式のとき。HeavyHookable が付いた物）")]
     [Tooltip("重さ1のとき、ゲージのマーカーが1秒間に進む量（1で1秒かけて左端→右端）。**往復せず、右端まで行ったら終わる**")]
@@ -290,13 +320,17 @@ public class ThrowController : MonoBehaviour
         PullTravel,  // 【左で撃った】引っ張って、頭上を越えて後ろへ抜けている途中（ゲージは出さない）
         Lifting,     // 【右で撃った】頭上へ持ち上げている途中（ゲージは出さない）
         AimThrow,    // 【右で撃った】頭上で止まってゲージ。右＝投げる
-        HeavyDrag    // 【重い物】地面を引きずっている途中（ゲージは出さない）
+        HeavyDrag,   // 【重い物】地面を引きずっている途中（ゲージは出さない）
+        ForwardSwing // 【ZRワンボタン】前へ投げる動きの途中（ゲージが1回だけ動く）。枠の中で押す＝後ろへ引っ張る
     }
 
     private TwoButtonStage stage;
     private float barTimer;
     private float liftTimer;
     private float pullAccuracy;
+
+    /// <summary>ZRワンボタンで、スキルチェックを枠の外で押した（もう引っ張れず、前へ投げるだけ）か。</summary>
+    private bool swingMissed;
 
     // ---- 重い物の途中経過 ----
 
@@ -341,6 +375,12 @@ public class ThrowController : MonoBehaviour
     public ThrowStyle Style => style;
 
     /// <summary>
+    /// **設定の「投げ方」が ZRワンボタン で、宇宙ごみ式のプレイヤーか**（2026/10/15）。
+    /// 釣り式（SweepOnce）のプレイヤーには効かない。
+    /// </summary>
+    public bool UsesOneButton => style == ThrowStyle.TwoButtons && GameSettings.ThrowOperation == ThrowOperationType.OneButton;
+
+    /// <summary>
     /// **ほかの人のフックが当たったら、その人の引っ掛けを外すか。**
     /// 宇宙ごみ式だけ（2026/9/22・大槻さん「他の人のフックが当たったら失敗」）。釣りでは今までどおり素通りする。
     /// </summary>
@@ -358,10 +398,11 @@ public class ThrowController : MonoBehaviour
     /// <summary>
     /// **このフックで、その物資を引っ掛けてはいけないか。** <see cref="HookController"/> が当たったときに聞く。
     /// 宇宙ごみ式で、**右クリック（投げる）で撃ったフックは、重い物には引っ掛からない**（2026/9/29・大槻さん。重い物は投げられない）。
+    /// ZRワンボタンでは撃つのがいつも右なので、重い物にも引っ掛かり、引きずるだけになる（2026/10/15）。
     /// </summary>
     public bool RefusesHook(HookableObject hookable)
     {
-        return style == ThrowStyle.TwoButtons && nextIsThrow && HeavyHookable.TryGetWeight(hookable, out _);
+        return style == ThrowStyle.TwoButtons && nextIsThrow && !UsesOneButton && HeavyHookable.TryGetWeight(hookable, out _);
     }
 
     private void Awake()
@@ -439,7 +480,8 @@ public class ThrowController : MonoBehaviour
         // **重い物（宇宙ごみの特殊デブリ）は、操作タイプBでも「引きずるだけ」の決まりを使う**（2026/10/1・PR #10 との合流時）。
         // タイプBの物理の引き寄せを使うと、重い物も軽く引っ張れて投げられてしまうため
         bool heavyTwoButtons = style == ThrowStyle.TwoButtons && HeavyHookable.TryGetWeight(hookable, out _);
-        distanceBasedPullActive = UsesDistanceBasedPull && !heavyTwoButtons;
+        // **ZRワンボタンを選んでいるときも、タイプBの物理の引き寄せは使わない**（投げ方の設定のほうを優先する。2026/10/15）
+        distanceBasedPullActive = UsesDistanceBasedPull && !heavyTwoButtons && !UsesOneButton;
 
         if (target != null)
         {
@@ -827,7 +869,7 @@ public class ThrowController : MonoBehaviour
         }
 
         TickBar();
-        if (armDelay <= 0f && PullPressed())
+        if (armDelay <= 0f && SkillPressed())
         {
             RequestSteal(Accuracy(BarPosition()));
         }
@@ -995,7 +1037,7 @@ public class ThrowController : MonoBehaviour
         }
 
         TickBar();
-        if (armDelay <= 0f && PullPressed())
+        if (armDelay <= 0f && SkillPressed())
         {
             FinishPullable(Accuracy(BarPosition()));
         }
@@ -1217,6 +1259,13 @@ public class ThrowController : MonoBehaviour
             return;
         }
 
+        // **ZRワンボタン：撃つのはいつも右。引っ掛けたら、前へ投げる動きに入る**（途中のスキルチェックで押すと後ろへ引っ張る）
+        if (UsesOneButton)
+        {
+            StartForwardSwing();
+            return;
+        }
+
         if (nextIsThrow)
         {
             stage = TwoButtonStage.Lifting;
@@ -1288,7 +1337,7 @@ public class ThrowController : MonoBehaviour
             case TwoButtonStage.AimPull when heavy:
                 TickBar();
 
-                if (armDelay <= 0f && PullPressed())
+                if (armDelay <= 0f && SkillPressed())
                 {
                     // 引きずる距離 ＝ 引っ張る強さ ÷ 重さ ×（1 − 真ん中からのずれ）。真ん中に近いほど遠くまで
                     StartHeavyDrag(heavyDragStrength * Accuracy(BarPosition()));
@@ -1316,7 +1365,7 @@ public class ThrowController : MonoBehaviour
             case TwoButtonStage.AimPull:
                 TickBar();
 
-                if (armDelay <= 0f && PullPressed())
+                if (armDelay <= 0f && SkillPressed())
                 {
                     // 強さを覚えて、釣り式と同じく**頭上を越えて後ろへ抜ける**動きを始める
                     pullAccuracy = Accuracy(BarPosition());
@@ -1391,7 +1440,117 @@ public class ThrowController : MonoBehaviour
                     FinishAsDropBehind();
                 }
                 break;
+
+            case TwoButtonStage.ForwardSwing:
+                UpdateForwardSwing();
+                break;
         }
+    }
+
+    // ------------------------------------------------------------
+    // ZRワンボタン（設定の「投げ方」。2026/10/15・小野田さん）
+    // ------------------------------------------------------------
+
+    /// <summary>
+    /// **前へ投げる動きを始める。** 物資は弧を描いて頭上へ上がり、頭上で構えて、ゲージが右端に着いたら前へ投げる。
+    /// ゲージはその間に左端から右端へ1回だけ動き、枠の中で押すと後ろへ引っ張る。
+    /// </summary>
+    private void StartForwardSwing()
+    {
+        stage = TwoButtonStage.ForwardSwing;
+        liftTimer = 0f;
+        swingMissed = false;
+        armDelay = Mathf.Max(armDelay, 0.12f);
+
+        if (hook != null && hook.UI != null)
+        {
+            hook.UI.ShowTiming(true);
+            hook.UI.SetZoneCount(1);
+            hook.UI.SetZone(0, oneButtonZoneCenter, oneButtonZoneHalfWidth,
+                oneButtonZoneHalfWidth * 0.5f, oneButtonZoneHalfWidth * 0.15f);
+            hook.UI.SetMarker(0f);
+        }
+    }
+
+    private void UpdateForwardSwing()
+    {
+        liftTimer += Time.deltaTime;
+
+        // 物資の位置：弧を描いて頭上へ（釣り式の軌道の前半）。頭上に着いたら、そのまま頭上で構える
+        float lift = Mathf.Clamp01(liftTimer / Mathf.Min(oneButtonLiftSeconds, oneButtonSwingSeconds));
+        if (!UpdateReelPosition(lift * 0.5f))
+        {
+            FinishAsBlocked();
+            return;
+        }
+
+        float bar = Mathf.Clamp01(liftTimer / oneButtonSwingSeconds);
+        if (!swingMissed && hook != null && hook.UI != null)
+        {
+            hook.UI.SetMarker(bar);
+        }
+
+        if (!swingMissed && armDelay <= 0f && ThrowPressed())
+        {
+            float offset = Mathf.Abs(bar - oneButtonZoneCenter);
+            if (offset <= oneButtonZoneHalfWidth)
+            {
+                StartPullBackFromSwing(1f - offset / oneButtonZoneHalfWidth, lift);
+                return;
+            }
+
+            // 枠の外で押した。**ミス：もう引っ張れず、そのまま前へ投げる**（連打で当てられないように）
+            swingMissed = true;
+            Debug.Log("ZRワンボタン：枠の外で押したので、そのまま前へ投げます");
+
+            if (hook != null && hook.UI != null)
+            {
+                hook.UI.ShowTiming(false);
+            }
+        }
+
+        if (bar >= 1f)
+        {
+            FinishAsSwingForward();
+        }
+    }
+
+    /// <summary>
+    /// **スキルチェックが成功した。後ろへ引っ張る。**
+    /// いまの位置から、引っ張りの速さ（Pull Travel Seconds）で頭上まで来て、そこから後ろへ投げ出す。
+    /// 引っ張りの速さは前へ投げる動きより速いので、**後ろへ引っ張るほうが早く次へ移れる**。
+    /// </summary>
+    private void StartPullBackFromSwing(float accuracy, float liftProgress)
+    {
+        pullAccuracy = accuracy;
+        stage = TwoButtonStage.PullTravel;
+
+        // PullTravel は「経過秒 ÷ (Pull Travel Seconds の半分)」で頭上までの進み具合を決めるので、
+        // いまの進み具合に合わせた秒数から始めれば、物資が跳ばずにそのまま続く
+        liftTimer = liftProgress * (pullTravelSeconds * 0.5f);
+
+        Debug.Log($"ZRワンボタン：スキルチェック成功、後ろへ引っ張る（真ん中への近さ {accuracy:0.00}）");
+
+        if (hook != null && hook.UI != null)
+        {
+            hook.UI.ShowTiming(false);
+        }
+    }
+
+    /// <summary>**押さなかった（またはミスした）。前へ投げる**（投げた瞬間にプレイヤーが向いている方向）。</summary>
+    private void FinishAsSwingForward()
+    {
+        Vector3 direction = hook.CurrentAimDirection;
+        direction.y = 0f;
+        if (direction.sqrMagnitude < 0.0001f)
+        {
+            direction = hook.PlayerRoot.forward;
+            direction.y = 0f;
+        }
+
+        Debug.Log($"ZRワンボタン：前へ投げた（力 {oneButtonForwardForce:0.0}）");
+
+        Launch(direction.normalized, oneButtonForwardForce, throwLift);
     }
 
     private void TickBar()
@@ -1406,6 +1565,15 @@ public class ThrowController : MonoBehaviour
 
     /// <summary>「引っ張る」ボタンが押された瞬間か。左クリックか、コントローラーの LT。</summary>
     public bool PullPressed() => input.PullPressed;
+
+    /// <summary>
+    /// ゲージで「引っ張る」ときに押すボタンが押された瞬間か。
+    /// いつもは左クリック（LT）。**ZRワンボタンでは右クリック（RT・ZR）**（横取り・大型物件・重い物も同じ。2026/10/15）。
+    /// </summary>
+    private bool SkillPressed() => UsesOneButton ? ThrowPressed() : PullPressed();
+
+    /// <summary>画面の案内に出す、引っ張るボタンの名前。</summary>
+    private string PullButtonName => UsesOneButton ? "RT（ZR）・右クリック" : "左クリック（LT）";
 
     /// <summary>「引っ張る」ボタンが離された瞬間か。</summary>
     public bool PullReleased() => input.PullReleased;
@@ -1592,10 +1760,14 @@ public class ThrowController : MonoBehaviour
         }
 
         string text = heavy
-            ? $"重い！（重さ {heavyWeight:0.#}）　左クリック（LT）：引きずる　真ん中ほど遠くまで"
-            : stage == TwoButtonStage.AimPull
-                ? "左クリック（LT）：引っ張る　真ん中ほど強い"
-                : "右クリック（RT）：向いている方向へ投げる　真ん中ほど強い";
+            ? $"重い！（重さ {heavyWeight:0.#}）　{PullButtonName}：引きずる　真ん中ほど遠くまで"
+            : stage == TwoButtonStage.ForwardSwing
+                ? (swingMissed
+                    ? "ミス！　そのまま前へ投げます"
+                    : $"{PullButtonName}：枠の中で押すと後ろへ引っ張る　押さなければ前へ投げる")
+                : stage == TwoButtonStage.AimPull
+                    ? $"{PullButtonName}：引っ張る　真ん中ほど強い"
+                    : "右クリック（RT）：向いている方向へ投げる　真ん中ほど強い";
 
         GUIStyle labelStyle = new GUIStyle(GUI.skin.label)
         {

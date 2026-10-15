@@ -13,6 +13,7 @@ using UnityEngine.InputSystem;
 ///
 /// **宇宙ごみ式（ThrowController の Style が TwoButtons）では、左クリック（LT）でも右クリック（RT）でも撃てる。**
 /// どちらで撃ったかを ThrowController に伝え、引っ掛けたあとの流れが変わる（左＝引っ張る／右＝投げる）。
+/// 設定の「投げ方」が **ZRワンボタン** のときは、右クリック（RT・ZR）だけで撃つ（2026/10/15）。
 ///
 /// フックの実際の飛び方の計算はここに置き、HookProjectile は当たり判定だけにしている。
 /// 引き寄せ・投げは ThrowController、糸の見た目は HookLine に分けてある。
@@ -362,7 +363,9 @@ public class HookController : MonoBehaviour
         {
             // **宇宙ごみ式：左（LT）でも右（RT）でも撃てる。** どちらで撃ったかで、引っ掛けたあとの流れが変わる
             // （左＝くっついた場所で止まって引っ張る／右＝頭上で止まって投げる）
-            bool left = throwController.PullPressed();
+            // **投げ方が「ZRワンボタン」なら、右（RT・ZR）だけで撃つ**（2026/10/15）。
+            // 引っ掛けたあとの流れは ThrowController が決める（前へ投げる動き＋途中のスキルチェックで後ろへ引っ張る）
+            bool left = !throwController.UsesOneButton && throwController.PullPressed();
             bool right = !left && throwController.ThrowPressed();
             pressed = left || right;
             chargingWithThrow = right;
@@ -597,7 +600,9 @@ public class HookController : MonoBehaviour
     /// <summary>左ボタンで飛ばした Hook が大型の拉扯対象に触れたときに呼ばれる。</summary>
     private void OnPullableTouched(IHookPullable pullable)
     {
-        if (phase != HookPhase.Flying || chargingWithThrow || !CanHookPullable(pullable, PlayerRoot))
+        // ZRワンボタンでは撃つのがいつも右（投げる）なので、大型物件も右で撃ったフックで引っ掛ける（2026/10/15）
+        bool refusedByThrowButton = chargingWithThrow && (throwController == null || !throwController.UsesOneButton);
+        if (phase != HookPhase.Flying || refusedByThrowButton || !CanHookPullable(pullable, PlayerRoot))
         {
             return;
         }
