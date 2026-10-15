@@ -15,8 +15,8 @@ using UnityEngine;
 /// **エディタの再生では1人分しか動かない。** チーム戦は確かめられない。
 /// `.exe` を作って**いくつも同時に起動する**ことで、1台のPCでも複数人プレイを試せる。
 ///
-/// 宇宙ごみ集めは**最大6人・最大4チーム**なので、
-/// `2対2対2` や `3対3` を試したいときは6つ起動する `.bat` を使う。
+/// 宇宙ごみ集めは**最大8人・最大4チーム**なので、
+/// `2対2対2対2` や `4対4` を試したいときは8つ起動する `.bat` を使う。
 ///
 /// ## 一緒に作られる .bat
 ///
@@ -24,7 +24,7 @@ using UnityEngine;
 /// | --- | --- |
 /// | `2人で自動接続.bat` | さっと動きを見たいとき |
 /// | `4人で自動接続.bat` | **ふだんはこれ。** 2対2、または1対1対1対1 を試せる |
-/// | `6人で自動接続.bat` | 2対2対2 や 3対3 を試すとき（窓が小さくなる） |
+/// | `8人で自動接続.bat` | 2対2対2対2 や 4対4 を試すとき（窓が小さくなる） |
 /// | `4つ起動するだけ.bat` | 合言葉でつなぐ、本番と同じ手順を試すとき |
 ///
 /// ## 遊ぶ前にホストがやること
@@ -147,7 +147,7 @@ public static class SpaceJunkBuilder
             "　5. チーム分け・何本先取・最大時間を決めて「ゲーム開始」\n" +
             "　6. 全員が1ラウンド目のマップへ移動する\n\n" +
             "■ チーム戦を試すとき\n" +
-            "　「6人で自動接続.bat」を使うと、2対2対2 や 3対3 を試せる（窓は小さくなる）\n\n" +
+            "　「8人で自動接続.bat」を使うと、2対2対2対2 や 4対4 を試せる（窓は小さくなる）\n\n" +
             "■ 本番と同じ手順（合言葉）で試すとき\n" +
             "　「4つ起動するだけ.bat」→ 1つ目で部屋を作り、残りは合言葉で参加する");
     }
@@ -201,8 +201,8 @@ public static class SpaceJunkBuilder
         File.WriteAllText(Path.Combine(outputFolder, "4人で自動接続.bat"),
             AutoConnectScript(4, WindowArgs4));
 
-        File.WriteAllText(Path.Combine(outputFolder, "6人で自動接続.bat"),
-            AutoConnectScript(SpaceJunkTeams.MaxPlayers, WindowArgs8));
+        File.WriteAllText(Path.Combine(outputFolder, "8人で自動接続.bat"),
+            AutoConnectScript(8, WindowArgs8));
 
         File.WriteAllText(Path.Combine(outputFolder, "4つ起動するだけ.bat"),
             ManualScript(4, WindowArgs4));

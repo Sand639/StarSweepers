@@ -4,8 +4,9 @@ using UnityEditor;
 using UnityEngine;
 
 /// <summary>
-/// タイトル画面のプレハブ（2026/10/13 からの作り）に、**コードが頼りにしている印の付いた部品**がそろっているかを確かめる。
+/// タイトル画面のプレハブに、**コードが頼りにしている印の付いた部品**がそろっているかを確かめる。
 /// 配置や見た目は自由に変えてよいが、印を消すとその部品は動かなくなるので、ここで気づけるようにする。
+/// （2026/10/15：前の画面（サーバーを作る・探す・設定）に戻したので、その部品を確かめる内容にした）
 /// </summary>
 public class TitleScreenPrefabTests
 {
@@ -23,18 +24,19 @@ public class TitleScreenPrefabTests
             Is.EqualTo(TitleScreenPrefabBuilder.PrefabVersion));
     }
 
-    [TestCase(TitlePartRole.PageStart)]
-    [TestCase(TitlePartRole.PageMode)]
-    [TestCase(TitlePartRole.SoloPreview)]
-    [TestCase(TitlePartRole.MultiPreview)]
-    [TestCase(TitlePartRole.RoomListPanel)]
-    [TestCase(TitlePartRole.RoomListContent)]
-    [TestCase(TitlePartRole.RoomCardTemplate)]
-    [TestCase(TitlePartRole.RoomCardName)]
-    [TestCase(TitlePartRole.RoomCardPlayers)]
-    [TestCase(TitlePartRole.CreateRoomButton)]
-    [TestCase(TitlePartRole.CreateWindow)]
-    [TestCase(TitlePartRole.PasswordWindow)]
+    [TestCase(TitlePartRole.PageMain)]
+    [TestCase(TitlePartRole.PageCreate)]
+    [TestCase(TitlePartRole.PageFind)]
+    [TestCase(TitlePartRole.PageFindPrivate)]
+    [TestCase(TitlePartRole.PageFindPublic)]
+    [TestCase(TitlePartRole.PageFindLan)]
+    [TestCase(TitlePartRole.PageSettings)]
+    [TestCase(TitlePartRole.PageFindFriends)]
+    [TestCase(TitlePartRole.PublicListContent)]
+    [TestCase(TitlePartRole.ServerCardTemplate)]
+    [TestCase(TitlePartRole.LanListContent)]
+    [TestCase(TitlePartRole.LanListMessage)]
+    [TestCase(TitlePartRole.LanCardTemplate)]
     [TestCase(TitlePartRole.BusyOverlay)]
     public void TitlePrefab_HasPart(TitlePartRole role)
     {
@@ -47,7 +49,7 @@ public class TitleScreenPrefabTests
     }
 
     [Test]
-    public void TitlePrefab_HasEveryButtonOfTheNewFlow()
+    public void TitlePrefab_HasMainButtons()
     {
         HashSet<TitleButtonAction> actions = new HashSet<TitleButtonAction>();
         foreach (TitleMenuButton button in LoadPrefab().GetComponentsInChildren<TitleMenuButton>(true))
@@ -57,9 +59,10 @@ public class TitleScreenPrefabTests
 
         TitleButtonAction[] required =
         {
-            TitleButtonAction.Start, TitleButtonAction.PlaySolo, TitleButtonAction.ShowMulti,
-            TitleButtonAction.OpenCreateRoom, TitleButtonAction.CreateRoomInternet, TitleButtonAction.CreateRoomLan,
-            TitleButtonAction.CloseWindow, TitleButtonAction.JoinRoom, TitleButtonAction.ConfirmJoinPassword,
+            TitleButtonAction.OpenCreate, TitleButtonAction.OpenFind, TitleButtonAction.OpenSettings, TitleButtonAction.Quit,
+            TitleButtonAction.CreateServer, TitleButtonAction.MaxPlayersDown, TitleButtonAction.MaxPlayersUp,
+            TitleButtonAction.UseInternet, TitleButtonAction.UseLan,
+            TitleButtonAction.JoinPrivate, TitleButtonAction.JoinLan, TitleButtonAction.SearchPublic,
         };
 
         foreach (TitleButtonAction action in required)
@@ -69,7 +72,7 @@ public class TitleScreenPrefabTests
     }
 
     [Test]
-    public void TitlePrefab_HasPlayerNameRoomNameAndJoinPasswordInputs()
+    public void TitlePrefab_HasInputs()
     {
         HashSet<TitleInputKind> kinds = new HashSet<TitleInputKind>();
         foreach (TitleInput input in LoadPrefab().GetComponentsInChildren<TitleInput>(true))
@@ -77,9 +80,34 @@ public class TitleScreenPrefabTests
             kinds.Add(input.Kind);
         }
 
-        Assert.That(kinds, Does.Contain(TitleInputKind.PlayerName));
-        Assert.That(kinds, Does.Contain(TitleInputKind.ServerName), "部屋を作る窓の、部屋の名前の欄（2026/10/13 にパスワードの欄から変えた）");
-        Assert.That(kinds.Contains(TitleInputKind.CreatePassword), Is.False, "部屋を作るときはパスワードを付けない");
-        Assert.That(kinds, Does.Contain(TitleInputKind.JoinPassword));
+        Assert.That(kinds.Contains(TitleInputKind.PlayerName), Is.True);
+        Assert.That(kinds.Contains(TitleInputKind.ServerName), Is.True);
+        Assert.That(kinds.Contains(TitleInputKind.PrivateCode), Is.True);
+        Assert.That(kinds.Contains(TitleInputKind.LanAddress), Is.True);
+        Assert.That(kinds.Contains(TitleInputKind.CreatePassword), Is.True);
+        Assert.That(kinds.Contains(TitleInputKind.JoinPassword), Is.True);
+    }
+
+    /// <summary>LAN の部屋の一覧は「LANのサーバーに参加する」画面の中にある。</summary>
+    [Test]
+    public void TitlePrefab_LanRoomListIsOnTheLanPage()
+    {
+        Transform lanPage = null;
+        Transform lanList = null;
+        foreach (TitlePart part in LoadPrefab().GetComponentsInChildren<TitlePart>(true))
+        {
+            if (part.Role == TitlePartRole.PageFindLan)
+            {
+                lanPage = part.transform;
+            }
+            else if (part.Role == TitlePartRole.LanListContent)
+            {
+                lanList = part.transform;
+            }
+        }
+
+        Assert.That(lanPage, Is.Not.Null);
+        Assert.That(lanList, Is.Not.Null);
+        Assert.That(lanList.IsChildOf(lanPage), Is.True, "LAN の部屋の一覧が「LANのサーバーに参加する」画面の外にある");
     }
 }

@@ -72,6 +72,11 @@ public enum TitlePartRole
     CreateWindowNote = 71,
     PasswordWindow = 72,
     PasswordWindowTitle = 73,
+
+    // 「LANのサーバーに参加する」画面の、見つかった LAN の部屋の一覧（2026/10/15。LanRoomDiscovery）
+    LanListContent = 74,
+    LanListMessage = 75,
+    LanCardTemplate = 76,
 }
 
 /// <summary>

@@ -1,8 +1,8 @@
 using System.Collections.Generic;
 using System.Net;
+using System.Text;
 using System.Net.NetworkInformation;
 using System.Net.Sockets;
-using System.Text;
 using Unity.Netcode;
 using Unity.Netcode.Transports.UTP;
 using Unity.Services.Multiplayer;
@@ -14,29 +14,38 @@ using UnityEngine.InputSystem.UI;
 using UnityEngine.UI;
 
 /// <summary>
-/// **タイトル画面。**（2026/10/13 に作り直した。大槻さんの絵コンテ。前の画面はブランチ `backup/title-before-redesign-1013` に残してある）
+/// **タイトル画面。**（2026/10/6・大槻さん。めっちゃカメレオンのタイトル画面を参考にした）
 ///
 /// | 画面 | できること |
 /// | --- | --- |
-/// | はじめ | 名前を入れて「START」 |
-/// | えらぶ | 左に「1人プレイ」「マルチプレイ」。右に、選んでいるほうの表示（いまは文字。のちのち人の絵にする） |
-/// | 部屋の一覧 | 「マルチプレイ」を押すと右に出る。いまある部屋（インターネットの公開の部屋・同じネットワークの LAN の部屋）が並び、押すと入る。一番下の「＋」で部屋を作る |
+/// | メイン | サーバーを作る／サーバーを探す／設定／ゲームを終了。右下にバージョン |
+/// | サーバーを作る | 名前・最大人数（2〜8）・サーバーの名前・つなぎかた（インターネット／LAN）・プライベートにするか → 作成。1人で練習もここから |
+/// | サーバーを探す | プライベートサーバー（参加コード）／パブリックサーバー（一覧から選ぶ）／LAN（IPアドレス）の3つから選んで参加 |
+/// | 設定 | サウンド（音量）／グラフィック（解像度・画面モード・フレームレート上限・垂直同期・画質）／ゲーム全般（マウス感度・操作タイプ） |
 ///
-/// ・**1人プレイ**…押すとそのままロビーへ（このPCの中だけで動くホストになる）
-/// ・**部屋を作る**（「＋」）…小さい窓で「インターネット」か「LAN」を選ぶと、すぐ部屋ができてロビーへ。部屋の名前もその窓で入れられる（空なら「自分の名前の部屋」）。パスワードは付けない（2026/10/13〜）
-/// ・**パスワードの付いた部屋**に入るときは、小さい窓でパスワードを聞く
-///
-/// ## 画面はプレハブ
+/// ## 画面はプレハブ（2026/10/6 から）
 ///
 /// **`Assets/Resources/TitleScreen.prefab`** が画面そのもの。TitleScene に置いてある。
 /// **ボタンや文字は、エディタで自由に動かし・大きさを変え・画像や色を変えてよい。**
-/// このスクリプトは、部品に付いている印（<see cref="TitlePart"/> の Role・<see cref="TitleMenuButton"/> の Action・<see cref="TitleInput"/> の Kind）を頼りに動かす。
+/// このスクリプトは、部品に付いている印を頼りに中身を動かす（名前や並び順は見ない）。
+///
+/// | 印 | 何を決めるか |
+/// | --- | --- |
+/// | <see cref="TitleMenuButton"/> の Action | ボタンを押したときにすること |
+/// | <see cref="TitlePart"/> の Role | 画面（ページ）・コードが書き換える文字・一覧の入れ物など |
+/// | <see cref="TitleInput"/> の Kind | 入力欄に何を入れるか（名前・参加コード など） |
+/// | <see cref="TitleSettingRow"/> の Kind | 設定の1行が何の設定か |
+///
+/// ボタンの見た目（画像・色）は <see cref="TitleScreenTheme"/> でまとめて変えられる。
 /// 作り直したいときは `Tools > StarSweepers > タイトル画面のプレハブを作り直す`（**手で直した配置は消える**）。
+///
+/// ## いつ出るか
+///
+/// **TitleScene で出る**（ゲームはここから始まる）。タイトルとロビーの行き来は <see cref="TitleSceneFlow"/> がする。
 ///
 /// ## 操作
 ///
-/// マウス、またはコントローラー（右スティックのポインター＋LT／A、左スティック・十字キーで選んで A）。
-/// **B（キーボードは Esc）で1つ前に戻る**（小さい窓が開いていれば、窓を閉じる）。
+/// マウスで選ぶ。コントローラーでは十字キー／スティックで選んで A、**B（キーボードは Esc）で1つ前の画面へ戻る。**
 /// </summary>
 [DisallowMultipleComponent]
 public class TitleScreen : MonoBehaviour
@@ -50,20 +59,15 @@ public class TitleScreen : MonoBehaviour
     /// <summary>画面のプレハブの場所（Resources の中）。TitleScene に置き忘れたときに使う。</summary>
     public const string PrefabResourcePath = "TitleScreen";
 
-    /// <summary>作る部屋の最大人数（作る窓では決めない。宇宙ごみ集めの定員と同じ6人。2026/10/14）。</summary>
-    private const int RoomMaxPlayers = SpaceJunkTeams.MaxPlayers;
+    /// <summary>LAN で最後に入れたIPアドレス（次に開いたときに入れておく）。</summary>
+    private const string LastLanAddressKey = "StarSweepers.LastLanAddress";
 
-    /// <summary>部屋の名前の最大の文字数。</summary>
-    private const int RoomNameMaxLength = 25;
+    /// <summary>サーバーの名前の最大の文字数。</summary>
+    private const int ServerNameMaxLength = 25;
 
-    /// <summary>インターネットの部屋の一覧を、何秒ごとに取り直すか。</summary>
-    private const float InternetRefreshSeconds = 5f;
-
-    /// <summary>
-    /// 一覧を取れなかったとき、次に取り直すまでの秒数。
-    /// 短い間に何度も頼むと、相手のサービスに「頼みすぎ（429 Too Many Requests）」と断られるため、長めに待つ。
-    /// </summary>
-    private const float InternetRetrySeconds = 15f;
+    /// <summary>参加コード・IPアドレスの最大の文字数。</summary>
+    private const int PrivateCodeMaxLength = 12;
+    private const int LanAddressMaxLength = 40;
 
     /// <summary>いまタイトル画面が出ているか。ポーズ画面やロビーの画面が、これを見て自分を隠す。</summary>
     public static bool IsVisible { get; private set; }
@@ -71,40 +75,21 @@ public class TitleScreen : MonoBehaviour
     /// <summary>画面の種類。</summary>
     public enum Page
     {
-        /// <summary>名前とスタート</summary>
-        Start,
-
-        /// <summary>1人プレイ／マルチプレイ（と部屋の一覧）</summary>
-        Mode,
-    }
-
-    /// <summary>右側に出しているもの。</summary>
-    private enum Preview
-    {
-        Solo,
-        Multi,
-    }
-
-    /// <summary>開いている小さい窓。</summary>
-    private enum Window
-    {
-        None,
+        Main,
         Create,
-        Password,
+        Find,
+        FindPrivate,
+        FindPublic,
+        FindLan,
+        Settings,
+        FindFriends,
     }
 
-    /// <summary>部屋の一覧の1行ぶん（インターネットの部屋か LAN の部屋）。</summary>
-    private struct RoomEntry
+    private enum SettingsTab
     {
-        public bool Lan;
-        public string SessionId;
-        public string Address;
-        public ushort Port;
-        public string Name;
-        public int Players;
-        public int MaxPlayers;
-        public bool HasPassword;
-        public bool Full;
+        Sound,
+        Graphics,
+        General,
     }
 
     [Tooltip("ON：再生したときに、文字をパソコンの日本語フォントに差し替える（日本語が四角にならないように）")]
@@ -126,34 +111,55 @@ public class TitleScreen : MonoBehaviour
     // 部品
     private readonly Dictionary<TitlePartRole, TitlePart> parts = new Dictionary<TitlePartRole, TitlePart>();
     private readonly Dictionary<Page, GameObject> pages = new Dictionary<Page, GameObject>();
+    private readonly Dictionary<SettingsTab, GameObject> settingsGroups = new Dictionary<SettingsTab, GameObject>();
     private readonly List<TitleMenuButton> buttons = new List<TitleMenuButton>();
-    private readonly List<GameObject> roomCards = new List<GameObject>();
-    private GameObject roomCardTemplate;
+    private readonly List<TitleSettingRow> settingRows = new List<TitleSettingRow>();
+    private readonly List<GameObject> serverCards = new List<GameObject>();
+    private GameObject serverCardTemplate;
+    private GameObject friendCardTemplate;
+
+    // 見つかった LAN の部屋の一覧（「LANのサーバーに参加する」画面。2026/10/15）
+    private GameObject lanCardTemplate;
+    private readonly List<GameObject> lanCards = new List<GameObject>();
+    private string lanRoomsSignature = string.Empty;
+    private bool lanListening;
+
+    /// <summary>ホストに切られて戻ってきたときの理由（例：満員）。出し終わったら空にする。</summary>
+    private string disconnectNotice;
+
+    /// <summary>前に出した切られた理由（同じ理由を、タイトルに戻るたびに出し直さないため）。</summary>
+    private static string shownDisconnectReason = string.Empty;
+    private readonly List<GameObject> friendCards = new List<GameObject>();
+    private bool searchingFriends;
     private bool initialized;
 
-    private Page current = Page.Start;
-    private Preview preview = Preview.Solo;
-    private bool roomListOpen;
-    private Window window = Window.None;
+    private Page current = Page.Main;
 
-    // 入力欄
-    /// <summary>作る部屋の名前（空なら「自分の名前の部屋」）。保存はしない。2026/10/13 にパスワードの欄から変えた。</summary>
-    private string createRoomName = string.Empty;
+    // サーバーを作る
+    private int createMaxPlayers = SpaceJunkTeams.MaxPlayers; // 初期値は定員（8人）。2026/10/15・大槻さん
+    private bool createLan;
+    private bool createPrivate = true;
+    private string createServerName = string.Empty;
+
+    /// <summary>作る部屋のパスワード（空ならなし。1〜32文字）。保存はしない。</summary>
+    private string createPassword = string.Empty;
+
+    // サーバーを探す
+    private string privateCode = string.Empty;
+
+    /// <summary>入る部屋のパスワード（パスワードの付いた部屋だけ要る）。</summary>
     private string joinPassword = string.Empty;
-
-    // 部屋の一覧
-    private readonly List<ISessionInfo> internetRooms = new List<ISessionInfo>();
-    private string internetProblem = string.Empty;
+    private string lanAddress = string.Empty;
     private bool searching;
-    private bool searchedOnce;
-    /// <summary>次にインターネットの部屋の一覧を取ってよい時刻（Time.unscaledTime）。一覧を開き直しても、これより前には取らない。</summary>
-    private float nextQueryTime;
-    private bool lanListening;
-    private string roomsSignature = string.Empty;
-    private RoomEntry pendingJoin;
 
-    /// <summary>LAN でつなぎに行っている先（つないでいる途中の表示に出す）。</summary>
-    private string lanTarget = string.Empty;
+    // 設定
+    private SettingsTab settingsTab = SettingsTab.Sound;
+    private Resolution[] resolutions = new Resolution[0];
+    private int resolutionIndex;
+    private FullScreenMode pendingScreenMode;
+
+    private static readonly FullScreenMode[] ScreenModes =
+        { FullScreenMode.ExclusiveFullScreen, FullScreenMode.FullScreenWindow, FullScreenMode.Windowed };
 
     // ------------------------------------------------------------
     // 出し入れ
@@ -170,67 +176,42 @@ public class TitleScreen : MonoBehaviour
 
         IsVisible = true;
         EnsureEventSystem();
-        ShowPage(Page.Start);
+        ShowPage(Page.Main);
         ShowCursor();
-        ShowDisconnectReason();
-    }
-
-    /// <summary>前に出した切られた理由（同じ理由を、タイトルに戻るたびに出し直さないため）。</summary>
-    private static string shownDisconnectReason = string.Empty;
-
-    /// <summary>
-    /// **ホストに切られて戻ってきたときは、その理由を名前の欄の下に出す**（例：「満員です（最大6人）」。2026/10/14）。
-    /// </summary>
-    private void ShowDisconnectReason()
-    {
-        NetworkManager manager = NetworkManager.Singleton;
-        string reason = manager != null ? manager.DisconnectReason : string.Empty;
-        if (string.IsNullOrEmpty(reason) || reason == shownDisconnectReason)
-        {
-            return;
-        }
-
-        shownDisconnectReason = reason;
-        SetText(TitlePartRole.StartMessage, $"部屋に入れませんでした：{reason}");
+        TakeDisconnectReason();
     }
 
     private void OnDisable()
     {
         IsVisible = false;
         SetLanListening(false);
+
+        // **閉じたあとも、カーソルは出したままにする。**（2026/10/6「ロビーでクリックするたびにカーソルが隠れる」の修正）
         ShowCursor();
     }
 
     private void Update()
     {
+        // 遊んでいた画面から戻ってきたときなどに、カーソルが隠れたままにならないように
         ShowCursor();
 
         JoinFromSteamRequest();
         UpdateBusyOverlay();
 
-        GameObject busy = PartObject(TitlePartRole.BusyOverlay);
-        bool busyShown = busy != null && busy.activeSelf;
+        if (current == Page.FindLan)
+        {
+            UpdateLanRoomList();
+        }
 
-        if (!busyShown && WasBackPressed())
+        Keyboard keyboard = Keyboard.current;
+        bool back = (keyboard != null && keyboard.escapeKey.wasPressedThisFrame) ||
+                    GamepadInput.WasPressed(GamepadButton.East);
+
+        GameObject busy = PartObject(TitlePartRole.BusyOverlay);
+        if (back && (busy == null || !busy.activeSelf))
         {
             GoBack();
         }
-
-        if (current == Page.Mode)
-        {
-            UpdatePreview();
-
-            if (roomListOpen)
-            {
-                UpdateRoomList();
-            }
-        }
-    }
-
-    private static bool WasBackPressed()
-    {
-        Keyboard keyboard = Keyboard.current;
-        return (keyboard != null && keyboard.escapeKey.wasPressedThisFrame) || GamepadInput.WasPressed(GamepadButton.East);
     }
 
     /// <summary>
@@ -254,6 +235,7 @@ public class TitleScreen : MonoBehaviour
         }
 
         initialized = true;
+        lanAddress = PlayerPrefs.GetString(LastLanAddressKey, "127.0.0.1");
 
         if (useOsJapaneseFont)
         {
@@ -263,6 +245,7 @@ public class TitleScreen : MonoBehaviour
         CollectParts();
         WireButtons();
         WireInputs();
+        WireSettings();
         ApplyVersionText();
     }
 
@@ -289,19 +272,45 @@ public class TitleScreen : MonoBehaviour
             }
         }
 
-        AddPage(Page.Start, TitlePartRole.PageStart);
-        AddPage(Page.Mode, TitlePartRole.PageMode);
+        AddPage(Page.Main, TitlePartRole.PageMain);
+        AddPage(Page.Create, TitlePartRole.PageCreate);
+        AddPage(Page.Find, TitlePartRole.PageFind);
+        AddPage(Page.FindPrivate, TitlePartRole.PageFindPrivate);
+        AddPage(Page.FindPublic, TitlePartRole.PageFindPublic);
+        AddPage(Page.FindLan, TitlePartRole.PageFindLan);
+        AddPage(Page.Settings, TitlePartRole.PageSettings);
+        AddPage(Page.FindFriends, TitlePartRole.PageFindFriends);
 
-        // 部屋の一覧のカードの見本。これを複製して1枚ずつ作る（見本そのものは隠しておく）
-        roomCardTemplate = PartObject(TitlePartRole.RoomCardTemplate);
-        if (roomCardTemplate != null)
+        AddSettingsGroup(SettingsTab.Sound, TitlePartRole.SettingsSound);
+        AddSettingsGroup(SettingsTab.Graphics, TitlePartRole.SettingsGraphics);
+        AddSettingsGroup(SettingsTab.General, TitlePartRole.SettingsGeneral);
+
+        // サーバーの一覧のカードの見本。これを複製して1枚ずつ作る（見本そのものは隠しておく）
+        serverCardTemplate = PartObject(TitlePartRole.ServerCardTemplate);
+        if (serverCardTemplate != null)
         {
-            roomCardTemplate.SetActive(false);
+            serverCardTemplate.SetActive(false);
         }
 
-        SetPartActive(TitlePartRole.CreateWindow, false);
-        SetPartActive(TitlePartRole.PasswordWindow, false);
-        SetPartActive(TitlePartRole.BusyOverlay, false);
+        // フレンドのサーバーのカードの見本（Steam。2026/10/6）
+        friendCardTemplate = PartObject(TitlePartRole.FriendCardTemplate);
+        if (friendCardTemplate != null)
+        {
+            friendCardTemplate.SetActive(false);
+        }
+
+        // 見つかった LAN の部屋のカードの見本（2026/10/15）
+        lanCardTemplate = PartObject(TitlePartRole.LanCardTemplate);
+        if (lanCardTemplate != null)
+        {
+            lanCardTemplate.SetActive(false);
+        }
+
+        GameObject busy = PartObject(TitlePartRole.BusyOverlay);
+        if (busy != null)
+        {
+            busy.SetActive(false);
+        }
     }
 
     private void AddPage(Page page, TitlePartRole role)
@@ -317,12 +326,23 @@ public class TitleScreen : MonoBehaviour
         }
     }
 
+    private void AddSettingsGroup(SettingsTab tab, TitlePartRole role)
+    {
+        GameObject target = PartObject(role);
+        if (target != null)
+        {
+            settingsGroups[tab] = target;
+        }
+    }
+
     private void WireButtons()
     {
         foreach (TitleMenuButton look in GetComponentsInChildren<TitleMenuButton>(true))
         {
             // 一覧のカードのボタンは、カードを作るときにつなぐ
-            if (roomCardTemplate != null && look.transform.IsChildOf(roomCardTemplate.transform))
+            if ((serverCardTemplate != null && look.transform.IsChildOf(serverCardTemplate.transform)) ||
+                (friendCardTemplate != null && look.transform.IsChildOf(friendCardTemplate.transform)) ||
+                (lanCardTemplate != null && look.transform.IsChildOf(lanCardTemplate.transform)))
             {
                 continue;
             }
@@ -348,7 +368,7 @@ public class TitleScreen : MonoBehaviour
             TitleInputKind kind = input.Kind;
             Text counter = input.Counter;
 
-            field.characterLimit = IsPassword(kind) ? InternetConnection.PasswordInputLimit : MaxLengthOf(kind);
+            field.characterLimit = InputLimitOf(kind);
             field.text = ValueOf(kind);
 
             field.onValueChanged.AddListener(value =>
@@ -363,47 +383,15 @@ public class TitleScreen : MonoBehaviour
 
     private static bool IsPassword(TitleInputKind kind)
     {
-        return kind == TitleInputKind.JoinPassword;
+        return kind == TitleInputKind.CreatePassword || kind == TitleInputKind.JoinPassword;
     }
 
-    private static int MaxLengthOf(TitleInputKind kind)
+    /// <summary>
+    /// 入力欄に打てる文字数。パスワードは 32 文字を超えたことを知らせたいので、少し多めに打てるようにする。
+    /// </summary>
+    private static int InputLimitOf(TitleInputKind kind)
     {
-        if (kind == TitleInputKind.ServerName)
-        {
-            return RoomNameMaxLength;
-        }
-
-        return IsPassword(kind) ? InternetConnection.PasswordMaxLength : GameSettings.PlayerNameMaxLength;
-    }
-
-    private string ValueOf(TitleInputKind kind)
-    {
-        switch (kind)
-        {
-            case TitleInputKind.ServerName:
-                return createRoomName;
-            case TitleInputKind.JoinPassword:
-                return joinPassword;
-            default:
-                return GameSettings.PlayerName ?? string.Empty;
-        }
-    }
-
-    private void SetValue(TitleInputKind kind, string value)
-    {
-        switch (kind)
-        {
-            case TitleInputKind.ServerName:
-                createRoomName = value;
-                break;
-            case TitleInputKind.JoinPassword:
-                joinPassword = value;
-                break;
-            default:
-                GameSettings.PlayerName = value;
-                SetText(TitlePartRole.StartMessage, string.Empty);
-                break;
-        }
+        return IsPassword(kind) ? InternetConnection.PasswordInputLimit : MaxLengthOf(kind);
     }
 
     /// <summary>「いま何文字か」の文字の、プレハブで決めた色（32文字を超えて赤くしたあと、戻すため）。</summary>
@@ -426,20 +414,81 @@ public class TitleScreen : MonoBehaviour
         int max = MaxLengthOf(kind);
         bool tooLong = IsPassword(kind) && value.Length > max;
 
+        // 長い文が切れないように、左へはみ出して出せるようにしておく
         counter.horizontalOverflow = HorizontalWrapMode.Overflow;
         counter.text = tooLong ? InternetConnection.PasswordTooLongMessage : $"{value.Length}/{max}";
         counter.color = tooLong ? new Color(1f, 0.45f, 0.4f, 1f) : normal;
     }
 
-    /// <summary>その窓・画面の入力欄に、いまの値を入れ直す。</summary>
-    private void RefreshInputs(GameObject root)
+    private static int MaxLengthOf(TitleInputKind kind)
     {
-        if (root == null)
+        switch (kind)
         {
-            return;
+            case TitleInputKind.PlayerName:
+                return GameSettings.PlayerNameMaxLength;
+            case TitleInputKind.ServerName:
+                return ServerNameMaxLength;
+            case TitleInputKind.PrivateCode:
+                return PrivateCodeMaxLength;
+            case TitleInputKind.CreatePassword:
+            case TitleInputKind.JoinPassword:
+                return InternetConnection.PasswordMaxLength;
+            default:
+                return LanAddressMaxLength;
         }
+    }
 
-        foreach (TitleInput input in root.GetComponentsInChildren<TitleInput>(true))
+    private string ValueOf(TitleInputKind kind)
+    {
+        switch (kind)
+        {
+            case TitleInputKind.PlayerName:
+                return GameSettings.PlayerName ?? string.Empty;
+            case TitleInputKind.ServerName:
+                return createServerName;
+            case TitleInputKind.PrivateCode:
+                return privateCode;
+            case TitleInputKind.CreatePassword:
+                return createPassword;
+            case TitleInputKind.JoinPassword:
+                return joinPassword;
+            default:
+                return lanAddress;
+        }
+    }
+
+    private void SetValue(TitleInputKind kind, string value)
+    {
+        switch (kind)
+        {
+            case TitleInputKind.PlayerName:
+                GameSettings.PlayerName = value;
+                break;
+            case TitleInputKind.ServerName:
+                createServerName = value;
+                break;
+            case TitleInputKind.PrivateCode:
+                privateCode = value;
+                break;
+            case TitleInputKind.CreatePassword:
+                createPassword = value;
+                break;
+            case TitleInputKind.JoinPassword:
+                joinPassword = value;
+                break;
+            default:
+                lanAddress = value;
+                break;
+        }
+    }
+
+    /// <summary>
+    /// その画面の入力欄に、いまの値を入れ直す（同じ値を入れる欄が別の画面にもあるため。
+    /// 例：パスワードは「プライベートサーバー」と「パブリックサーバー」の両方の画面にある）。
+    /// </summary>
+    private void RefreshInputs(GameObject page)
+    {
+        foreach (TitleInput input in page.GetComponentsInChildren<TitleInput>(true))
         {
             string value = ValueOf(input.Kind);
             if (input.Field.text != value)
@@ -468,19 +517,44 @@ public class TitleScreen : MonoBehaviour
     {
         switch (action)
         {
-            case TitleButtonAction.Start: PressStart(); break;
+            case TitleButtonAction.OpenCreate: ShowPage(Page.Create); break;
+            case TitleButtonAction.OpenFind: ShowPage(Page.Find); break;
+            case TitleButtonAction.OpenSettings: ShowPage(Page.Settings); break;
+            case TitleButtonAction.Quit: QuitGame(); break;
             case TitleButtonAction.Back: GoBack(); break;
-            case TitleButtonAction.PlaySolo: StartSolo(); break;
-            case TitleButtonAction.ShowMulti: OpenRoomList(); break;
-            case TitleButtonAction.OpenCreateRoom: OpenWindow(Window.Create); break;
-            case TitleButtonAction.CreateRoomInternet: CreateInternetRoom(); break;
-            case TitleButtonAction.CreateRoomLan: CreateLanRoom(); break;
-            case TitleButtonAction.CloseWindow: CloseWindow(); break;
-            case TitleButtonAction.ConfirmJoinPassword: ConfirmJoinPassword(); break;
+
+            case TitleButtonAction.CreateServer: CreateServer(); break;
+            case TitleButtonAction.PracticeSolo:
+                if (NetworkManager.Singleton != null)
+                {
+                    StartLanHost(NetworkManager.Singleton);
+                }
+                break;
+            case TitleButtonAction.MaxPlayersDown: ChangeMaxPlayers(-1); break;
+            case TitleButtonAction.MaxPlayersUp: ChangeMaxPlayers(1); break;
+            case TitleButtonAction.UseInternet: SetCreateLan(false); break;
+            case TitleButtonAction.UseLan: SetCreateLan(true); break;
+            case TitleButtonAction.TogglePrivate: TogglePrivate(); break;
+            case TitleButtonAction.SetPublic: SetCreatePrivate(false); break;
+            case TitleButtonAction.SetPrivate: SetCreatePrivate(true); break;
+
+            case TitleButtonAction.OpenFindPrivate: ShowPage(Page.FindPrivate); break;
+            case TitleButtonAction.OpenFindPublic: ShowPage(Page.FindPublic); break;
+            case TitleButtonAction.OpenFindLan: ShowPage(Page.FindLan); break;
+            case TitleButtonAction.JoinPrivate: JoinPrivate(); break;
+            case TitleButtonAction.JoinLan: JoinLan(); break;
+            case TitleButtonAction.SearchPublic: SearchPublic(); break;
+            case TitleButtonAction.OpenFindFriends: ShowPage(Page.FindFriends); break;
+            case TitleButtonAction.RefreshFriends: SearchFriends(); break;
+
+            case TitleButtonAction.TabSound: ShowSettingsTab(SettingsTab.Sound); break;
+            case TitleButtonAction.TabGraphics: ShowSettingsTab(SettingsTab.Graphics); break;
+            case TitleButtonAction.TabGeneral: ShowSettingsTab(SettingsTab.General); break;
+            case TitleButtonAction.ApplyScreen: ApplyScreen(); break;
         }
     }
 
-    /// <summary>その Action のボタン全部に「選ばれている」見た目を付け外しする。</summary>
+    /// <summary>その Action のボタン全部に「選ばれている」見た目を付け外しする（タブ・切り替え）。</summary>
     private void SetSelectedLook(TitleButtonAction action, bool selected)
     {
         foreach (TitleMenuButton look in buttons)
@@ -492,18 +566,6 @@ public class TitleScreen : MonoBehaviour
         }
     }
 
-    private TitleMenuButton FindButton(TitleButtonAction action)
-    {
-        foreach (TitleMenuButton look in buttons)
-        {
-            if (look != null && look.Action == action)
-            {
-                return look;
-            }
-        }
-        return null;
-    }
-
     // ------------------------------------------------------------
     // 画面の切り替え
     // ------------------------------------------------------------
@@ -511,23 +573,34 @@ public class TitleScreen : MonoBehaviour
     private void ShowPage(Page page)
     {
         current = page;
-        CloseWindow();
+        SetLanListening(page == Page.FindLan);
+        if (page == Page.FindLan)
+        {
+            lanRoomsSignature = null;
+        }
 
         foreach (KeyValuePair<Page, GameObject> pair in pages)
         {
             pair.Value.SetActive(pair.Key == page);
         }
 
-        if (page == Page.Mode)
+        switch (page)
         {
-            roomListOpen = false;
-            SetPreview(Preview.Solo);
-        }
-        else
-        {
-            roomListOpen = false;
-            SetLanListening(false);
-            SetText(TitlePartRole.StartMessage, string.Empty);
+            case Page.Main:
+                RefreshMainName();
+                break;
+            case Page.Create:
+                RefreshCreatePage();
+                break;
+            case Page.FindPublic:
+                SearchPublic();
+                break;
+            case Page.FindFriends:
+                SearchFriends();
+                break;
+            case Page.Settings:
+                ShowSettingsTab(settingsTab);
+                break;
         }
 
         if (pages.TryGetValue(page, out GameObject shown))
@@ -537,77 +610,115 @@ public class TitleScreen : MonoBehaviour
         }
     }
 
-    /// <summary>1つ前へ戻る（小さい窓が開いていれば閉じる）。</summary>
+    /// <summary>1つ前の画面へ戻る。</summary>
     private void GoBack()
     {
-        if (window != Window.None)
+        switch (current)
         {
-            CloseWindow();
-            return;
-        }
-
-        if (current == Page.Mode)
-        {
-            ShowPage(Page.Start);
+            case Page.Create:
+            case Page.Find:
+            case Page.Settings:
+                ShowPage(Page.Main);
+                break;
+            case Page.FindPrivate:
+            case Page.FindPublic:
+            case Page.FindLan:
+            case Page.FindFriends:
+                ShowPage(Page.Find);
+                break;
         }
     }
 
-    /// <summary>「START」。名前が入っていれば、1人プレイ／マルチプレイを選ぶ画面へ。</summary>
-    private void PressStart()
+    private void RefreshMainName()
     {
-        if (string.IsNullOrWhiteSpace(GameSettings.PlayerName))
+        string name = GameSettings.PlayerName;
+        SetText(TitlePartRole.PlayerNameText,
+            string.IsNullOrEmpty(name) ? "名前：未設定（サーバーを作る・探すの画面で入れられます）" : $"名前：{name}");
+    }
+
+    private void RefreshCreatePage()
+    {
+        SetText(TitlePartRole.MaxPlayersText, $"{createMaxPlayers} 人");
+        SetSelectedLook(TitleButtonAction.UseInternet, !createLan);
+        SetSelectedLook(TitleButtonAction.UseLan, createLan);
+        // パブリック／プライベートは、どちらか片方だけにチェックが付く（2026/10/6）
+        SetText(TitlePartRole.PrivateCheckText, createPrivate ? "■" : "□");
+        SetText(TitlePartRole.PublicCheckText, createPrivate ? "□" : "■");
+        SetSelectedLook(TitleButtonAction.SetPrivate, createPrivate);
+        SetSelectedLook(TitleButtonAction.SetPublic, !createPrivate);
+
+        GameObject privateRow = PartObject(TitlePartRole.PrivateRow);
+        if (privateRow != null)
         {
-            SetText(TitlePartRole.StartMessage, "名前を入れてください");
-            return;
+            privateRow.SetActive(!createLan);
         }
 
-        ShowPage(Page.Mode);
+        // パスワードはインターネットの部屋だけ（LAN では使わない）
+        GameObject passwordRow = PartObject(TitlePartRole.PasswordRow);
+        if (passwordRow != null)
+        {
+            passwordRow.SetActive(!createLan);
+        }
+
+        if (createLan)
+        {
+            SetText(TitlePartRole.CodeBoxTitle, "このPCのIPアドレス");
+            SetText(TitlePartRole.CodeBoxBody, $"{LocalAddresses()}\n参加する人の「サーバーを探す → LAN」の一覧に自動で出る（出ないときはこの番号を入れる）");
+        }
+        else
+        {
+            SetText(TitlePartRole.CodeBoxTitle, "参加コード");
+            SetText(TitlePartRole.CodeBoxBody,
+                "サーバーを作成すると発行されます（ロビーの左上に出ます）\n参加する人は「サーバーを探す → プライベートサーバー」で入れる");
+        }
+    }
+
+    private void ChangeMaxPlayers(int delta)
+    {
+        createMaxPlayers = Mathf.Clamp(createMaxPlayers + delta, 2, SpaceJunkTeams.MaxPlayers);
+        RefreshCreatePage();
+    }
+
+    private void SetCreateLan(bool lan)
+    {
+        createLan = lan;
+        RefreshCreatePage();
+    }
+
+    private void TogglePrivate()
+    {
+        createPrivate = !createPrivate;
+        RefreshCreatePage();
+    }
+
+    /// <summary>パブリック（false）かプライベート（true）かを決める。押したほうにだけチェックが付く。</summary>
+    private void SetCreatePrivate(bool value)
+    {
+        createPrivate = value;
+        RefreshCreatePage();
+    }
+
+    private static void QuitGame()
+    {
+        Debug.Log("[UI] タイトル画面からゲームを終了します");
+#if UNITY_EDITOR
+        UnityEditor.EditorApplication.isPlaying = false;
+#else
+        Application.Quit();
+#endif
     }
 
     // ------------------------------------------------------------
-    // 1人プレイ／マルチプレイ
+    // つなぐ
     // ------------------------------------------------------------
 
-    /// <summary>
-    /// **右側の表示を、ポインターが重なっている（十字キーで選ばれている）ほうに合わせる。**（マリオカートの選び方）
-    /// 「1人プレイ」に合わせたら、部屋の一覧は閉じる。
-    /// </summary>
-    private void UpdatePreview()
+    private static InternetConnection Internet()
     {
-        if (window != Window.None)
-        {
-            return;
-        }
-
-        TitleMenuButton solo = FindButton(TitleButtonAction.PlaySolo);
-        TitleMenuButton multi = FindButton(TitleButtonAction.ShowMulti);
-
-        if (solo != null && solo.IsHighlighted && preview != Preview.Solo)
-        {
-            roomListOpen = false;
-            SetLanListening(false);
-            SetPreview(Preview.Solo);
-        }
-        else if (multi != null && multi.IsHighlighted && preview != Preview.Multi)
-        {
-            SetPreview(Preview.Multi);
-        }
+        NetworkManager manager = NetworkManager.Singleton;
+        return manager != null ? manager.GetComponent<InternetConnection>() : null;
     }
 
-    private void SetPreview(Preview value)
-    {
-        preview = value;
-
-        SetPartActive(TitlePartRole.SoloPreview, preview == Preview.Solo);
-        SetPartActive(TitlePartRole.MultiPreview, preview == Preview.Multi && !roomListOpen);
-        SetPartActive(TitlePartRole.RoomListPanel, preview == Preview.Multi && roomListOpen);
-
-        SetSelectedLook(TitleButtonAction.PlaySolo, preview == Preview.Solo);
-        SetSelectedLook(TitleButtonAction.ShowMulti, preview == Preview.Multi);
-    }
-
-    /// <summary>「1人プレイ」。このPCの中だけで動くホストになり、そのままロビーへ（移すのは <see cref="TitleSceneFlow"/>）。</summary>
-    private static void StartSolo()
+    private void CreateServer()
     {
         NetworkManager manager = NetworkManager.Singleton;
         if (manager == null)
@@ -616,36 +727,76 @@ public class TitleScreen : MonoBehaviour
             return;
         }
 
+        string serverName = string.IsNullOrWhiteSpace(createServerName)
+            ? (string.IsNullOrWhiteSpace(GameSettings.PlayerName) ? "StarSweepers" : $"{GameSettings.PlayerName} のサーバー")
+            : createServerName;
+
+        if (createLan)
+        {
+            StartLanHost(manager);
+
+            // **同じネットワークに部屋を知らせる**（「サーバーを探す → LAN」の一覧に自動で出る。2026/10/15）
+            if (manager.IsServer)
+            {
+                LanRoomDiscovery.StartAdvertising(serverName, createMaxPlayers);
+            }
+            return;
+        }
+
+        InternetConnection internet = Internet();
+        if (internet == null)
+        {
+            Debug.LogError("[UI] InternetConnection が NetworkManager に付いていません。");
+            return;
+        }
+
+        internet.HostGame(serverName, createMaxPlayers, createPrivate, createPassword.Trim());
+    }
+
+    /// <summary>LAN（同じ場所のPC同士）のホストになる。1人で練習するときも同じ（ほかの人が入ってこないだけ）。</summary>
+    private static void StartLanHost(NetworkManager manager)
+    {
         if (manager.NetworkConfig.NetworkTransport is UnityTransport transport)
         {
-            // ほかのPCからは入れないように、このPCの中だけで待つ
-            transport.SetConnectionData("127.0.0.1", transport.ConnectionData.Port, "127.0.0.1");
+            transport.SetConnectionData("127.0.0.1", transport.ConnectionData.Port, "0.0.0.0");
         }
 
         manager.StartHost();
     }
 
-    /// <summary>「マルチプレイ」。右に部屋の一覧を出して、探し始める。</summary>
-    private void OpenRoomList()
+    private void JoinPrivate()
     {
-        roomListOpen = true;
-        SetPreview(Preview.Multi);
-        SetLanListening(true);
-
-        roomsSignature = null;
-        UpdateRoomList();
-
-        GameObject plus = PartObject(TitlePartRole.CreateRoomButton);
-        if (plus != null)
+        InternetConnection internet = Internet();
+        if (internet != null && !string.IsNullOrWhiteSpace(privateCode))
         {
-            SelectForGamepad(plus);
+            internet.JoinGame(privateCode.Trim(), joinPassword.Trim());
         }
     }
 
+    private void JoinLan()
+    {
+        NetworkManager manager = NetworkManager.Singleton;
+        if (manager == null || string.IsNullOrWhiteSpace(lanAddress))
+        {
+            return;
+        }
+
+        PlayerPrefs.SetString(LastLanAddressKey, lanAddress.Trim());
+        PlayerPrefs.Save();
+
+        if (manager.NetworkConfig.NetworkTransport is UnityTransport transport)
+        {
+            transport.SetConnectionData(lanAddress.Trim(), transport.ConnectionData.Port);
+        }
+
+        manager.StartClient();
+    }
+
     // ------------------------------------------------------------
-    // 部屋の一覧
+    // 見つかった LAN の部屋（「LANのサーバーに参加する」画面。2026/10/15・大槻さん「LAN の部屋の自動表示も残して」）
     // ------------------------------------------------------------
 
+    /// <summary>LAN の部屋の知らせを聞くか（「LANのサーバーに参加する」画面を開いている間だけ聞く）。</summary>
     private void SetLanListening(bool listen)
     {
         if (listen == lanListening)
@@ -664,189 +815,57 @@ public class TitleScreen : MonoBehaviour
         }
     }
 
-    /// <summary>一覧を開いている間、インターネットの部屋を取り直し、LAN の部屋と合わせて並べ直す。</summary>
-    private void UpdateRoomList()
+    /// <summary>見つかった LAN の部屋が変わったら、カードを並べ直す。</summary>
+    private void UpdateLanRoomList()
     {
-        // 「マルチプレイ」を何度押しても、決まった間隔より短くは取り直さない（2026/10/13・連打で 429 になった）
-        if (Time.unscaledTime >= nextQueryTime && !searching)
-        {
-            nextQueryTime = Time.unscaledTime + InternetRefreshSeconds;
-            SearchInternetRooms();
-        }
-
-        List<RoomEntry> entries = CollectRooms();
-        string signature = Signature(entries);
-        if (signature == roomsSignature)
+        RectTransform content = PartObject(TitlePartRole.LanListContent) != null
+            ? (RectTransform)PartObject(TitlePartRole.LanListContent).transform
+            : null;
+        if (content == null || lanCardTemplate == null)
         {
             return;
         }
 
-        roomsSignature = signature;
-        RebuildRoomCards(entries);
-    }
-
-    private async void SearchInternetRooms()
-    {
-        InternetConnection internet = Internet();
-        if (internet == null)
-        {
-            internetProblem = "インターネットの接続の部品が見つかりません";
-            return;
-        }
-
-        if (internet.IsBusy)
-        {
-            return;
-        }
-
-        searching = true;
-        List<ISessionInfo> sessions = await internet.QueryPublicSessionsAsync();
-        searching = false;
-        searchedOnce = true;
-
-        if (this == null)
-        {
-            return;
-        }
-
-        internetRooms.Clear();
-
-        if (sessions == null)
-        {
-            internetProblem = (string.IsNullOrEmpty(internet.Message) ? "インターネットの部屋を取れませんでした" : internet.Message) +
-                              $"。{InternetRetrySeconds:0}秒後に自動でもう一度探します";
-            nextQueryTime = Time.unscaledTime + InternetRetrySeconds;
-            internet.ClearFailure();
-        }
-        else
-        {
-            internetProblem = string.Empty;
-            internetRooms.AddRange(sessions);
-        }
-
-        roomsSignature = null; // 次のフレームで並べ直す
-    }
-
-    private List<RoomEntry> CollectRooms()
-    {
-        List<RoomEntry> entries = new List<RoomEntry>();
-
-        foreach (ISessionInfo info in internetRooms)
-        {
-            entries.Add(new RoomEntry
-            {
-                Lan = false,
-                SessionId = info.Id,
-                Name = string.IsNullOrEmpty(info.Name) ? "（名前なし）" : info.Name,
-                Players = Mathf.Max(0, info.MaxPlayers - info.AvailableSlots),
-                MaxPlayers = info.MaxPlayers,
-                HasPassword = info.HasPassword,
-                Full = info.AvailableSlots <= 0 || info.IsLocked,
-            });
-        }
-
+        StringBuilder signature = new StringBuilder();
         foreach (LanRoomDiscovery.Room room in LanRoomDiscovery.Rooms)
         {
-            entries.Add(new RoomEntry
-            {
-                Lan = true,
-                Address = room.Address,
-                Port = room.Port,
-                Name = room.Name,
-                Players = room.Players,
-                MaxPlayers = room.MaxPlayers,
-                Full = room.Players >= room.MaxPlayers,
-            });
+            signature.Append(room.Address).Append(':').Append(room.Port).Append(',').Append(room.Name)
+                .Append(',').Append(room.Players).Append('/').Append(room.MaxPlayers).Append(';');
         }
 
-        return entries;
-    }
-
-    private string Signature(List<RoomEntry> entries)
-    {
-        StringBuilder builder = new StringBuilder();
-        builder.Append(searchedOnce).Append('|').Append(internetProblem).Append('|');
-        foreach (RoomEntry entry in entries)
+        if (signature.ToString() == lanRoomsSignature)
         {
-            builder.Append(entry.Lan ? entry.Address + ":" + entry.Port : entry.SessionId)
-                .Append(',').Append(entry.Name).Append(',').Append(entry.Players).Append('/').Append(entry.MaxPlayers)
-                .Append(entry.HasPassword).Append(entry.Full).Append(';');
+            return;
         }
-        return builder.ToString();
-    }
+        lanRoomsSignature = signature.ToString();
 
-    private void RebuildRoomCards(List<RoomEntry> entries)
-    {
-        // コントローラーで選んでいたカードが消えても、迷子にならないように「＋」へ戻す
-        GameObject selected = EventSystem.current != null ? EventSystem.current.currentSelectedGameObject : null;
-        bool selectedCard = selected != null && roomCards.Exists(card => card != null && selected.transform.IsChildOf(card.transform));
-
-        foreach (GameObject card in roomCards)
+        foreach (GameObject card in lanCards)
         {
             if (card != null)
             {
                 Destroy(card);
             }
         }
-        roomCards.Clear();
+        lanCards.Clear();
 
-        RectTransform content = PartObject(TitlePartRole.RoomListContent) != null
-            ? (RectTransform)PartObject(TitlePartRole.RoomListContent).transform
-            : null;
-
-        if (content != null && roomCardTemplate != null)
+        foreach (LanRoomDiscovery.Room room in LanRoomDiscovery.Rooms)
         {
-            foreach (RoomEntry entry in entries)
-            {
-                roomCards.Add(AddRoomCard(content, entry));
-            }
-        }
-        else if (roomCardTemplate == null)
-        {
-            Debug.LogWarning("[UI] 部屋の一覧のカードの見本（Role：RoomCardTemplate）がプレハブにありません。");
+            lanCards.Add(AddLanCard(content, room));
         }
 
-        // 「＋」はいつも一番下
-        GameObject plus = PartObject(TitlePartRole.CreateRoomButton);
-        if (plus != null)
-        {
-            plus.transform.SetAsLastSibling();
-        }
-
-        string message;
-        if (entries.Count > 0)
-        {
-            message = string.Empty;
-        }
-        else if (!searchedOnce)
-        {
-            message = "部屋を探しています…";
-        }
-        else
-        {
-            message = "部屋が見つかりません。「＋」で部屋を作れます";
-        }
-
-        if (!string.IsNullOrEmpty(internetProblem))
-        {
-            message = (message.Length > 0 ? message + "\n" : string.Empty) + $"（インターネットの部屋：{internetProblem}）";
-        }
-
-        SetText(TitlePartRole.RoomListMessage, message);
-        SetPartActive(TitlePartRole.RoomListMessage, message.Length > 0);
-
-        if (selectedCard && plus != null)
-        {
-            SelectForGamepad(plus);
-        }
+        SetText(TitlePartRole.LanListMessage, LanRoomDiscovery.Rooms.Count == 0
+            ? "同じネットワークの部屋を探しています…\n見つからないときは、左にIPアドレスを入れて参加できます"
+            : string.Empty);
     }
 
-    /// <summary>見本のカード（RoomCardTemplate）を複製して、部屋1つぶんを一覧に足す。</summary>
-    private GameObject AddRoomCard(RectTransform content, RoomEntry entry)
+    /// <summary>見本のカード（LanCardTemplate）を複製して、LAN の部屋1つぶんを一覧に足す。押すとその部屋に入る。</summary>
+    private GameObject AddLanCard(RectTransform content, LanRoomDiscovery.Room room)
     {
-        GameObject card = Instantiate(roomCardTemplate, content);
-        card.name = $"Room {entry.Name}";
+        GameObject card = Instantiate(lanCardTemplate, content);
+        card.name = $"LanRoom {room.Name}";
         card.SetActive(true);
+
+        bool full = room.Players >= room.MaxPlayers;
 
         foreach (TitlePart part in card.GetComponentsInChildren<TitlePart>(true))
         {
@@ -856,103 +875,46 @@ public class TitleScreen : MonoBehaviour
                 continue;
             }
 
-            if (part.Role == TitlePartRole.RoomCardName)
+            if (part.Role == TitlePartRole.ServerCardName)
             {
-                text.text = entry.Name + (entry.Lan ? "（LAN）" : string.Empty) + (entry.HasPassword ? "（パスワードあり）" : string.Empty);
+                text.text = $"{room.Name}（{room.Address}）";
             }
-            else if (part.Role == TitlePartRole.RoomCardPlayers)
+            else if (part.Role == TitlePartRole.ServerCardPlayers)
             {
-                text.text = entry.Full ? "満員" : $"{entry.Players}/{entry.MaxPlayers}人";
+                text.text = $"{room.Players}/{room.MaxPlayers}";
             }
         }
 
-        Button button = card.GetComponentInChildren<Button>(true);
-        if (button != null)
+        foreach (TitleMenuButton look in card.GetComponentsInChildren<TitleMenuButton>(true))
         {
+            if (look.Label != null)
+            {
+                look.Label.text = full ? "満員" : "参加する";
+            }
+
+            Button button = look.GetComponent<Button>();
+            if (button == null)
+            {
+                continue;
+            }
+
+            string address = room.Address;
+            ushort port = room.Port;
             button.onClick.RemoveAllListeners();
-            button.onClick.AddListener(() => JoinRoom(entry));
+            button.onClick.AddListener(() =>
+            {
+                if (!full)
+                {
+                    JoinLanRoom(address, port);
+                }
+            });
         }
 
         return card;
     }
 
-    // ------------------------------------------------------------
-    // 入る・作る
-    // ------------------------------------------------------------
-
-    private void JoinRoom(RoomEntry entry)
-    {
-        if (entry.Full)
-        {
-            return;
-        }
-
-        if (entry.Lan)
-        {
-            JoinLan(entry.Address, entry.Port);
-            return;
-        }
-
-        if (entry.HasPassword)
-        {
-            pendingJoin = entry;
-            SetText(TitlePartRole.PasswordWindowTitle, $"「{entry.Name}」のパスワード");
-            OpenWindow(Window.Password);
-            return;
-        }
-
-        InternetConnection internet = Internet();
-        if (internet != null && !WaitForListQuery(internet))
-        {
-            internet.JoinGameById(entry.SessionId);
-        }
-    }
-
-    /// <summary>
-    /// 部屋の一覧を取っている最中は、部屋を作る・入るができない（インターネットの係が1つのことしかできないため）。
-    /// そのときは「少し待って」と出して true を返す。
-    /// </summary>
-    private bool WaitForListQuery(InternetConnection internet)
-    {
-        if (!internet.IsBusy)
-        {
-            return false;
-        }
-
-        const string wait = "部屋の一覧を取っています。少し待ってから、もう一度押してください";
-        if (window == Window.Create)
-        {
-            SetText(TitlePartRole.CreateWindowNote, wait);
-        }
-        else
-        {
-            SetText(TitlePartRole.RoomListMessage, wait);
-            SetPartActive(TitlePartRole.RoomListMessage, true);
-            roomsSignature = null;
-        }
-        return true;
-    }
-
-    private void ConfirmJoinPassword()
-    {
-        InternetConnection internet = Internet();
-        if (internet == null || string.IsNullOrEmpty(pendingJoin.SessionId))
-        {
-            CloseWindow();
-            return;
-        }
-
-        if (internet.IsBusy)
-        {
-            SetText(TitlePartRole.PasswordWindowTitle, "部屋の一覧を取っています。少し待ってから、もう一度押してください");
-            return;
-        }
-
-        CloseWindow();
-        internet.JoinGameById(pendingJoin.SessionId, joinPassword.Trim());
-    }
-
-    private void JoinLan(string address, ushort port)
+    /// <summary>一覧で選んだ LAN の部屋に入る（IPアドレスとポートは、部屋の知らせに入っていたもの）。</summary>
+    private void JoinLanRoom(string address, ushort port)
     {
         NetworkManager manager = NetworkManager.Singleton;
         if (manager == null)
@@ -960,7 +922,7 @@ public class TitleScreen : MonoBehaviour
             return;
         }
 
-        lanTarget = address;
+        lanAddress = address;
         if (manager.NetworkConfig.NetworkTransport is UnityTransport transport)
         {
             transport.SetConnectionData(address, port);
@@ -969,109 +931,286 @@ public class TitleScreen : MonoBehaviour
         manager.StartClient();
     }
 
-    /// <summary>作る部屋の名前。部屋の名前の欄に入れた名前、空なら「自分の名前の部屋」。</summary>
-    private string RoomName()
-    {
-        if (!string.IsNullOrWhiteSpace(createRoomName))
-        {
-            return createRoomName.Trim();
-        }
-
-        string name = GameSettings.PlayerName;
-        return string.IsNullOrWhiteSpace(name) ? "StarSweepers の部屋" : $"{name.Trim()}の部屋";
-    }
+    // ------------------------------------------------------------
+    // ホストに切られて戻ってきたとき（2026/10/15）
+    // ------------------------------------------------------------
 
     /// <summary>
-    /// 「インターネットで作る」。**公開の部屋**を、**パスワードなし**で作る（ほかの人の部屋の一覧に出る）。
-    /// （2026/10/13 から、作る窓ではパスワードを決めない。大槻さんの依頼）
+    /// **ホストに切られて戻ってきたときは、その理由を出す**（例：「満員です（最大8人）」）。
+    /// つないでいる途中の表示と同じ枠に出し、「OK」で閉じる（<see cref="UpdateBusyOverlay"/>）。
     /// </summary>
-    private void CreateInternetRoom()
+    private void TakeDisconnectReason()
     {
+        NetworkManager manager = NetworkManager.Singleton;
+        string reason = manager != null ? manager.DisconnectReason : string.Empty;
+        if (string.IsNullOrEmpty(reason) || reason == shownDisconnectReason)
+        {
+            return;
+        }
+
+        shownDisconnectReason = reason;
+        disconnectNotice = $"部屋に入れませんでした：{reason}";
+    }
+
+    private async void SearchPublic()
+    {
+        RectTransform content = PartObject(TitlePartRole.PublicListContent) != null
+            ? (RectTransform)PartObject(TitlePartRole.PublicListContent).transform
+            : null;
+
+        if (searching || content == null)
+        {
+            return;
+        }
+
+        ClearServerCards();
+        SetText(TitlePartRole.PublicListMessage, "サーバーを探しています…");
+
         InternetConnection internet = Internet();
         if (internet == null)
         {
-            Debug.LogError("[UI] InternetConnection が NetworkManager に付いていません。");
+            SetText(TitlePartRole.PublicListMessage, "インターネットの接続の部品が見つかりません。");
             return;
         }
 
-        if (WaitForListQuery(internet))
-        {
-            return;
-        }
+        searching = true;
+        List<ISessionInfo> sessions = await internet.QueryPublicSessionsAsync();
+        searching = false;
 
-        CloseWindow();
-        SetLanListening(false);
-        internet.HostGame(RoomName(), RoomMaxPlayers, false, string.Empty);
-    }
-
-    /// <summary>「LANで作る」。同じネットワークのPCから入れるホストになり、部屋を LAN に知らせる。</summary>
-    private void CreateLanRoom()
-    {
-        NetworkManager manager = NetworkManager.Singleton;
-        if (manager == null)
+        // 待っている間に画面を移っていたら何もしない
+        if (this == null || current != Page.FindPublic)
         {
             return;
         }
 
-        CloseWindow();
-        SetLanListening(false);
-
-        if (manager.NetworkConfig.NetworkTransport is UnityTransport transport)
+        if (sessions == null)
         {
-            transport.SetConnectionData("127.0.0.1", transport.ConnectionData.Port, "0.0.0.0");
-        }
-
-        if (manager.StartHost())
-        {
-            LanRoomDiscovery.StartAdvertising(RoomName(), RoomMaxPlayers);
-        }
-    }
-
-    private static InternetConnection Internet()
-    {
-        NetworkManager manager = NetworkManager.Singleton;
-        return manager != null ? manager.GetComponent<InternetConnection>() : null;
-    }
-
-    // ------------------------------------------------------------
-    // 小さい窓
-    // ------------------------------------------------------------
-
-    private void OpenWindow(Window value)
-    {
-        CloseWindow();
-        window = value;
-
-        TitlePartRole role = value == Window.Create ? TitlePartRole.CreateWindow : TitlePartRole.PasswordWindow;
-        GameObject shown = PartObject(role);
-        if (shown == null)
-        {
-            window = Window.None;
+            SetText(TitlePartRole.PublicListMessage,
+                string.IsNullOrEmpty(internet.Message) ? "サーバーの一覧を取れませんでした。" : internet.Message);
+            internet.ClearFailure();
             return;
         }
 
-        if (value == Window.Create)
+        SetText(TitlePartRole.PublicListMessage,
+            sessions.Count == 0 ? "サーバーが見つかりませんでした。「検索」でもう一度探せます。" : string.Empty);
+
+        foreach (ISessionInfo info in sessions)
         {
-            SetText(TitlePartRole.CreateWindowNote,
-                "インターネット：どこからでも入れる部屋（ほかの人の一覧に出る）\nLAN：同じネットワークのPCだけが入れる部屋\n" +
-                "部屋の名前が空なら「自分の名前の部屋」になります");
+            AddPublicServerCard(content, info);
+        }
+    }
+
+    private void ClearServerCards()
+    {
+        foreach (GameObject card in serverCards)
+        {
+            if (card != null)
+            {
+                Destroy(card);
+            }
         }
 
-        shown.SetActive(true);
-        RefreshInputs(shown);
-        SelectFirstButtonForGamepad(shown);
+        serverCards.Clear();
     }
 
-    private void CloseWindow()
+    /// <summary>見本のカード（ServerCardTemplate）を複製して、サーバー1つぶんを一覧に足す。</summary>
+    private void AddPublicServerCard(RectTransform content, ISessionInfo info)
     {
-        window = Window.None;
-        SetPartActive(TitlePartRole.CreateWindow, false);
-        SetPartActive(TitlePartRole.PasswordWindow, false);
+        if (serverCardTemplate == null)
+        {
+            Debug.LogWarning("[UI] サーバーの一覧のカードの見本（Role：ServerCardTemplate）がプレハブにありません。");
+            return;
+        }
+
+        GameObject card = Instantiate(serverCardTemplate, content);
+        card.name = $"Server {info.Name}";
+        card.SetActive(true);
+        serverCards.Add(card);
+
+        int players = Mathf.Max(0, info.MaxPlayers - info.AvailableSlots);
+        bool full = info.AvailableSlots <= 0 || info.IsLocked;
+        string sessionId = info.Id;
+
+        foreach (TitlePart part in card.GetComponentsInChildren<TitlePart>(true))
+        {
+            Text text = part.GetComponent<Text>();
+            if (text == null)
+            {
+                continue;
+            }
+
+            if (part.Role == TitlePartRole.ServerCardName)
+            {
+                text.text = (string.IsNullOrEmpty(info.Name) ? "（名前なし）" : info.Name) +
+                            (info.HasPassword ? "（パスワードあり）" : string.Empty);
+            }
+            else if (part.Role == TitlePartRole.ServerCardPlayers)
+            {
+                text.text = $"{players}/{info.MaxPlayers}";
+            }
+        }
+
+        foreach (TitleMenuButton look in card.GetComponentsInChildren<TitleMenuButton>(true))
+        {
+            if (look.Action != TitleButtonAction.JoinListedServer)
+            {
+                continue;
+            }
+
+            if (look.Label != null)
+            {
+                look.Label.text = full ? "満員" : "参加する";
+            }
+
+            Button button = look.GetComponent<Button>();
+            if (button == null)
+            {
+                continue;
+            }
+
+            button.onClick.RemoveAllListeners();
+            button.onClick.AddListener(() =>
+            {
+                InternetConnection internet = Internet();
+                if (internet != null && !full)
+                {
+                    internet.JoinGameById(sessionId, joinPassword.Trim());
+                }
+            });
+        }
     }
 
     // ------------------------------------------------------------
-    // つないでいる途中
+    // フレンドのサーバー（Steam。2026/10/6・大槻さん「スプラみたいにフレンドのサーバーを出したい」）
     // ------------------------------------------------------------
+
+    /// <summary>
+    /// Steam のフレンドのうち、このゲームで部屋に入っている人を並べる（<see cref="SteamFriendsService"/>）。
+    /// フレンドの様子は取り寄せてから届くまで少しかかるので、頼んでから少し待って読む。
+    /// </summary>
+    private async void SearchFriends()
+    {
+        if (searchingFriends)
+        {
+            return;
+        }
+
+        ClearFriendCards();
+
+        // 説明が長くなるので、枠からはみ出しても下へ続けて出す
+        Text friendMessage = PartText(TitlePartRole.FriendListMessage);
+        if (friendMessage != null)
+        {
+            friendMessage.verticalOverflow = VerticalWrapMode.Overflow;
+        }
+
+        if (!SteamFriendsService.IsAvailable)
+        {
+            // つながらなかった理由（Steam が起動していない など）をそのまま出す
+            SetText(TitlePartRole.FriendListMessage, SteamFriendsService.StatusMessage);
+            return;
+        }
+
+        SetText(TitlePartRole.FriendListMessage, "フレンドを探しています…");
+        searchingFriends = true;
+        SteamFriendsService.RequestFriendRooms();
+        await System.Threading.Tasks.Task.Delay(1000);
+
+        // フレンドの様子は届くのに時間がかかることがある。遊んでいる人がいるのに部屋が見つからなければ、少し待ってもう一度読む
+        List<SteamFriendRoom> rooms = SteamFriendsService.FindFriendRooms();
+        if (rooms.Count == 0 && SteamFriendsService.CountFriendsPlayingThisGame() > 0 && this != null && current == Page.FindFriends)
+        {
+            SteamFriendsService.RequestFriendRooms();
+            await System.Threading.Tasks.Task.Delay(2000);
+            rooms = SteamFriendsService.FindFriendRooms();
+        }
+
+        searchingFriends = false;
+
+        // 待っている間に画面を移っていたら何もしない
+        if (this == null || current != Page.FindFriends)
+        {
+            return;
+        }
+
+        string hint = SteamFriendsService.CountFriendsPlayingThisGame() > 0
+            ? "このゲームを遊んでいるフレンドはいますが、インターネットの部屋に入っている人はいません（LAN の部屋は出ません）。"
+            : "このゲームを遊んでいるフレンドがいません。相手もゲームを起動しているか、Steam でフレンドになっているか確かめてください。";
+        SetText(TitlePartRole.FriendListMessage, rooms.Count == 0
+            ? $"{hint}\n「フレンドのサーバーを更新」でもう一度探せます。\n\n{SteamFriendsService.Diagnose()}"
+            : string.Empty);
+
+        GameObject content = PartObject(TitlePartRole.FriendListContent);
+        if (content == null || friendCardTemplate == null)
+        {
+            return;
+        }
+
+        foreach (SteamFriendRoom room in rooms)
+        {
+            AddFriendCard(content.transform, room);
+        }
+    }
+
+    private void ClearFriendCards()
+    {
+        foreach (GameObject card in friendCards)
+        {
+            if (card != null)
+            {
+                Destroy(card);
+            }
+        }
+
+        friendCards.Clear();
+    }
+
+    /// <summary>見本のカード（FriendCardTemplate）を複製して、フレンドの部屋1つぶんを足す。</summary>
+    private void AddFriendCard(Transform content, SteamFriendRoom room)
+    {
+        GameObject card = Instantiate(friendCardTemplate, content);
+        card.name = $"Friend {room.FriendName}";
+        card.SetActive(true);
+        friendCards.Add(card);
+
+        foreach (TitlePart part in card.GetComponentsInChildren<TitlePart>(true))
+        {
+            Text text = part.GetComponent<Text>();
+            if (text == null)
+            {
+                continue;
+            }
+
+            if (part.Role == TitlePartRole.FriendCardName)
+            {
+                text.text = $"{room.FriendName} の部屋" + (room.HasPassword ? "（パスワードあり）" : string.Empty);
+            }
+            else if (part.Role == TitlePartRole.FriendCardInfo)
+            {
+                text.text = $"{room.RoomName}　{room.Players}";
+            }
+        }
+
+        string code = room.JoinCode;
+        foreach (TitleMenuButton look in card.GetComponentsInChildren<TitleMenuButton>(true))
+        {
+            Button button = look.GetComponent<Button>();
+            if (look.Action != TitleButtonAction.JoinFriendServer || button == null)
+            {
+                continue;
+            }
+
+            button.onClick.RemoveAllListeners();
+            button.onClick.AddListener(() =>
+            {
+                InternetConnection internet = Internet();
+                if (internet != null)
+                {
+                    internet.JoinGame(code, joinPassword.Trim());
+                }
+            });
+        }
+    }
 
     /// <summary>
     /// Steam のフレンド一覧の「ゲームに参加」で頼まれた部屋に入る（タイトル画面にいて、まだつながっていないときだけ）。
@@ -1096,10 +1235,9 @@ public class TitleScreen : MonoBehaviour
 
     /// <summary>
     /// つないでいる途中・失敗したときの表示。
-    /// ・インターネット：作っている・入ろうとしている → 説明を出す。失敗 → 理由と「戻る」
+    /// ・インターネット：準備中・作っている・入ろうとしている → 説明を出す。失敗 → 理由と「戻る」
     /// ・LAN：つなぎに行っている → 説明と「やめる」
     /// ・つながった → ホストがロビーへ移すまでの間「移動しています」
-    /// （部屋の一覧を取っている間は出さない）
     /// </summary>
     private void UpdateBusyOverlay()
     {
@@ -1123,19 +1261,27 @@ public class TitleScreen : MonoBehaviour
         {
             message = "つながりました。ロビーに移動しています…";
         }
-        else if (internet != null && internet.IsBusy && !searching)
+        else if (internet != null && internet.IsBusy && current != Page.FindPublic)
         {
             message = string.IsNullOrEmpty(internet.Message) ? "つないでいます…" : internet.Message;
         }
-        else if (internet != null && internet.State == InternetConnection.Phase.Failed && !searching)
+        // 失敗はどの画面でも出す（一覧から入るときに、パスワードが違うと分かるように。一覧の検索の失敗は、一覧の中に出してすぐ消す）
+        else if (internet != null && internet.State == InternetConnection.Phase.Failed)
         {
             message = internet.Message;
             buttonLabel = "戻る";
             action = () => internet.ClearFailure();
         }
+        else if (!string.IsNullOrEmpty(disconnectNotice) && (manager == null || !manager.IsListening))
+        {
+            // ホストに切られて戻ってきた理由（満員など）。「OK」で閉じる（2026/10/15）
+            message = disconnectNotice;
+            buttonLabel = "OK";
+            action = () => disconnectNotice = null;
+        }
         else if (lanConnecting)
         {
-            message = $"LAN の部屋（{lanTarget}）につないでいます…\nつながらないときは、同じネットワークにいるかを確かめてください。";
+            message = $"LAN のサーバー（{lanAddress}）につないでいます…\nつながらないときは、IPアドレスと、同じネットワークにいるかを確かめてください。";
             buttonLabel = "やめる";
             action = () => manager.Shutdown();
         }
@@ -1179,7 +1325,212 @@ public class TitleScreen : MonoBehaviour
     }
 
     // ------------------------------------------------------------
-    // 小物
+    // 設定
+    // ------------------------------------------------------------
+
+    private void WireSettings()
+    {
+        resolutions = UniqueResolutions();
+
+        foreach (TitleSettingRow row in GetComponentsInChildren<TitleSettingRow>(true))
+        {
+            settingRows.Add(row);
+            TitleSettingRow target = row;
+
+            if (row.Slider != null)
+            {
+                SetupSliderRange(row);
+                row.Slider.onValueChanged.AddListener(value =>
+                {
+                    SetSliderValue(target.Kind, value);
+                    RefreshSettingRow(target);
+                });
+            }
+
+            if (row.Previous != null)
+            {
+                row.Previous.onClick.AddListener(() =>
+                {
+                    Step(target.Kind, -1);
+                    RefreshSettingRow(target);
+                });
+            }
+
+            if (row.Next != null)
+            {
+                row.Next.onClick.AddListener(() =>
+                {
+                    Step(target.Kind, 1);
+                    RefreshSettingRow(target);
+                });
+            }
+        }
+    }
+
+    private void ShowSettingsTab(SettingsTab tab)
+    {
+        settingsTab = tab;
+
+        foreach (KeyValuePair<SettingsTab, GameObject> pair in settingsGroups)
+        {
+            pair.Value.SetActive(pair.Key == tab);
+        }
+
+        SetSelectedLook(TitleButtonAction.TabSound, tab == SettingsTab.Sound);
+        SetSelectedLook(TitleButtonAction.TabGraphics, tab == SettingsTab.Graphics);
+        SetSelectedLook(TitleButtonAction.TabGeneral, tab == SettingsTab.General);
+
+        // 開くたびに、いまの値を出し直す（ポーズ画面で変えた値にも合わせる）
+        resolutionIndex = Mathf.Max(0, FindCurrentResolution(resolutions));
+        pendingScreenMode = Screen.fullScreenMode;
+
+        foreach (TitleSettingRow row in settingRows)
+        {
+            RefreshSettingRow(row);
+        }
+    }
+
+    private static void SetupSliderRange(TitleSettingRow row)
+    {
+        switch (row.Kind)
+        {
+            case TitleSettingKind.Volume:
+                row.Slider.minValue = 0f;
+                row.Slider.maxValue = 1f;
+                break;
+            case TitleSettingKind.MouseSensitivity:
+                row.Slider.minValue = 0.2f;
+                row.Slider.maxValue = 3f;
+                break;
+            case TitleSettingKind.FrameRateLimit:
+                row.Slider.minValue = 30f;
+                row.Slider.maxValue = 240f;
+                break;
+        }
+    }
+
+    private static void SetSliderValue(TitleSettingKind kind, float value)
+    {
+        switch (kind)
+        {
+            case TitleSettingKind.Volume:
+                GameSettings.Volume = value;
+                break;
+            case TitleSettingKind.MouseSensitivity:
+                GameSettings.MouseSensitivity = value;
+                break;
+            case TitleSettingKind.FrameRateLimit:
+                GameSettings.FrameRateLimit = Mathf.RoundToInt(value / 10f) * 10;
+                break;
+        }
+    }
+
+    private void Step(TitleSettingKind kind, int delta)
+    {
+        switch (kind)
+        {
+            case TitleSettingKind.ControllerType:
+                GameSettings.ControllerOperation = GameSettings.ControllerOperation == ControllerOperationType.TypeA
+                    ? ControllerOperationType.TypeB
+                    : ControllerOperationType.TypeA;
+                break;
+
+            case TitleSettingKind.Resolution:
+                if (resolutions.Length > 0)
+                {
+                    resolutionIndex = (resolutionIndex + delta + resolutions.Length) % resolutions.Length;
+                }
+                break;
+
+            case TitleSettingKind.ScreenMode:
+                int index = System.Array.IndexOf(ScreenModes, pendingScreenMode);
+                index = index < 0 ? 0 : (index + delta + ScreenModes.Length) % ScreenModes.Length;
+                pendingScreenMode = ScreenModes[index];
+                break;
+
+            case TitleSettingKind.VSync:
+                GameSettings.VSync = !GameSettings.VSync;
+                break;
+
+            case TitleSettingKind.Quality:
+                string[] qualities = QualitySettings.names;
+                if (qualities.Length > 0)
+                {
+                    GameSettings.QualityLevel = (QualitySettings.GetQualityLevel() + delta + qualities.Length) % qualities.Length;
+                }
+                break;
+        }
+    }
+
+    /// <summary>設定の1行に、いまの値を出す。</summary>
+    private void RefreshSettingRow(TitleSettingRow row)
+    {
+        string text;
+        float? sliderValue = null;
+
+        switch (row.Kind)
+        {
+            case TitleSettingKind.Volume:
+                sliderValue = GameSettings.Volume;
+                text = $"{Mathf.RoundToInt(GameSettings.Volume * 100f)} %";
+                break;
+            case TitleSettingKind.MouseSensitivity:
+                sliderValue = GameSettings.MouseSensitivity;
+                text = $"{GameSettings.MouseSensitivity:0.0} 倍";
+                break;
+            case TitleSettingKind.FrameRateLimit:
+                sliderValue = GameSettings.FrameRateLimit;
+                text = $"{GameSettings.FrameRateLimit} fps";
+                break;
+            case TitleSettingKind.ControllerType:
+                text = GameSettings.ControllerOperation == ControllerOperationType.TypeB ? "タイプB" : "タイプA";
+                break;
+            case TitleSettingKind.Resolution:
+                text = resolutions.Length == 0
+                    ? "—"
+                    : $"{resolutions[resolutionIndex].width}x{resolutions[resolutionIndex].height}";
+                break;
+            case TitleSettingKind.ScreenMode:
+                text = ScreenModeName(pendingScreenMode);
+                break;
+            case TitleSettingKind.VSync:
+                text = GameSettings.VSync ? "ON" : "OFF";
+                break;
+            default:
+                string[] qualities = QualitySettings.names;
+                text = qualities.Length == 0
+                    ? "—"
+                    : qualities[Mathf.Clamp(QualitySettings.GetQualityLevel(), 0, qualities.Length - 1)];
+                break;
+        }
+
+        if (row.ValueText != null)
+        {
+            row.ValueText.text = text;
+        }
+
+        if (sliderValue.HasValue && row.Slider != null)
+        {
+            row.Slider.SetValueWithoutNotify(sliderValue.Value);
+        }
+    }
+
+    /// <summary>「解像度／スクリーンモードを適用」。</summary>
+    private void ApplyScreen()
+    {
+        if (resolutions.Length > 0)
+        {
+            Resolution r = resolutions[resolutionIndex];
+            Screen.SetResolution(r.width, r.height, pendingScreenMode);
+        }
+        else
+        {
+            Screen.fullScreenMode = pendingScreenMode;
+        }
+    }
+
+    // ------------------------------------------------------------
+    // 補助
     // ------------------------------------------------------------
 
     private GameObject PartObject(TitlePartRole role)
@@ -1207,16 +1558,7 @@ public class TitleScreen : MonoBehaviour
         }
     }
 
-    private void SetPartActive(TitlePartRole role, bool active)
-    {
-        GameObject target = PartObject(role);
-        if (target != null && target.activeSelf != active)
-        {
-            target.SetActive(active);
-        }
-    }
-
-    /// <summary>このPCのIPアドレス（LAN でホストになったとき、ロビーの左上に出す）。</summary>
+    /// <summary>このPCのIPアドレス（LAN でホストになるとき、参加する人に伝える番号）。</summary>
     public static string LocalAddresses()
     {
         List<string> found = new List<string>();
@@ -1249,6 +1591,47 @@ public class TitleScreen : MonoBehaviour
         return found.Count > 0 ? string.Join(" ／ ", found) : "（見つかりませんでした）";
     }
 
+    /// <summary>同じ大きさの解像度を1つにまとめた一覧（リフレッシュレート違いを除く）。</summary>
+    private static Resolution[] UniqueResolutions()
+    {
+        List<Resolution> list = new List<Resolution>();
+        foreach (Resolution r in Screen.resolutions)
+        {
+            if (!list.Exists(x => x.width == r.width && x.height == r.height))
+            {
+                list.Add(r);
+            }
+        }
+        return list.ToArray();
+    }
+
+    private static int FindCurrentResolution(Resolution[] list)
+    {
+        for (int i = 0; i < list.Length; i++)
+        {
+            if (list[i].width == Screen.width && list[i].height == Screen.height)
+            {
+                return i;
+            }
+        }
+        return list.Length - 1;
+    }
+
+    private static string ScreenModeName(FullScreenMode mode)
+    {
+        switch (mode)
+        {
+            case FullScreenMode.ExclusiveFullScreen:
+                return "フルスクリーン";
+            case FullScreenMode.FullScreenWindow:
+                return "ウィンドウフルスクリーン";
+            case FullScreenMode.MaximizedWindow:
+                return "最大化ウィンドウ";
+            default:
+                return "ウィンドウ";
+        }
+    }
+
     /// <summary>コントローラーがつながっていれば、その画面の最初の項目を選んでおく（十字キーで動かせるように）。</summary>
     private static void SelectFirstForGamepad(GameObject page)
     {
@@ -1258,18 +1641,6 @@ public class TitleScreen : MonoBehaviour
         }
 
         Selectable first = page.GetComponentInChildren<Selectable>();
-        EventSystem.current.SetSelectedGameObject(first != null ? first.gameObject : null);
-    }
-
-    /// <summary>窓を開いたとき用。入力欄ではなく最初のボタンを選ぶ（入力欄を選ぶと、すぐ文字を打つ状態になるため）。</summary>
-    private static void SelectFirstButtonForGamepad(GameObject root)
-    {
-        if (Gamepad.current == null || root == null || EventSystem.current == null)
-        {
-            return;
-        }
-
-        Button first = root.GetComponentInChildren<Button>();
         EventSystem.current.SetSelectedGameObject(first != null ? first.gameObject : null);
     }
 
