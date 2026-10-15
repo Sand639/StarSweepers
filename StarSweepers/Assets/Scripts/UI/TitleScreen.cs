@@ -138,7 +138,7 @@ public class TitleScreen : MonoBehaviour
     // サーバーを作る
     private int createMaxPlayers = SpaceJunkTeams.MaxPlayers; // 初期値は定員（8人）。2026/10/15・大槻さん
     private bool createLan;
-    private bool createPrivate = true;
+    private bool createPrivate = false; // 最初はパブリック（2026/10/15・大槻さん）
     private string createServerName = string.Empty;
 
     /// <summary>作る部屋のパスワード（空ならなし。1〜32文字）。保存はしない。</summary>
@@ -517,6 +517,7 @@ public class TitleScreen : MonoBehaviour
     {
         switch (action)
         {
+            case TitleButtonAction.QuickPlay: QuickPlay(); break;
             case TitleButtonAction.OpenCreate: ShowPage(Page.Create); break;
             case TitleButtonAction.OpenFind: ShowPage(Page.Find); break;
             case TitleButtonAction.OpenSettings: ShowPage(Page.Settings); break;
@@ -790,6 +791,88 @@ public class TitleScreen : MonoBehaviour
         }
 
         manager.StartClient();
+    }
+
+    // ------------------------------------------------------------
+    // クイックプレイ（2026/10/15・大槻さん）
+    // ------------------------------------------------------------
+
+    /// <summary>クイックプレイで、公開のサーバーを探している途中か（二度押し防止）。</summary>
+    private bool quickPlaying;
+
+    /// <summary>
+    /// **クイックプレイ。** 公開されているサーバー（パブリック）を探して入る。
+    ///
+    /// ・入れるサーバー（満員でない・鍵がかかっていない・パスワードなし）のうち、**いちばん人の多いところ**に入る
+    ///   （人がばらばらの部屋に分かれないように）
+    /// ・1つも無ければ、**初期の設定でパブリックのサーバーを作る**（名前は「（名前）のサーバー」・定員・パスワードなし）
+    ///
+    /// 探している途中・入る途中の表示は、つないでいる途中の表示（<see cref="UpdateBusyOverlay"/>）がそのまま出す。
+    /// </summary>
+    private async void QuickPlay()
+    {
+        if (quickPlaying)
+        {
+            return;
+        }
+
+        InternetConnection internet = Internet();
+        if (internet == null)
+        {
+            Debug.LogError("[UI] InternetConnection が NetworkManager に付いていません。");
+            return;
+        }
+
+        if (internet.IsBusy)
+        {
+            return;
+        }
+
+        quickPlaying = true;
+        List<ISessionInfo> sessions = await internet.QueryPublicSessionsAsync();
+        quickPlaying = false;
+
+        if (this == null)
+        {
+            return;
+        }
+
+        // 一覧を取れなかった（つながっていない など）。理由は、つないでいる途中の表示に「戻る」と一緒に出る
+        if (sessions == null)
+        {
+            return;
+        }
+
+        ISessionInfo best = null;
+        int bestPlayers = -1;
+        foreach (ISessionInfo info in sessions)
+        {
+            if (info.AvailableSlots <= 0 || info.IsLocked || info.HasPassword)
+            {
+                continue;
+            }
+
+            int players = Mathf.Max(0, info.MaxPlayers - info.AvailableSlots);
+            if (players > bestPlayers)
+            {
+                best = info;
+                bestPlayers = players;
+            }
+        }
+
+        if (best != null)
+        {
+            Debug.Log($"[UI] クイックプレイ：公開のサーバー「{best.Name}」（{bestPlayers}/{best.MaxPlayers}）に入ります。");
+            internet.JoinGameById(best.Id);
+            return;
+        }
+
+        string serverName = string.IsNullOrWhiteSpace(GameSettings.PlayerName)
+            ? "StarSweepers"
+            : $"{GameSettings.PlayerName} のサーバー";
+
+        Debug.Log($"[UI] クイックプレイ：入れる公開のサーバーが無いので、「{serverName}」を作ります。");
+        internet.HostGame(serverName, SpaceJunkTeams.MaxPlayers, false, string.Empty);
     }
 
     // ------------------------------------------------------------

@@ -62,7 +62,7 @@ public class TitleScreenPrefabTests
 
         TitleButtonAction[] required =
         {
-            TitleButtonAction.OpenCreate, TitleButtonAction.OpenFind, TitleButtonAction.OpenSettings, TitleButtonAction.Quit,
+            TitleButtonAction.QuickPlay, TitleButtonAction.OpenCreate, TitleButtonAction.OpenFind, TitleButtonAction.OpenSettings, TitleButtonAction.Quit,
             TitleButtonAction.CreateServer, TitleButtonAction.MaxPlayersDown, TitleButtonAction.MaxPlayersUp,
             TitleButtonAction.SetPublic, TitleButtonAction.SetPrivate, TitleButtonAction.SetLan,
             TitleButtonAction.JoinPrivate, TitleButtonAction.JoinLan, TitleButtonAction.SearchPublic,

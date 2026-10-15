@@ -82,15 +82,17 @@ public static class TitleScreenPrefabBuilder
     /// 1：最初の版 ／ 2：パスワードの欄 ／ 3：パブリック・プライベートの2つのチェック ／ 4：フレンドのサーバー（Steam）（2026/10/6）
     /// ／ 5：「LANのサーバーに参加する」に、見つかった LAN の部屋の一覧（2026/10/15）
     /// ／ 6：「サーバーを作る」のつなぎかたを □パブリック □プライベート □LAN の3つのチェックに（2026/10/15）
+    /// ／ 7：メインに「クイックプレイ」（2026/10/15）
     /// **版 3 からは作り直さず、<see cref="Upgrade"/> で足りない部品だけを足す**（手で直した配置を消さない）。版を上げたら Upgrade に足す処理を書くこと
     /// </summary>
-    public const int PrefabVersion = 6;
+    public const int PrefabVersion = 7;
 
     /// <summary>
     /// **作り直さずに、足りない部品だけを足す。**
     /// 版 3 → 4：「サーバーを探す」に「フレンドのサーバーを探す」のボタンと、その画面を足す。
     /// 版 4 → 5：「LANのサーバーに参加する」画面に、見つかった LAN の部屋の一覧を足す。
     /// 版 5 → 6：「サーバーを作る」のつなぎかたのボタンを消し、□LAN のチェックを足す（<see cref="ChangeConnectionChoiceToChecks"/>）。
+    /// 版 6 → 7：メインの「サーバーを作る」の上に「クイックプレイ」を足す（<see cref="AddQuickPlayButton"/>）。
     /// </summary>
     private static void Upgrade(int fromVersion)
     {
@@ -112,6 +114,11 @@ public static class TitleScreenPrefabBuilder
                 {
                     page.transform.SetSiblingIndex(busy.transform.GetSiblingIndex());
                 }
+            }
+
+            if (fromVersion < 7)
+            {
+                AddQuickPlayButton(root);
             }
 
             if (fromVersion < 6)
@@ -185,6 +192,60 @@ public static class TitleScreenPrefabBuilder
         }
 
         return null;
+    }
+
+    /// <summary>
+    /// 版 6 → 7：メインの「サーバーを作る」を複製して「クイックプレイ」にし、**その上**に置く。
+    /// 並んでいるボタンの入れ物を上へ1つぶん広げ、今あるボタンの見た目の位置は変えない（手で動かした配置もそのまま）。
+    /// </summary>
+    private static void AddQuickPlayButton(GameObject root)
+    {
+        TitleMenuButton openCreate = null;
+        foreach (TitleMenuButton look in root.GetComponentsInChildren<TitleMenuButton>(true))
+        {
+            if (look.Action == TitleButtonAction.QuickPlay)
+            {
+                return;
+            }
+
+            if (look.Action == TitleButtonAction.OpenCreate)
+            {
+                openCreate = look;
+            }
+        }
+
+        if (openCreate == null)
+        {
+            return;
+        }
+
+        RectTransform createRect = (RectTransform)openCreate.transform;
+        RectTransform column = createRect.parent as RectTransform;
+        float step = createRect.sizeDelta.y + 22f;
+
+        // 入れ物を上へ広げ（下端は動かさない）、今あるボタンはそのぶん下げて、見た目の位置を保つ
+        if (column != null && Mathf.Approximately(column.pivot.y, 0f))
+        {
+            column.sizeDelta += new Vector2(0f, step);
+            foreach (Transform child in column)
+            {
+                ((RectTransform)child).anchoredPosition -= new Vector2(0f, step);
+            }
+        }
+
+        GameObject copy = Object.Instantiate(openCreate.gameObject, createRect.parent);
+        copy.name = "クイックプレイ";
+        copy.transform.SetSiblingIndex(createRect.GetSiblingIndex());
+
+        RectTransform quickRect = (RectTransform)copy.transform;
+        quickRect.anchoredPosition = createRect.anchoredPosition + new Vector2(0f, step);
+
+        TitleMenuButton quick = copy.GetComponent<TitleMenuButton>();
+        quick.EditorSetup(TitleButtonAction.QuickPlay, copy.GetComponent<Image>(), quick.Label);
+        if (quick.Label != null)
+        {
+            quick.Label.text = "クイックプレイ";
+        }
     }
 
     /// <summary>「サーバーを作る」の、部屋の公開のしかたの見出しと説明（2026/10/15）。</summary>
@@ -487,6 +548,7 @@ public static class TitleScreenPrefabBuilder
         // メインのボタン（左下に縦に並べる）
         Column column = new Column("Buttons", page.transform, MainButtonSize.x, 22f,
             new Vector2(0f, 0f), new Vector2(220f, 180f), new Vector2(0f, 0f));
+        column.Add(NewButton(column.Rect, "クイックプレイ", MainButtonSize, ButtonFontSize, TitleButtonAction.QuickPlay));
         column.Add(NewButton(column.Rect, "サーバーを作る", MainButtonSize, ButtonFontSize, TitleButtonAction.OpenCreate));
         column.Add(NewButton(column.Rect, "サーバーを探す", MainButtonSize, ButtonFontSize, TitleButtonAction.OpenFind));
         column.Add(NewButton(column.Rect, "設定", MainButtonSize, ButtonFontSize, TitleButtonAction.OpenSettings));

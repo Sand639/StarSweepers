@@ -58,6 +58,9 @@ public enum TitleButtonAction
 
     // サーバーを作る：□パブリック □プライベート □LAN の「LAN」（2026/10/15）
     SetLan = 49,
+
+    // メイン：クイックプレイ（公開のサーバーに入る。無ければ作る。2026/10/15）
+    QuickPlay = 50,
 }
 
 /// <summary>
