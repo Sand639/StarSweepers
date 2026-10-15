@@ -77,6 +77,9 @@ public enum TitlePartRole
     LanListContent = 74,
     LanListMessage = 75,
     LanCardTemplate = 76,
+
+    // サーバーを作る：□LAN のチェックの文字（2026/10/15）
+    LanCheckText = 77,
 }
 
 /// <summary>

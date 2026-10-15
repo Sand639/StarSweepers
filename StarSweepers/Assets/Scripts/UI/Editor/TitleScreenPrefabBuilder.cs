@@ -81,14 +81,16 @@ public static class TitleScreenPrefabBuilder
     /// **プレハブの作りの版。** 作りが大きく変わったとき（部品を足したなど）だけ上げる。
     /// 1：最初の版 ／ 2：パスワードの欄 ／ 3：パブリック・プライベートの2つのチェック ／ 4：フレンドのサーバー（Steam）（2026/10/6）
     /// ／ 5：「LANのサーバーに参加する」に、見つかった LAN の部屋の一覧（2026/10/15）
+    /// ／ 6：「サーバーを作る」のつなぎかたを □パブリック □プライベート □LAN の3つのチェックに（2026/10/15）
     /// **版 3 からは作り直さず、<see cref="Upgrade"/> で足りない部品だけを足す**（手で直した配置を消さない）。版を上げたら Upgrade に足す処理を書くこと
     /// </summary>
-    public const int PrefabVersion = 5;
+    public const int PrefabVersion = 6;
 
     /// <summary>
     /// **作り直さずに、足りない部品だけを足す。**
     /// 版 3 → 4：「サーバーを探す」に「フレンドのサーバーを探す」のボタンと、その画面を足す。
     /// 版 4 → 5：「LANのサーバーに参加する」画面に、見つかった LAN の部屋の一覧を足す。
+    /// 版 5 → 6：「サーバーを作る」のつなぎかたのボタンを消し、□LAN のチェックを足す（<see cref="ChangeConnectionChoiceToChecks"/>）。
     /// </summary>
     private static void Upgrade(int fromVersion)
     {
@@ -110,6 +112,11 @@ public static class TitleScreenPrefabBuilder
                 {
                     page.transform.SetSiblingIndex(busy.transform.GetSiblingIndex());
                 }
+            }
+
+            if (fromVersion < 6)
+            {
+                ChangeConnectionChoiceToChecks(root);
             }
 
             if (fromVersion < 5 && FindPart(root, TitlePartRole.LanListContent) == null)
@@ -178,6 +185,110 @@ public static class TitleScreenPrefabBuilder
         }
 
         return null;
+    }
+
+    /// <summary>「サーバーを作る」の、部屋の公開のしかたの見出しと説明（2026/10/15）。</summary>
+    private const string RoomKindLabel = "部屋の公開のしかた";
+    private const string RoomKindNote =
+        "パブリック：一覧に出る ／ プライベート：参加コードを知っている人だけ ／ LAN：同じネットワークのPCだけ（展示会場はこちら）";
+
+    /// <summary>
+    /// 版 5 → 6：「つなぎかた（インターネット／LAN）」のボタンの行を消し、□パブリック □プライベート の行に □LAN を足す。
+    /// 消した行のぶん、下の部品を上へ詰める（手で動かした配置は、それ以外そのまま）。
+    /// </summary>
+    private static void ChangeConnectionChoiceToChecks(GameObject root)
+    {
+        TitleMenuButton useInternet = null;
+        TitleMenuButton existingLan = null;
+        foreach (TitleMenuButton look in root.GetComponentsInChildren<TitleMenuButton>(true))
+        {
+            if (look.Action == TitleButtonAction.UseInternet)
+            {
+                useInternet = look;
+            }
+            else if (look.Action == TitleButtonAction.SetLan)
+            {
+                existingLan = look;
+            }
+        }
+
+        if (existingLan != null)
+        {
+            return;
+        }
+
+        // 1. 「つなぎかた」のボタンの行を消して、下の部品を上へ詰める。見出しの行は「部屋の公開のしかた」に書き換える
+        if (useInternet != null)
+        {
+            RectTransform modeRow = (RectTransform)useInternet.transform.parent;
+            Transform column = modeRow.parent;
+            int index = modeRow.GetSiblingIndex();
+            float removed = modeRow.sizeDelta.y + 10f;
+
+            if (index > 0)
+            {
+                Transform labelRow = column.GetChild(index - 1);
+                foreach (Text text in labelRow.GetComponentsInChildren<Text>(true))
+                {
+                    if (text.name == "Label")
+                    {
+                        text.text = RoomKindLabel;
+                        text.rectTransform.sizeDelta = new Vector2(Mathf.Max(200f, RoomKindLabel.Length * FontSize + 10f), text.rectTransform.sizeDelta.y);
+                    }
+                    else if (text.name == "Note")
+                    {
+                        text.text = RoomKindNote;
+                    }
+                }
+            }
+
+            for (int i = index + 1; i < column.childCount; i++)
+            {
+                if (column.GetChild(i) is RectTransform below)
+                {
+                    below.anchoredPosition += new Vector2(0f, removed);
+                }
+            }
+
+            if (column is RectTransform columnRect)
+            {
+                columnRect.sizeDelta -= new Vector2(0f, removed);
+            }
+
+            Object.DestroyImmediate(modeRow.gameObject);
+        }
+
+        // 2. □パブリック □プライベート の行の説明を消し、その場所に □LAN を足す
+        TitlePart privateRow = FindPart(root, TitlePartRole.PrivateRow);
+        if (privateRow == null)
+        {
+            return;
+        }
+
+        float x = 0f;
+        foreach (Transform child in privateRow.transform)
+        {
+            if (child.name == "Note")
+            {
+                continue;
+            }
+
+            RectTransform rect = (RectTransform)child;
+            x = Mathf.Max(x, rect.anchoredPosition.x + rect.sizeDelta.x + 12f);
+        }
+
+        Transform oldNote = privateRow.transform.Find("Note");
+        if (oldNote != null)
+        {
+            Object.DestroyImmediate(oldNote.gameObject);
+        }
+
+        TitleMenuButton lanCheck = NewButton(privateRow.transform, "□", new Vector2(64f, 56f), FontSize + 6, TitleButtonAction.SetLan);
+        Mark(lanCheck.Label, TitlePartRole.LanCheckText);
+        Place((RectTransform)lanCheck.transform, new Vector2(0f, 0.5f), new Vector2(x, 0f), new Vector2(64f, 56f), new Vector2(0f, 0.5f));
+
+        Text lanLabel = NewText("LanLabel", privateRow.transform, "LAN", FontSize, TextColor, TextAnchor.MiddleLeft);
+        Place(lanLabel.rectTransform, new Vector2(0f, 0.5f), new Vector2(x + 64f + 12f, 0f), new Vector2(120f, 56f), new Vector2(0f, 0.5f));
     }
 
     /// <summary>
@@ -425,13 +536,9 @@ public static class TitleScreenPrefabBuilder
         column.Add(passwordGroup.Rect);
         Mark(passwordGroup.Rect, TitlePartRole.PasswordRow);
 
-        // つなぎかた
-        AddLabel(column, "つなぎかた", "展示会場では LAN（同じネットワークのPC同士）");
-        Row mode = new Row(column, 64f, 12f);
-        mode.Add(NewButton(mode.Rect, "インターネット", new Vector2(360f, 60f), FontSize, TitleButtonAction.UseInternet));
-        mode.Add(NewButton(mode.Rect, "LAN", new Vector2(360f, 60f), FontSize, TitleButtonAction.UseLan));
-
-        // パブリック／プライベート（片方を押すと、もう片方のチェックが外れる。LAN のときは隠す。2026/10/6）
+        // 部屋の公開のしかた：□パブリック □プライベート □LAN（どれか1つだけにチェックが付く。2026/10/15）
+        // （前は「つなぎかた（インターネット／LAN）」のボタンの行が別にあった）
+        AddLabel(column, RoomKindLabel, RoomKindNote);
         Row privateRow = new Row(column, 60f, 12f, "PrivateRow");
         Mark(privateRow.Rect, TitlePartRole.PrivateRow);
         TitleMenuButton publicCheck = NewButton(privateRow.Rect, "■", new Vector2(64f, 56f), FontSize + 6, TitleButtonAction.SetPublic);
@@ -446,10 +553,12 @@ public static class TitleScreenPrefabBuilder
         Text privateLabel = NewText("Label", privateRow.Rect, "プライベート", FontSize, TextColor, TextAnchor.MiddleLeft);
         privateLabel.rectTransform.sizeDelta = new Vector2(170f, 56f);
         privateRow.Add(privateLabel.rectTransform);
-        Text privateNote = NewText("Note", privateRow.Rect, "パブリック：一覧に出る ／ プライベート：参加コードを知っている人だけ",
-            FontSize - 8, NoteColor, TextAnchor.MiddleLeft);
-        privateNote.rectTransform.sizeDelta = new Vector2(560f, 56f);
-        privateRow.Add(privateNote.rectTransform);
+        TitleMenuButton lanCheck = NewButton(privateRow.Rect, "□", new Vector2(64f, 56f), FontSize + 6, TitleButtonAction.SetLan);
+        Mark(lanCheck.Label, TitlePartRole.LanCheckText);
+        privateRow.Add(lanCheck);
+        Text lanLabel = NewText("LanLabel", privateRow.Rect, "LAN", FontSize, TextColor, TextAnchor.MiddleLeft);
+        lanLabel.rectTransform.sizeDelta = new Vector2(120f, 56f);
+        privateRow.Add(lanLabel.rectTransform);
 
         // 参加コードの枠
         Image codeBox = NewImage("CodeBox", column.Rect, AccentColor);

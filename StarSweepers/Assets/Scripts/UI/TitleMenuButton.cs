@@ -55,6 +55,9 @@ public enum TitleButtonAction
     CloseWindow = 46,
     JoinRoom = 47,
     ConfirmJoinPassword = 48,
+
+    // サーバーを作る：□パブリック □プライベート □LAN の「LAN」（2026/10/15）
+    SetLan = 49,
 }
 
 /// <summary>

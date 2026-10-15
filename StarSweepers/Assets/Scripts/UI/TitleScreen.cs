@@ -537,6 +537,7 @@ public class TitleScreen : MonoBehaviour
             case TitleButtonAction.TogglePrivate: TogglePrivate(); break;
             case TitleButtonAction.SetPublic: SetCreatePrivate(false); break;
             case TitleButtonAction.SetPrivate: SetCreatePrivate(true); break;
+            case TitleButtonAction.SetLan: SetCreateLan(true); break;
 
             case TitleButtonAction.OpenFindPrivate: ShowPage(Page.FindPrivate); break;
             case TitleButtonAction.OpenFindPublic: ShowPage(Page.FindPublic); break;
@@ -639,19 +640,17 @@ public class TitleScreen : MonoBehaviour
     private void RefreshCreatePage()
     {
         SetText(TitlePartRole.MaxPlayersText, $"{createMaxPlayers} 人");
+        // □パブリック □プライベート □LAN は、どれか1つだけにチェックが付く（2026/10/15。前は「つなぎかた（インターネット／LAN）」が別の行だった）
+        bool publicRoom = !createLan && !createPrivate;
+        bool privateRoom = !createLan && createPrivate;
+        SetText(TitlePartRole.PublicCheckText, publicRoom ? "■" : "□");
+        SetText(TitlePartRole.PrivateCheckText, privateRoom ? "■" : "□");
+        SetText(TitlePartRole.LanCheckText, createLan ? "■" : "□");
+        SetSelectedLook(TitleButtonAction.SetPublic, publicRoom);
+        SetSelectedLook(TitleButtonAction.SetPrivate, privateRoom);
+        SetSelectedLook(TitleButtonAction.SetLan, createLan);
         SetSelectedLook(TitleButtonAction.UseInternet, !createLan);
         SetSelectedLook(TitleButtonAction.UseLan, createLan);
-        // パブリック／プライベートは、どちらか片方だけにチェックが付く（2026/10/6）
-        SetText(TitlePartRole.PrivateCheckText, createPrivate ? "■" : "□");
-        SetText(TitlePartRole.PublicCheckText, createPrivate ? "□" : "■");
-        SetSelectedLook(TitleButtonAction.SetPrivate, createPrivate);
-        SetSelectedLook(TitleButtonAction.SetPublic, !createPrivate);
-
-        GameObject privateRow = PartObject(TitlePartRole.PrivateRow);
-        if (privateRow != null)
-        {
-            privateRow.SetActive(!createLan);
-        }
 
         // パスワードはインターネットの部屋だけ（LAN では使わない）
         GameObject passwordRow = PartObject(TitlePartRole.PasswordRow);
@@ -694,6 +693,7 @@ public class TitleScreen : MonoBehaviour
     /// <summary>パブリック（false）かプライベート（true）かを決める。押したほうにだけチェックが付く。</summary>
     private void SetCreatePrivate(bool value)
     {
+        createLan = false; // パブリック・プライベートはインターネットの部屋
         createPrivate = value;
         RefreshCreatePage();
     }

@@ -37,6 +37,9 @@ public class TitleScreenPrefabTests
     [TestCase(TitlePartRole.LanListContent)]
     [TestCase(TitlePartRole.LanListMessage)]
     [TestCase(TitlePartRole.LanCardTemplate)]
+    [TestCase(TitlePartRole.PublicCheckText)]
+    [TestCase(TitlePartRole.PrivateCheckText)]
+    [TestCase(TitlePartRole.LanCheckText)]
     [TestCase(TitlePartRole.BusyOverlay)]
     public void TitlePrefab_HasPart(TitlePartRole role)
     {
@@ -61,7 +64,7 @@ public class TitleScreenPrefabTests
         {
             TitleButtonAction.OpenCreate, TitleButtonAction.OpenFind, TitleButtonAction.OpenSettings, TitleButtonAction.Quit,
             TitleButtonAction.CreateServer, TitleButtonAction.MaxPlayersDown, TitleButtonAction.MaxPlayersUp,
-            TitleButtonAction.UseInternet, TitleButtonAction.UseLan,
+            TitleButtonAction.SetPublic, TitleButtonAction.SetPrivate, TitleButtonAction.SetLan,
             TitleButtonAction.JoinPrivate, TitleButtonAction.JoinLan, TitleButtonAction.SearchPublic,
         };
 
