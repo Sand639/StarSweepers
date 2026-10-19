@@ -1387,6 +1387,15 @@ public class TitleScreen : MonoBehaviour
             return;
         }
 
+        // **Netcode が自分で付ける記録（「[Disconnect Event]…TransportShutdown」など）は出さない。**（2026/10/19・大槻さんの報告）
+        // 自分で通信を止めた（ホストがタイトルに戻った など）ときにも付くので、出すと「入れませんでした」と誤って見えた。
+        // 出すのは、ホストが切るときに付けた理由（「満員です（最大8人）」など）だけ
+        if (reason.StartsWith("["))
+        {
+            shownDisconnectReason = reason;
+            return;
+        }
+
         shownDisconnectReason = reason;
         disconnectNotice = $"部屋に入れませんでした：{reason}";
     }
