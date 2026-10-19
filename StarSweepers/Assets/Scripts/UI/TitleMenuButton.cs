@@ -61,6 +61,11 @@ public enum TitleButtonAction
 
     // メイン：クイックプレイ（公開のサーバーに入る。無ければ作る。2026/10/15）
     QuickPlay = 50,
+
+    // 2026/10/19 からのタイトル（ソロプレイ／マルチプレイ）
+    OpenMulti = 51,
+    ToggleSearchPublic = 52,
+    ToggleSearchFriends = 53,
 }
 
 /// <summary>

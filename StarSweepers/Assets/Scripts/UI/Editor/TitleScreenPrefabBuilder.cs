@@ -83,9 +83,10 @@ public static class TitleScreenPrefabBuilder
     /// ／ 5：「LANのサーバーに参加する」に、見つかった LAN の部屋の一覧（2026/10/15）
     /// ／ 6：「サーバーを作る」のつなぎかたを □パブリック □プライベート □LAN の3つのチェックに（2026/10/15）
     /// ／ 7：メインに「クイックプレイ」（2026/10/15）
+    /// ／ 8：メインを ソロプレイ／マルチプレイ／設定／ゲームを終了 にし、マルチプレイの画面を足して、サーバーを探す画面（ハブ・パブリック・LAN・フレンド）を消した（2026/10/19）
     /// **版 3 からは作り直さず、<see cref="Upgrade"/> で足りない部品だけを足す**（手で直した配置を消さない）。版を上げたら Upgrade に足す処理を書くこと
     /// </summary>
-    public const int PrefabVersion = 7;
+    public const int PrefabVersion = 8;
 
     /// <summary>
     /// **作り直さずに、足りない部品だけを足す。**
@@ -93,6 +94,7 @@ public static class TitleScreenPrefabBuilder
     /// 版 4 → 5：「LANのサーバーに参加する」画面に、見つかった LAN の部屋の一覧を足す。
     /// 版 5 → 6：「サーバーを作る」のつなぎかたのボタンを消し、□LAN のチェックを足す（<see cref="ChangeConnectionChoiceToChecks"/>）。
     /// 版 6 → 7：メインの「サーバーを作る」の上に「クイックプレイ」を足す（<see cref="AddQuickPlayButton"/>）。
+    /// 版 7 → 8：メインをソロプレイ／マルチプレイに組み替え、マルチプレイの画面を足し、使わなくなった画面を消す（<see cref="RestructureForSoloMulti"/>）。
     /// </summary>
     private static void Upgrade(int fromVersion)
     {
@@ -116,16 +118,7 @@ public static class TitleScreenPrefabBuilder
                 }
             }
 
-            if (fromVersion < 7)
-            {
-                AddQuickPlayButton(root);
-            }
-
-            if (fromVersion < 6)
-            {
-                ChangeConnectionChoiceToChecks(root);
-            }
-
+            // 古い版から順に直す（4 → 5 → 6 → 7 → 8）
             if (fromVersion < 5 && FindPart(root, TitlePartRole.LanListContent) == null)
             {
                 TitlePart lanPage = FindPart(root, TitlePartRole.PageFindLan);
@@ -133,6 +126,21 @@ public static class TitleScreenPrefabBuilder
                 {
                     BuildLanRoomList(lanPage.transform);
                 }
+            }
+
+            if (fromVersion < 6)
+            {
+                ChangeConnectionChoiceToChecks(root);
+            }
+
+            if (fromVersion < 7)
+            {
+                AddQuickPlayButton(root);
+            }
+
+            if (fromVersion < 8)
+            {
+                RestructureForSoloMulti(root);
             }
 
             root.GetComponent<TitleScreen>().EditorSetPrefabVersion(PrefabVersion);
@@ -192,6 +200,171 @@ public static class TitleScreenPrefabBuilder
         }
 
         return null;
+    }
+
+    /// <summary>
+    /// **マルチプレイの画面**（2026/10/19・大槻さんの絵コンテ）。
+    /// 左：名前・クイックプレイ・プライベートサーバーを探す・サーバーを作る・サーバー検索設定（■パブリックサーバー ■フレンドのサーバー）。
+    /// 右：参加可能なサーバーの一覧（LAN の部屋はいつも一番上）と、パスワードの欄。
+    /// </summary>
+    private static GameObject BuildMultiPage(Transform root)
+    {
+        GameObject page = NewPage("MultiPage", root, TitlePartRole.PageMulti);
+
+        // 左
+        Column left = new Column("Left", page.transform, 640f, 18f,
+            new Vector2(0f, 1f), new Vector2(140f, -90f), new Vector2(0f, 1f));
+        AddNameInput(left);
+        left.Add(NewButton(left.Rect, "クイックプレイ", new Vector2(640f, 96f), ButtonFontSize + 4, TitleButtonAction.QuickPlay));
+        left.Add(NewButton(left.Rect, "プライベートサーバーを探す", new Vector2(640f, 70f), ButtonFontSize - 2, TitleButtonAction.OpenFindPrivate));
+        left.Add(NewButton(left.Rect, "サーバーを作る", new Vector2(640f, 70f), ButtonFontSize - 2, TitleButtonAction.OpenCreate));
+        AddLabel(left, "サーバー検索設定", "LAN の部屋はいつも一番上に出る");
+        AddCheckRow(left, "パブリックサーバー", TitleButtonAction.ToggleSearchPublic, TitlePartRole.SearchPublicCheckText);
+        AddCheckRow(left, "フレンドのサーバー", TitleButtonAction.ToggleSearchFriends, TitlePartRole.SearchFriendsCheckText);
+        left.Finish();
+
+        // 右：参加可能なサーバー
+        Text title = NewText("JoinableTitle", page.transform, "参加可能なサーバー", FontSize + 6, TextColor, TextAnchor.LowerLeft);
+        Place(title.rectTransform, new Vector2(1f, 1f), new Vector2(-920f, -60f), new Vector2(820f, 50f), new Vector2(0f, 1f));
+
+        Image listBox = NewImage("JoinableBox", page.transform, PanelColor);
+        Place(listBox.rectTransform, new Vector2(1f, 1f), new Vector2(-920f, -120f), new Vector2(820f, 640f), new Vector2(0f, 1f));
+
+        RectTransform content = NewScrollList(listBox.transform);
+        Mark(content, TitlePartRole.JoinableListContent);
+
+        // サーバー1つぶんのカードの見本（再生すると隠れ、見つかった数だけ複製される）
+        Image card = NewImage("JoinableCardTemplate", content, AccentColor);
+        SetLayoutSize(card.gameObject, 780f, 84f);
+        Mark(card, TitlePartRole.JoinableCardTemplate);
+
+        Text name = NewText("Name", card.transform, "サーバーの名前", FontSize, TextColor, TextAnchor.MiddleLeft);
+        Place(name.rectTransform, new Vector2(0f, 0.5f), new Vector2(18f, 0f), new Vector2(460f, 70f), new Vector2(0f, 0.5f));
+        Mark(name, TitlePartRole.ServerCardName);
+
+        Text count = NewText("Players", card.transform, "1/8", FontSize, TextColor, TextAnchor.MiddleRight);
+        Place(count.rectTransform, new Vector2(1f, 0.5f), new Vector2(-210f, 0f), new Vector2(100f, 70f), new Vector2(1f, 0.5f));
+        Mark(count, TitlePartRole.ServerCardPlayers);
+
+        TitleMenuButton join = NewButton(card.transform, "参加する", new Vector2(180f, 60f), FontSize, TitleButtonAction.JoinListedServer);
+        Place((RectTransform)join.transform, new Vector2(1f, 0.5f), new Vector2(-12f, 0f), new Vector2(180f, 60f), new Vector2(1f, 0.5f));
+
+        Text message = NewText("Message", listBox.transform, string.Empty, FontSize - 4, TextColor, TextAnchor.LowerCenter);
+        Place(message.rectTransform, new Vector2(0.5f, 0f), new Vector2(0f, 16f), new Vector2(780f, 160f), new Vector2(0.5f, 0f));
+        message.verticalOverflow = VerticalWrapMode.Overflow;
+        Mark(message, TitlePartRole.JoinableListMessage);
+
+        // パスワードの付いたサーバーに入るとき
+        Column password = new Column("Password", page.transform, 820f, 8f,
+            new Vector2(1f, 1f), new Vector2(-920f, -780f), new Vector2(0f, 1f));
+        AddLabel(password, "パスワード", "パスワードの付いたサーバーに入るときだけ");
+        AddInput(password, "パスワードなし", TitleInputKind.JoinPassword);
+        password.Finish();
+
+        AddBackButton(page.transform);
+        return page;
+    }
+
+    /// <summary>「□ 名前」のチェック1行（押すとチェックが付いたり外れたりする）。</summary>
+    private static void AddCheckRow(Column column, string label, TitleButtonAction action, TitlePartRole checkTextRole)
+    {
+        Row row = new Row(column, 60f, 12f, "Check " + label);
+        TitleMenuButton check = NewButton(row.Rect, "■", new Vector2(64f, 56f), FontSize + 6, action);
+        Mark(check.Label, checkTextRole);
+        row.Add(check);
+
+        Text text = NewText("Label", row.Rect, label, FontSize, TextColor, TextAnchor.MiddleLeft);
+        text.rectTransform.sizeDelta = new Vector2(400f, 56f);
+        row.Add(text.rectTransform);
+    }
+
+    /// <summary>
+    /// 版 7 → 8：**メインをソロプレイ／マルチプレイに組み替え、マルチプレイの画面を足し、使わなくなった画面を消す。**（2026/10/19）
+    ///
+    /// ・メインの「クイックプレイ」→「ソロプレイ」、「サーバーを作る」→「マルチプレイ」。「サーバーを探す」は消して、下のボタンを詰める
+    /// ・「サーバーを探す」のハブ・パブリックの一覧・LAN の参加・フレンドの一覧の画面を消す（マルチプレイの画面の一覧にまとめた）
+    /// ・マルチプレイの画面を足す
+    /// </summary>
+    private static void RestructureForSoloMulti(GameObject root)
+    {
+        if (FindPart(root, TitlePartRole.PageMulti) != null)
+        {
+            return;
+        }
+
+        TitlePart mainPage = FindPart(root, TitlePartRole.PageMain);
+        if (mainPage != null)
+        {
+            TitleMenuButton find = null;
+            foreach (TitleMenuButton look in mainPage.GetComponentsInChildren<TitleMenuButton>(true))
+            {
+                switch (look.Action)
+                {
+                    case TitleButtonAction.QuickPlay:
+                        RenameButton(look, TitleButtonAction.PlaySolo, "ソロプレイ");
+                        break;
+                    case TitleButtonAction.OpenCreate:
+                        RenameButton(look, TitleButtonAction.OpenMulti, "マルチプレイ");
+                        break;
+                    case TitleButtonAction.OpenFind:
+                        find = look;
+                        break;
+                }
+            }
+
+            // 「サーバーを探す」を消し、その下のボタンを1つぶん上へ詰める
+            if (find != null)
+            {
+                RectTransform findRect = (RectTransform)find.transform;
+                Transform column = findRect.parent;
+                int index = findRect.GetSiblingIndex();
+                float step = findRect.sizeDelta.y + 22f;
+
+                for (int i = index + 1; i < column.childCount; i++)
+                {
+                    if (column.GetChild(i) is RectTransform below)
+                    {
+                        below.anchoredPosition += new Vector2(0f, step);
+                    }
+                }
+
+                Object.DestroyImmediate(find.gameObject);
+            }
+        }
+
+        // 使わなくなった画面を消す
+        foreach (TitlePartRole role in new[]
+                 {
+                     TitlePartRole.PageFind, TitlePartRole.PageFindPublic,
+                     TitlePartRole.PageFindLan, TitlePartRole.PageFindFriends,
+                 })
+        {
+            TitlePart old = FindPart(root, role);
+            if (old != null)
+            {
+                Object.DestroyImmediate(old.gameObject);
+            }
+        }
+
+        // マルチプレイの画面を足す（つないでいる途中の表示より手前に出ないように、その前に並べる）
+        GameObject multi = BuildMultiPage(root.transform);
+        multi.SetActive(false);
+        TitlePart busy = FindPart(root, TitlePartRole.BusyOverlay);
+        if (busy != null)
+        {
+            multi.transform.SetSiblingIndex(busy.transform.GetSiblingIndex());
+        }
+    }
+
+    /// <summary>ボタンの Action と文字を変える。</summary>
+    private static void RenameButton(TitleMenuButton look, TitleButtonAction action, string label)
+    {
+        look.EditorSetup(action, look.GetComponent<Image>(), look.Label);
+        look.gameObject.name = label;
+        if (look.Label != null)
+        {
+            look.Label.text = label;
+        }
     }
 
     /// <summary>
@@ -499,11 +672,8 @@ public static class TitleScreenPrefabBuilder
         BuildBackground(root.transform);
         BuildMainPage(root.transform);
         BuildCreatePage(root.transform).SetActive(false);
-        BuildFindPage(root.transform).SetActive(false);
+        BuildMultiPage(root.transform).SetActive(false);
         BuildFindPrivatePage(root.transform).SetActive(false);
-        BuildFindPublicPage(root.transform).SetActive(false);
-        BuildFindLanPage(root.transform).SetActive(false);
-        BuildFindFriendsPage(root.transform).SetActive(false);
         BuildSettingsPage(root.transform).SetActive(false);
         BuildBusyOverlay(root.transform).SetActive(false);
 
@@ -548,9 +718,8 @@ public static class TitleScreenPrefabBuilder
         // メインのボタン（左下に縦に並べる）
         Column column = new Column("Buttons", page.transform, MainButtonSize.x, 22f,
             new Vector2(0f, 0f), new Vector2(220f, 180f), new Vector2(0f, 0f));
-        column.Add(NewButton(column.Rect, "クイックプレイ", MainButtonSize, ButtonFontSize, TitleButtonAction.QuickPlay));
-        column.Add(NewButton(column.Rect, "サーバーを作る", MainButtonSize, ButtonFontSize, TitleButtonAction.OpenCreate));
-        column.Add(NewButton(column.Rect, "サーバーを探す", MainButtonSize, ButtonFontSize, TitleButtonAction.OpenFind));
+        column.Add(NewButton(column.Rect, "ソロプレイ", MainButtonSize, ButtonFontSize, TitleButtonAction.PlaySolo));
+        column.Add(NewButton(column.Rect, "マルチプレイ", MainButtonSize, ButtonFontSize, TitleButtonAction.OpenMulti));
         column.Add(NewButton(column.Rect, "設定", MainButtonSize, ButtonFontSize, TitleButtonAction.OpenSettings));
         column.Add(NewButton(column.Rect, "ゲームを終了", MainButtonSize, ButtonFontSize, TitleButtonAction.Quit));
         column.Finish();
@@ -641,23 +810,6 @@ public static class TitleScreenPrefabBuilder
         return page;
     }
 
-    private static GameObject BuildFindPage(Transform root)
-    {
-        GameObject page = NewPage("FindPage", root, TitlePartRole.PageFind);
-
-        Column column = new Column("Buttons", page.transform, 640f, 22f,
-            new Vector2(0f, 0f), new Vector2(220f, 260f), new Vector2(0f, 0f));
-        Vector2 size = new Vector2(640f, MainButtonSize.y);
-        column.Add(NewButton(column.Rect, "プライベートサーバーを探す", size, ButtonFontSize, TitleButtonAction.OpenFindPrivate));
-        column.Add(NewButton(column.Rect, "パブリックサーバーを探す", size, ButtonFontSize, TitleButtonAction.OpenFindPublic));
-        column.Add(NewButton(column.Rect, "フレンドのサーバーを探す", size, ButtonFontSize, TitleButtonAction.OpenFindFriends));
-        column.Add(NewButton(column.Rect, "LANのサーバーに参加する", size, ButtonFontSize, TitleButtonAction.OpenFindLan));
-        column.Finish();
-
-        AddBackButton(page.transform);
-        return page;
-    }
-
     private static GameObject BuildFindPrivatePage(Transform root)
     {
         GameObject page = NewPage("FindPrivatePage", root, TitlePartRole.PageFindPrivate);
@@ -674,61 +826,6 @@ public static class TitleScreenPrefabBuilder
 
         AddBackButton(page.transform);
         return page;
-    }
-
-    private static GameObject BuildFindPublicPage(Transform root)
-    {
-        GameObject page = NewPage("FindPublicPage", root, TitlePartRole.PageFindPublic);
-
-        // 左：名前と検索
-        Column left = new Column("Left", page.transform, 640f, 14f,
-            new Vector2(0f, 1f), new Vector2(120f, -80f), new Vector2(0f, 1f));
-        AddNameInput(left);
-        AddLabel(left, "パスワード", "（パスワードあり）の部屋に入るとき");
-        AddInput(left, "パスワードなし", TitleInputKind.JoinPassword);
-        left.Add(NewButton(left.Rect, "パブリックサーバーを検索", new Vector2(640f, 70f), FontSize + 2, TitleButtonAction.SearchPublic));
-        Text note = NewText("Note", left.Rect, "プライベートサーバーは一覧に出ません（参加コードで入る）。LAN のサーバーも出ません。",
-            FontSize - 8, NoteColor, TextAnchor.UpperLeft);
-        note.rectTransform.sizeDelta = new Vector2(640f, 70f);
-        left.Add(note.rectTransform);
-        left.Finish();
-
-        // 右：検索結果
-        Text resultsTitle = NewText("ResultsTitle", page.transform, "検索結果", FontSize + 6, TextColor, TextAnchor.LowerLeft);
-        Place(resultsTitle.rectTransform, new Vector2(1f, 1f), new Vector2(-920f, -60f), new Vector2(800f, 50f), new Vector2(0f, 1f));
-
-        Image listBox = NewImage("ListBox", page.transform, PanelColor);
-        Place(listBox.rectTransform, new Vector2(1f, 1f), new Vector2(-920f, -120f), new Vector2(820f, 760f), new Vector2(0f, 1f));
-
-        RectTransform content = NewScrollList(listBox.transform);
-        Mark(content, TitlePartRole.PublicListContent);
-        BuildServerCardTemplate(content);
-
-        Text message = NewText("Message", listBox.transform, string.Empty, FontSize - 2, TextColor, TextAnchor.UpperCenter);
-        Place(message.rectTransform, new Vector2(0.5f, 1f), new Vector2(0f, -20f), new Vector2(780f, 120f), new Vector2(0.5f, 1f));
-        Mark(message, TitlePartRole.PublicListMessage);
-
-        AddBackButton(page.transform);
-        return page;
-    }
-
-    /// <summary>サーバー1つぶんのカードの見本。再生すると隠れ、見つかったサーバーの数だけ複製される。</summary>
-    private static void BuildServerCardTemplate(RectTransform content)
-    {
-        Image card = NewImage("ServerCardTemplate", content, AccentColor);
-        SetLayoutSize(card.gameObject, 780f, 150f);
-        Mark(card, TitlePartRole.ServerCardTemplate);
-
-        Text name = NewText("Name", card.transform, "サーバーの名前", FontSize + 2, TextColor, TextAnchor.UpperLeft);
-        Place(name.rectTransform, new Vector2(0f, 1f), new Vector2(20f, -12f), new Vector2(560f, 44f), new Vector2(0f, 1f));
-        Mark(name, TitlePartRole.ServerCardName);
-
-        Text count = NewText("Players", card.transform, "1/4", FontSize + 2, TextColor, TextAnchor.UpperRight);
-        Place(count.rectTransform, new Vector2(1f, 1f), new Vector2(-20f, -12f), new Vector2(160f, 44f), new Vector2(1f, 1f));
-        Mark(count, TitlePartRole.ServerCardPlayers);
-
-        TitleMenuButton join = NewButton(card.transform, "参加する", new Vector2(740f, 64f), FontSize, TitleButtonAction.JoinListedServer);
-        Place((RectTransform)join.transform, new Vector2(0.5f, 0f), new Vector2(0f, 14f), new Vector2(740f, 64f), new Vector2(0.5f, 0f));
     }
 
     /// <summary>
@@ -820,24 +917,6 @@ public static class TitleScreenPrefabBuilder
         Text message = NewText("Message", listBox.transform, string.Empty, FontSize - 2, TextColor, TextAnchor.UpperCenter);
         Place(message.rectTransform, new Vector2(0.5f, 1f), new Vector2(0f, -20f), new Vector2(960f, 120f), new Vector2(0.5f, 1f));
         Mark(message, TitlePartRole.LanListMessage);
-    }
-
-    private static GameObject BuildFindLanPage(Transform root)
-    {
-        GameObject page = NewPage("FindLanPage", root, TitlePartRole.PageFindLan);
-
-        Column column = new Column("Column", page.transform, 1000f, 14f,
-            new Vector2(0.5f, 1f), new Vector2(0f, -120f), new Vector2(0.5f, 1f));
-        AddNameInput(column);
-        AddLabel(column, "ホストのIPアドレスを入力", "サーバーを作った人の画面（サーバーを作る → LAN）に出ている番号");
-        AddInput(column, "例：192.168.0.10", TitleInputKind.LanAddress);
-        column.Add(NewButton(column.Rect, "参加する", new Vector2(1000f, 70f), ButtonFontSize, TitleButtonAction.JoinLan));
-        column.Finish();
-
-        BuildLanRoomList(page.transform);
-
-        AddBackButton(page.transform);
-        return page;
     }
 
     private static GameObject BuildSettingsPage(Transform root)

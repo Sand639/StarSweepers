@@ -6,7 +6,7 @@ using UnityEngine;
 /// <summary>
 /// タイトル画面のプレハブに、**コードが頼りにしている印の付いた部品**がそろっているかを確かめる。
 /// 配置や見た目は自由に変えてよいが、印を消すとその部品は動かなくなるので、ここで気づけるようにする。
-/// （2026/10/15：前の画面（サーバーを作る・探す・設定）に戻したので、その部品を確かめる内容にした）
+/// （2026/10/19：メインを ソロプレイ／マルチプレイ／設定／ゲームを終了 にし、マルチプレイの画面にまとめた形に合わせた）
 /// </summary>
 public class TitleScreenPrefabTests
 {
@@ -17,6 +17,18 @@ public class TitleScreenPrefabTests
         return prefab;
     }
 
+    private static Transform FindPart(TitlePartRole role)
+    {
+        foreach (TitlePart part in LoadPrefab().GetComponentsInChildren<TitlePart>(true))
+        {
+            if (part.Role == role)
+            {
+                return part.transform;
+            }
+        }
+        return null;
+    }
+
     [Test]
     public void TitlePrefab_IsTheCurrentVersion()
     {
@@ -25,34 +37,36 @@ public class TitleScreenPrefabTests
     }
 
     [TestCase(TitlePartRole.PageMain)]
+    [TestCase(TitlePartRole.PageMulti)]
     [TestCase(TitlePartRole.PageCreate)]
-    [TestCase(TitlePartRole.PageFind)]
     [TestCase(TitlePartRole.PageFindPrivate)]
-    [TestCase(TitlePartRole.PageFindPublic)]
-    [TestCase(TitlePartRole.PageFindLan)]
     [TestCase(TitlePartRole.PageSettings)]
-    [TestCase(TitlePartRole.PageFindFriends)]
-    [TestCase(TitlePartRole.PublicListContent)]
-    [TestCase(TitlePartRole.ServerCardTemplate)]
-    [TestCase(TitlePartRole.LanListContent)]
-    [TestCase(TitlePartRole.LanListMessage)]
-    [TestCase(TitlePartRole.LanCardTemplate)]
+    [TestCase(TitlePartRole.JoinableListContent)]
+    [TestCase(TitlePartRole.JoinableListMessage)]
+    [TestCase(TitlePartRole.JoinableCardTemplate)]
+    [TestCase(TitlePartRole.SearchPublicCheckText)]
+    [TestCase(TitlePartRole.SearchFriendsCheckText)]
     [TestCase(TitlePartRole.PublicCheckText)]
     [TestCase(TitlePartRole.PrivateCheckText)]
     [TestCase(TitlePartRole.LanCheckText)]
     [TestCase(TitlePartRole.BusyOverlay)]
     public void TitlePrefab_HasPart(TitlePartRole role)
     {
-        bool found = false;
-        foreach (TitlePart part in LoadPrefab().GetComponentsInChildren<TitlePart>(true))
-        {
-            found |= part.Role == role;
-        }
-        Assert.That(found, Is.True, $"印 {role} の付いた部品が無い");
+        Assert.That(FindPart(role), Is.Not.Null, $"印 {role} の付いた部品が無い");
+    }
+
+    /// <summary>マルチプレイの画面にまとめたので、前の「サーバーを探す」の画面は残っていない（2026/10/19）。</summary>
+    [TestCase(TitlePartRole.PageFind)]
+    [TestCase(TitlePartRole.PageFindPublic)]
+    [TestCase(TitlePartRole.PageFindLan)]
+    [TestCase(TitlePartRole.PageFindFriends)]
+    public void TitlePrefab_HasNoOldFindPage(TitlePartRole role)
+    {
+        Assert.That(FindPart(role), Is.Null, $"使わなくなった画面 {role} が残っている");
     }
 
     [Test]
-    public void TitlePrefab_HasMainButtons()
+    public void TitlePrefab_HasEveryButton()
     {
         HashSet<TitleButtonAction> actions = new HashSet<TitleButtonAction>();
         foreach (TitleMenuButton button in LoadPrefab().GetComponentsInChildren<TitleMenuButton>(true))
@@ -62,10 +76,15 @@ public class TitleScreenPrefabTests
 
         TitleButtonAction[] required =
         {
-            TitleButtonAction.QuickPlay, TitleButtonAction.OpenCreate, TitleButtonAction.OpenFind, TitleButtonAction.OpenSettings, TitleButtonAction.Quit,
+            // メイン
+            TitleButtonAction.PlaySolo, TitleButtonAction.OpenMulti, TitleButtonAction.OpenSettings, TitleButtonAction.Quit,
+            // マルチプレイ
+            TitleButtonAction.QuickPlay, TitleButtonAction.OpenFindPrivate, TitleButtonAction.OpenCreate,
+            TitleButtonAction.ToggleSearchPublic, TitleButtonAction.ToggleSearchFriends,
+            // サーバーを作る・プライベートサーバーを探す
             TitleButtonAction.CreateServer, TitleButtonAction.MaxPlayersDown, TitleButtonAction.MaxPlayersUp,
             TitleButtonAction.SetPublic, TitleButtonAction.SetPrivate, TitleButtonAction.SetLan,
-            TitleButtonAction.JoinPrivate, TitleButtonAction.JoinLan, TitleButtonAction.SearchPublic,
+            TitleButtonAction.JoinPrivate,
         };
 
         foreach (TitleButtonAction action in required)
@@ -86,31 +105,22 @@ public class TitleScreenPrefabTests
         Assert.That(kinds.Contains(TitleInputKind.PlayerName), Is.True);
         Assert.That(kinds.Contains(TitleInputKind.ServerName), Is.True);
         Assert.That(kinds.Contains(TitleInputKind.PrivateCode), Is.True);
-        Assert.That(kinds.Contains(TitleInputKind.LanAddress), Is.True);
         Assert.That(kinds.Contains(TitleInputKind.CreatePassword), Is.True);
         Assert.That(kinds.Contains(TitleInputKind.JoinPassword), Is.True);
+
+        // LAN は一覧から入るだけ。IP アドレスを打つ欄は無い（2026/10/19・大槻さん）
+        Assert.That(kinds.Contains(TitleInputKind.LanAddress), Is.False, "IP アドレスを打つ欄が残っている");
     }
 
-    /// <summary>LAN の部屋の一覧は「LANのサーバーに参加する」画面の中にある。</summary>
+    /// <summary>参加可能なサーバーの一覧は、マルチプレイの画面の中にある。</summary>
     [Test]
-    public void TitlePrefab_LanRoomListIsOnTheLanPage()
+    public void TitlePrefab_JoinableListIsOnTheMultiPage()
     {
-        Transform lanPage = null;
-        Transform lanList = null;
-        foreach (TitlePart part in LoadPrefab().GetComponentsInChildren<TitlePart>(true))
-        {
-            if (part.Role == TitlePartRole.PageFindLan)
-            {
-                lanPage = part.transform;
-            }
-            else if (part.Role == TitlePartRole.LanListContent)
-            {
-                lanList = part.transform;
-            }
-        }
+        Transform page = FindPart(TitlePartRole.PageMulti);
+        Transform list = FindPart(TitlePartRole.JoinableListContent);
 
-        Assert.That(lanPage, Is.Not.Null);
-        Assert.That(lanList, Is.Not.Null);
-        Assert.That(lanList.IsChildOf(lanPage), Is.True, "LAN の部屋の一覧が「LANのサーバーに参加する」画面の外にある");
+        Assert.That(page, Is.Not.Null);
+        Assert.That(list, Is.Not.Null);
+        Assert.That(list.IsChildOf(page), Is.True, "参加可能なサーバーの一覧が、マルチプレイの画面の外にある");
     }
 }

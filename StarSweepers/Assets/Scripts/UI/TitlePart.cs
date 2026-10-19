@@ -20,6 +20,7 @@ public enum TitlePartRole
     // 2026/10/13 からのタイトル画面
     PageStart = 9,
     PageMode = 10,
+    PageMulti = 11,
 
     // 文字（コードが書き換える）
     PlayerNameText = 20,
@@ -80,6 +81,13 @@ public enum TitlePartRole
 
     // サーバーを作る：□LAN のチェックの文字（2026/10/15）
     LanCheckText = 77,
+
+    // マルチプレイ画面（2026/10/19）：サーバー検索設定のチェックと、参加可能なサーバーの一覧
+    SearchPublicCheckText = 78,
+    SearchFriendsCheckText = 79,
+    JoinableListContent = 80,
+    JoinableListMessage = 81,
+    JoinableCardTemplate = 82,
 }
 
 /// <summary>
