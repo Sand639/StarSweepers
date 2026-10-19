@@ -18,9 +18,10 @@ using UnityEngine.UI;
 ///
 /// | 画面 | できること |
 /// | --- | --- |
-/// | メイン | サーバーを作る／サーバーを探す／設定／ゲームを終了。右下にバージョン |
-/// | サーバーを作る | 名前・最大人数（2〜8）・サーバーの名前・つなぎかた（インターネット／LAN）・プライベートにするか → 作成。1人で練習もここから |
-/// | サーバーを探す | プライベートサーバー（参加コード）／パブリックサーバー（一覧から選ぶ）／LAN（IPアドレス）の3つから選んで参加 |
+/// | メイン | ソロプレイ（オフラインでロビーへ）／マルチプレイ／設定／ゲームを終了。右下にバージョン（2026/10/19 から） |
+/// | マルチプレイ | 左：クイックプレイ／プライベートサーバーを探す／サーバーを作る／サーバー検索設定（■パブリックサーバー ■フレンドのサーバー）。右：参加可能なサーバー（**LAN の部屋はいつも一番上**） |
+/// | サーバーを作る | 名前・最大人数（2〜8。初期値8）・サーバーの名前・パスワード・□パブリック □プライベート □LAN → 作成 |
+/// | プライベートサーバーを探す | 参加コード（とパスワード）を入れて参加 |
 /// | 設定 | サウンド（音量）／グラフィック（解像度・画面モード・フレームレート上限・垂直同期・画質）／ゲーム全般（マウス感度・操作タイプ） |
 ///
 /// ## 画面はプレハブ（2026/10/6 から）
@@ -281,12 +282,12 @@ public class TitleScreen : MonoBehaviour
         AddSettingsGroup(SettingsTab.Sound, TitlePartRole.SettingsSound);
         AddSettingsGroup(SettingsTab.Graphics, TitlePartRole.SettingsGraphics);
         AddSettingsGroup(SettingsTab.General, TitlePartRole.SettingsGeneral);
+
         // 参加可能なサーバーの一覧のカードの見本（マルチプレイ画面。2026/10/19）。これを複製して1枚ずつ作る（見本そのものは隠しておく）
         joinableCardTemplate = PartObject(TitlePartRole.JoinableCardTemplate);
         if (joinableCardTemplate != null)
         {
             joinableCardTemplate.SetActive(false);
-        }
         }
 
         GameObject busy = PartObject(TitlePartRole.BusyOverlay);
