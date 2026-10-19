@@ -84,9 +84,10 @@ public static class TitleScreenPrefabBuilder
     /// ／ 6：「サーバーを作る」のつなぎかたを □パブリック □プライベート □LAN の3つのチェックに（2026/10/15）
     /// ／ 7：メインに「クイックプレイ」（2026/10/15）
     /// ／ 8：メインを ソロプレイ／マルチプレイ／設定／ゲームを終了 にし、マルチプレイの画面を足して、サーバーを探す画面（ハブ・パブリック・LAN・フレンド）を消した（2026/10/19）
+    /// ／ 9：参加の確認の窓（参加しますか？／パスワードを入力してください）を足し、「1人で練習する」とマルチプレイの画面のパスワードの欄を消した（2026/10/19）
     /// **版 3 からは作り直さず、<see cref="Upgrade"/> で足りない部品だけを足す**（手で直した配置を消さない）。版を上げたら Upgrade に足す処理を書くこと
     /// </summary>
-    public const int PrefabVersion = 8;
+    public const int PrefabVersion = 9;
 
     /// <summary>
     /// **作り直さずに、足りない部品だけを足す。**
@@ -95,6 +96,7 @@ public static class TitleScreenPrefabBuilder
     /// 版 5 → 6：「サーバーを作る」のつなぎかたのボタンを消し、□LAN のチェックを足す（<see cref="ChangeConnectionChoiceToChecks"/>）。
     /// 版 6 → 7：メインの「サーバーを作る」の上に「クイックプレイ」を足す（<see cref="AddQuickPlayButton"/>）。
     /// 版 7 → 8：メインをソロプレイ／マルチプレイに組み替え、マルチプレイの画面を足し、使わなくなった画面を消す（<see cref="RestructureForSoloMulti"/>）。
+    /// 版 8 → 9：参加の確認の窓を足し、「1人で練習する」とマルチプレイの画面のパスワードの欄を消す（<see cref="AddJoinDialog"/>）。
     /// </summary>
     private static void Upgrade(int fromVersion)
     {
@@ -141,6 +143,11 @@ public static class TitleScreenPrefabBuilder
             if (fromVersion < 8)
             {
                 RestructureForSoloMulti(root);
+            }
+
+            if (fromVersion < 9)
+            {
+                AddJoinDialog(root);
             }
 
             root.GetComponent<TitleScreen>().EditorSetPrefabVersion(PrefabVersion);
@@ -254,15 +261,93 @@ public static class TitleScreenPrefabBuilder
         message.verticalOverflow = VerticalWrapMode.Overflow;
         Mark(message, TitlePartRole.JoinableListMessage);
 
-        // パスワードの付いたサーバーに入るとき
-        Column password = new Column("Password", page.transform, 820f, 8f,
-            new Vector2(1f, 1f), new Vector2(-920f, -780f), new Vector2(0f, 1f));
-        AddLabel(password, "パスワード", "パスワードの付いたサーバーに入るときだけ");
-        AddInput(password, "パスワードなし", TitleInputKind.JoinPassword);
-        password.Finish();
-
         AddBackButton(page.transform);
         return page;
+    }
+
+    /// <summary>
+    /// **参加の確認の窓**（2026/10/19）。公開・フレンドのサーバーを一覧で押したときに出る。
+    /// パスワードなし：「○○に参加しますか？」「はい」「いいえ」。パスワードあり：「パスワードを入力してください」・入力欄・「参加する」「やめる」。
+    /// 文字はコードが場合に合わせて書き換える。間違っていたら下の赤い文字に「パスワードが間違えています」が出る。
+    /// </summary>
+    private static GameObject BuildJoinDialog(Transform root)
+    {
+        RectTransform dialog = NewRect("JoinDialog", root);
+        Stretch(dialog);
+        Mark(dialog, TitlePartRole.JoinDialog);
+
+        // 後ろの画面を押せないように、暗い幕で覆う
+        Image shade = NewImage("Shade", dialog, new Color(0f, 0f, 0f, 0.6f));
+        Stretch(shade.rectTransform);
+
+        Image box = NewImage("Box", dialog, new Color(0.08f, 0.08f, 0.10f, 0.95f));
+        Place(box.rectTransform, new Vector2(0.5f, 0.5f), Vector2.zero, new Vector2(960f, 460f), new Vector2(0.5f, 0.5f));
+
+        Text title = NewText("Title", box.transform, "「サーバーの名前」に参加しますか？", FontSize + 6, TitleColor, TextAnchor.MiddleCenter);
+        Place(title.rectTransform, new Vector2(0.5f, 1f), new Vector2(0f, -30f), new Vector2(900f, 110f), new Vector2(0.5f, 1f));
+        Mark(title, TitlePartRole.JoinDialogTitle);
+
+        Column password = new Column("PasswordRow", box.transform, 800f, 6f,
+            new Vector2(0.5f, 1f), new Vector2(0f, -160f), new Vector2(0.5f, 1f));
+        AddInput(password, "パスワード", TitleInputKind.JoinPassword);
+        password.Finish();
+        Mark(password.Rect, TitlePartRole.JoinDialogPasswordRow);
+
+        // 暗い箱の上でも入力欄が見えるように、少し明るくする
+        foreach (TitleInput input in password.Rect.GetComponentsInChildren<TitleInput>(true))
+        {
+            input.GetComponent<Image>().color = new Color(0.20f, 0.21f, 0.25f, 0.95f);
+        }
+
+        Text message = NewText("Message", box.transform, string.Empty, FontSize, new Color(1f, 0.45f, 0.4f, 1f), TextAnchor.MiddleCenter);
+        Place(message.rectTransform, new Vector2(0.5f, 0f), new Vector2(0f, 130f), new Vector2(900f, 60f), new Vector2(0.5f, 0f));
+        Mark(message, TitlePartRole.JoinDialogMessage);
+
+        TitleMenuButton yes = NewButton(box.transform, "はい", new Vector2(320f, 76f), ButtonFontSize - 2, TitleButtonAction.ConfirmJoinDialog);
+        Place((RectTransform)yes.transform, new Vector2(0.5f, 0f), new Vector2(-180f, 40f), new Vector2(320f, 76f), new Vector2(0.5f, 0f));
+        Mark(yes.Label, TitlePartRole.JoinDialogYesLabel);
+
+        TitleMenuButton no = NewButton(box.transform, "いいえ", new Vector2(320f, 76f), ButtonFontSize - 2, TitleButtonAction.CloseJoinDialog);
+        Place((RectTransform)no.transform, new Vector2(0.5f, 0f), new Vector2(180f, 40f), new Vector2(320f, 76f), new Vector2(0.5f, 0f));
+        Mark(no.Label, TitlePartRole.JoinDialogNoLabel);
+
+        return dialog.gameObject;
+    }
+
+    /// <summary>
+    /// 版 8 → 9：参加の確認の窓を足し（つないでいる途中の表示より後ろ）、
+    /// 「サーバーを作る」の「1人で練習する」（ソロプレイができたので要らない）と、マルチプレイの画面のパスワードの欄（窓に移した）を消す。
+    /// </summary>
+    private static void AddJoinDialog(GameObject root)
+    {
+        foreach (TitleMenuButton look in root.GetComponentsInChildren<TitleMenuButton>(true))
+        {
+            if (look.Action == TitleButtonAction.PracticeSolo)
+            {
+                Object.DestroyImmediate(look.gameObject);
+                break;
+            }
+        }
+
+        TitlePart multi = FindPart(root, TitlePartRole.PageMulti);
+        Transform oldPassword = multi != null ? multi.transform.Find("Password") : null;
+        if (oldPassword != null)
+        {
+            Object.DestroyImmediate(oldPassword.gameObject);
+        }
+
+        if (FindPart(root, TitlePartRole.JoinDialog) != null)
+        {
+            return;
+        }
+
+        GameObject dialog = BuildJoinDialog(root.transform);
+        dialog.SetActive(false);
+        TitlePart busy = FindPart(root, TitlePartRole.BusyOverlay);
+        if (busy != null)
+        {
+            dialog.transform.SetSiblingIndex(busy.transform.GetSiblingIndex());
+        }
     }
 
     /// <summary>「□ 名前」のチェック1行（押すとチェックが付いたり外れたりする）。</summary>
@@ -675,6 +760,7 @@ public static class TitleScreenPrefabBuilder
         BuildMultiPage(root.transform).SetActive(false);
         BuildFindPrivatePage(root.transform).SetActive(false);
         BuildSettingsPage(root.transform).SetActive(false);
+        BuildJoinDialog(root.transform).SetActive(false);
         BuildBusyOverlay(root.transform).SetActive(false);
 
         return root;
@@ -803,7 +889,6 @@ public static class TitleScreenPrefabBuilder
         Mark(codeBody, TitlePartRole.CodeBoxBody);
 
         column.Add(NewButton(column.Rect, "サーバーを作成", new Vector2(1100f, 70f), ButtonFontSize, TitleButtonAction.CreateServer));
-        column.Add(NewButton(column.Rect, "1人で練習する（通信を使わない）", new Vector2(1100f, 54f), FontSize - 2, TitleButtonAction.PracticeSolo));
         column.Finish();
 
         AddBackButton(page.transform);

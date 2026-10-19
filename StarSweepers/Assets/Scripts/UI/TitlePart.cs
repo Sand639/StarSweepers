@@ -88,6 +88,14 @@ public enum TitlePartRole
     JoinableListContent = 80,
     JoinableListMessage = 81,
     JoinableCardTemplate = 82,
+
+    // 参加の確認の窓（2026/10/19）：「参加しますか？」／「パスワードを入力してください」
+    JoinDialog = 83,
+    JoinDialogTitle = 84,
+    JoinDialogMessage = 85,
+    JoinDialogPasswordRow = 86,
+    JoinDialogYesLabel = 87,
+    JoinDialogNoLabel = 88,
 }
 
 /// <summary>

@@ -49,6 +49,12 @@ public class TitleScreenPrefabTests
     [TestCase(TitlePartRole.PublicCheckText)]
     [TestCase(TitlePartRole.PrivateCheckText)]
     [TestCase(TitlePartRole.LanCheckText)]
+    [TestCase(TitlePartRole.JoinDialog)]
+    [TestCase(TitlePartRole.JoinDialogTitle)]
+    [TestCase(TitlePartRole.JoinDialogMessage)]
+    [TestCase(TitlePartRole.JoinDialogPasswordRow)]
+    [TestCase(TitlePartRole.JoinDialogYesLabel)]
+    [TestCase(TitlePartRole.JoinDialogNoLabel)]
     [TestCase(TitlePartRole.BusyOverlay)]
     public void TitlePrefab_HasPart(TitlePartRole role)
     {
@@ -85,6 +91,8 @@ public class TitleScreenPrefabTests
             TitleButtonAction.CreateServer, TitleButtonAction.MaxPlayersDown, TitleButtonAction.MaxPlayersUp,
             TitleButtonAction.SetPublic, TitleButtonAction.SetPrivate, TitleButtonAction.SetLan,
             TitleButtonAction.JoinPrivate,
+            // 参加の確認の窓
+            TitleButtonAction.ConfirmJoinDialog, TitleButtonAction.CloseJoinDialog,
         };
 
         foreach (TitleButtonAction action in required)
@@ -122,5 +130,15 @@ public class TitleScreenPrefabTests
         Assert.That(page, Is.Not.Null);
         Assert.That(list, Is.Not.Null);
         Assert.That(list.IsChildOf(page), Is.True, "参加可能なサーバーの一覧が、マルチプレイの画面の外にある");
+    }
+
+    /// <summary>ソロプレイができたので、「サーバーを作る」の「1人で練習する」は無い（2026/10/19・大槻さん）。</summary>
+    [Test]
+    public void TitlePrefab_HasNoPracticeSoloButton()
+    {
+        foreach (TitleMenuButton button in LoadPrefab().GetComponentsInChildren<TitleMenuButton>(true))
+        {
+            Assert.That(button.Action, Is.Not.EqualTo(TitleButtonAction.PracticeSolo), "「1人で練習する」のボタンが残っている");
+        }
     }
 }

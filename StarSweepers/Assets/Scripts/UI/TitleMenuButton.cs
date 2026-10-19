@@ -66,6 +66,10 @@ public enum TitleButtonAction
     OpenMulti = 51,
     ToggleSearchPublic = 52,
     ToggleSearchFriends = 53,
+
+    // 参加の確認の窓（公開・フレンドのサーバーを押したとき。2026/10/19）
+    ConfirmJoinDialog = 54,
+    CloseJoinDialog = 55,
 }
 
 /// <summary>

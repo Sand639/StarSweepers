@@ -290,6 +290,13 @@ public class TitleScreen : MonoBehaviour
             joinableCardTemplate.SetActive(false);
         }
 
+        // 参加の確認の窓（2026/10/19）は、はじめは閉じておく
+        GameObject joinDialog = PartObject(TitlePartRole.JoinDialog);
+        if (joinDialog != null)
+        {
+            joinDialog.SetActive(false);
+        }
+
         GameObject busy = PartObject(TitlePartRole.BusyOverlay);
         if (busy != null)
         {
@@ -504,6 +511,8 @@ public class TitleScreen : MonoBehaviour
             case TitleButtonAction.OpenMulti: ShowPage(Page.Multi); break;
             case TitleButtonAction.ToggleSearchPublic: SetSearchPublic(!searchPublic); break;
             case TitleButtonAction.ToggleSearchFriends: SetSearchFriends(!searchFriends); break;
+            case TitleButtonAction.ConfirmJoinDialog: ConfirmJoinDialog(); break;
+            case TitleButtonAction.CloseJoinDialog: CloseJoinDialog(); break;
             case TitleButtonAction.OpenCreate: ShowPage(Page.Create); break;
             case TitleButtonAction.OpenFind: ShowPage(Page.Multi); break;
             case TitleButtonAction.OpenSettings: ShowPage(Page.Settings); break;
@@ -587,6 +596,13 @@ public class TitleScreen : MonoBehaviour
     /// <summary>1つ前の画面へ戻る。</summary>
     private void GoBack()
     {
+        // 参加の確認の窓が開いていれば、窓を閉じるだけ
+        if (IsJoinDialogOpen())
+        {
+            CloseJoinDialog();
+            return;
+        }
+
         switch (current)
         {
             case Page.Multi:
@@ -912,20 +928,23 @@ public class TitleScreen : MonoBehaviour
             foreach (ISessionInfo info in publicSessions)
             {
                 string sessionId = info.Id;
+                string roomName = string.IsNullOrEmpty(info.Name) ? "（名前なし）" : info.Name;
+                bool hasPassword = info.HasPassword;
                 entries.Add(new JoinableEntry
                 {
                     Key = $"pub:{info.Id}",
-                    Name = (string.IsNullOrEmpty(info.Name) ? "（名前なし）" : info.Name) + (info.HasPassword ? "（パスワードあり）" : string.Empty),
+                    Name = roomName + (hasPassword ? "（パスワードあり）" : string.Empty),
                     Players = $"{Mathf.Max(0, info.MaxPlayers - info.AvailableSlots)}/{info.MaxPlayers}",
                     Full = info.AvailableSlots <= 0 || info.IsLocked,
-                    Join = () =>
+                    // 押したら「参加しますか？」／「パスワードを入力してください」の窓を出す（2026/10/19）
+                    Join = () => OpenJoinDialog(roomName, hasPassword, password =>
                     {
                         InternetConnection internet = Internet();
                         if (internet != null)
                         {
-                            internet.JoinGameById(sessionId, joinPassword.Trim());
+                            internet.JoinGameById(sessionId, password);
                         }
-                    },
+                    }),
                 });
             }
         }
@@ -935,25 +954,133 @@ public class TitleScreen : MonoBehaviour
             foreach (SteamFriendRoom room in friendRooms)
             {
                 string code = room.JoinCode;
+                string roomName = $"{room.FriendName} の部屋";
+                bool hasPassword = room.HasPassword;
                 entries.Add(new JoinableEntry
                 {
                     Key = $"friend:{room.JoinCode}",
-                    Name = $"【フレンド】{room.FriendName} の部屋（{room.RoomName}）" + (room.HasPassword ? "（パスワードあり）" : string.Empty),
+                    Name = $"【フレンド】{room.FriendName} の部屋（{room.RoomName}）" + (hasPassword ? "（パスワードあり）" : string.Empty),
                     Players = room.Players,
                     Full = false,
-                    Join = () =>
+                    Join = () => OpenJoinDialog(roomName, hasPassword, password =>
                     {
                         InternetConnection internet = Internet();
                         if (internet != null)
                         {
-                            internet.JoinGame(code, joinPassword.Trim());
+                            internet.JoinGame(code, password);
                         }
-                    },
+                    }),
                 });
             }
         }
 
         return entries;
+    }
+
+    // ------------------------------------------------------------
+    // 参加の確認の窓（2026/10/19・大槻さん）
+    // ------------------------------------------------------------
+
+    /// <summary>「参加する」「はい」を押したときに入る処理（パスワードを渡す）。</summary>
+    private System.Action<string> pendingJoin;
+
+    /// <summary>窓で、パスワードを入れて入るか（パスワードの付いたサーバー）。</summary>
+    private bool pendingNeedsPassword;
+
+    /// <summary>窓から入ろうとして、結果を待っているか（失敗したら窓に理由を出す）。</summary>
+    private bool joinDialogWaiting;
+
+    private bool IsJoinDialogOpen()
+    {
+        GameObject dialog = PartObject(TitlePartRole.JoinDialog);
+        return dialog != null && dialog.activeSelf;
+    }
+
+    /// <summary>
+    /// **参加の確認の窓を出す。** 公開・フレンドのサーバーを一覧で押したとき。
+    /// ・パスワードなし … 「「○○」に参加しますか？」と「はい」「いいえ」
+    /// ・パスワードあり … 「パスワードを入力してください」と入力欄、「参加する」「やめる」。違ったら「パスワードが間違えています」
+    /// </summary>
+    private void OpenJoinDialog(string roomName, bool needsPassword, System.Action<string> join)
+    {
+        GameObject dialog = PartObject(TitlePartRole.JoinDialog);
+        if (dialog == null)
+        {
+            // プレハブに窓が無い（古いプレハブ）。確かめずにそのまま入る
+            join?.Invoke(joinPassword.Trim());
+            return;
+        }
+
+        pendingJoin = join;
+        pendingNeedsPassword = needsPassword;
+        joinDialogWaiting = false;
+
+        SetText(TitlePartRole.JoinDialogTitle, needsPassword
+            ? $"「{roomName}」\nパスワードを入力してください"
+            : $"「{roomName}」に参加しますか？");
+        SetText(TitlePartRole.JoinDialogMessage, string.Empty);
+        SetText(TitlePartRole.JoinDialogYesLabel, needsPassword ? "参加する" : "はい");
+        SetText(TitlePartRole.JoinDialogNoLabel, needsPassword ? "やめる" : "いいえ");
+
+        GameObject passwordRow = PartObject(TitlePartRole.JoinDialogPasswordRow);
+        if (passwordRow != null)
+        {
+            passwordRow.SetActive(needsPassword);
+        }
+
+        dialog.SetActive(true);
+        RefreshInputs(dialog);
+
+        // コントローラーでは「はい／参加する」を選んでおく
+        foreach (TitleMenuButton look in dialog.GetComponentsInChildren<TitleMenuButton>(true))
+        {
+            if (look.Action == TitleButtonAction.ConfirmJoinDialog)
+            {
+                SelectForGamepad(look.gameObject);
+                break;
+            }
+        }
+    }
+
+    /// <summary>「はい」「参加する」。パスワードが要るのに空なら、窓に「パスワードを入力してください」と出す。</summary>
+    private void ConfirmJoinDialog()
+    {
+        if (pendingJoin == null)
+        {
+            CloseJoinDialog();
+            return;
+        }
+
+        string password = pendingNeedsPassword ? joinPassword.Trim() : string.Empty;
+        if (pendingNeedsPassword && password.Length == 0)
+        {
+            SetText(TitlePartRole.JoinDialogMessage, "パスワードを入力してください");
+            return;
+        }
+
+        InternetConnection internet = Internet();
+        if (internet != null && internet.IsBusy)
+        {
+            SetText(TitlePartRole.JoinDialogMessage, "サーバーの一覧を取っています。少し待ってから、もう一度押してください");
+            return;
+        }
+
+        SetText(TitlePartRole.JoinDialogMessage, string.Empty);
+        joinDialogWaiting = true;
+        pendingJoin(password);
+    }
+
+    /// <summary>「いいえ」「やめる」。窓を閉じる。</summary>
+    private void CloseJoinDialog()
+    {
+        pendingJoin = null;
+        joinDialogWaiting = false;
+
+        GameObject dialog = PartObject(TitlePartRole.JoinDialog);
+        if (dialog != null)
+        {
+            dialog.SetActive(false);
+        }
     }
 
     /// <summary>公開のサーバーの一覧を取る（一覧に並べる用。取れなかったら15秒待つ）。</summary>
@@ -1323,6 +1450,15 @@ public class TitleScreen : MonoBehaviour
             message = string.IsNullOrEmpty(internet.Message) ? "つないでいます…" : internet.Message;
         }
         // 失敗はどの画面でも出す（一覧から入るときに、パスワードが違うと分かるように。一覧の検索の失敗は、一覧の中に出してすぐ消す）
+        // 参加の確認の窓から入ろうとして失敗した：つないでいる途中の表示ではなく、窓の中に理由を出す（2026/10/19）
+        else if (internet != null && internet.State == InternetConnection.Phase.Failed && joinDialogWaiting)
+        {
+            joinDialogWaiting = false;
+            SetText(TitlePartRole.JoinDialogMessage, internet.LastJoinFailedByPassword
+                ? "パスワードが間違えています"
+                : internet.Message);
+            internet.ClearFailure();
+        }
         else if (internet != null && internet.State == InternetConnection.Phase.Failed)
         {
             message = internet.Message;

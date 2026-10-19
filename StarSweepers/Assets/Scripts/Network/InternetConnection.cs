@@ -93,6 +93,12 @@ public class InternetConnection : MonoBehaviour
     /// <summary>いまの部屋にパスワードが付いているか（ホストのPCで使う）。</summary>
     public bool HasPassword => !string.IsNullOrEmpty(CurrentPassword);
 
+    /// <summary>
+    /// **直前に部屋に入れなかった理由が、パスワード違いらしいか。**（2026/10/19。タイトルの「パスワードが間違えています」に使う）
+    /// 中継サーバーに「パスワード違い」専用の知らせは無いので、エラーの中身（password の文字・断られた・許されていない）で見分ける。
+    /// </summary>
+    public bool LastJoinFailedByPassword { get; private set; }
+
     /// <summary>いまの部屋の名前・人数・最大人数（Steam のフレンドに見せるのに使う。部屋に入っていなければ空・0）。</summary>
     public string RoomName => session != null ? session.Name : string.Empty;
     public int RoomPlayers => session != null ? session.PlayerCount : 0;
@@ -281,6 +287,8 @@ public class InternetConnection : MonoBehaviour
     /// <summary>合言葉を使って、他の人の部屋に入る。パスワードの付いた部屋なら <paramref name="joinPassword"/> も要る。</summary>
     public async void JoinGame(string code, string joinPassword = "")
     {
+        LastJoinFailedByPassword = false;
+
         if (IsBusy)
         {
             return;
@@ -324,6 +332,7 @@ public class InternetConnection : MonoBehaviour
         }
         catch (Exception error)
         {
+            LastJoinFailedByPassword = LooksLikeWrongPassword(error, joinPassword);
             Fail("部屋に入れませんでした。合言葉かパスワードが違うか、部屋が閉じられています", error);
         }
     }
@@ -391,6 +400,8 @@ public class InternetConnection : MonoBehaviour
     /// <summary>**一覧で選んだ部屋に入る。** タイトル画面のパブリックサーバーの一覧から呼ぶ。</summary>
     public async void JoinGameById(string sessionId, string joinPassword = "")
     {
+        LastJoinFailedByPassword = false;
+
         if (IsBusy || string.IsNullOrEmpty(sessionId))
         {
             return;
@@ -427,6 +438,7 @@ public class InternetConnection : MonoBehaviour
         }
         catch (Exception error)
         {
+            LastJoinFailedByPassword = LooksLikeWrongPassword(error, joinPassword);
             Fail("部屋に入れませんでした。パスワードが違うか、満員か、部屋が閉じられています", error);
         }
     }
@@ -670,6 +682,27 @@ public class InternetConnection : MonoBehaviour
     }
 
     /// <summary>失敗したときの後始末。理由を画面とログの両方に残す。</summary>
+    /// <summary>部屋に入れなかったエラーが、パスワード違いらしいか（<see cref="LastJoinFailedByPassword"/>）。</summary>
+    private static bool LooksLikeWrongPassword(Exception error, string joinPassword)
+    {
+        if (error is SessionException sessionError &&
+            (sessionError.Error == SessionError.Forbidden || sessionError.Error == SessionError.NotAuthorized))
+        {
+            return true;
+        }
+
+        string text = error.ToString();
+        if (text.IndexOf("password", StringComparison.OrdinalIgnoreCase) >= 0)
+        {
+            return true;
+        }
+
+        // パスワードを入れて入ろうとして、満員・見つからない以外で断られたときも、パスワード違いとみなす
+        return !string.IsNullOrEmpty(joinPassword) &&
+               text.IndexOf("full", StringComparison.OrdinalIgnoreCase) < 0 &&
+               !(error is SessionException notFound && notFound.Error == SessionError.SessionNotFound);
+    }
+
     private void Fail(string reason, Exception error)
     {
         State = Phase.Failed;
