@@ -1,3 +1,4 @@
+using Unity.Netcode;
 using UnityEngine;
 using UnityEngine.SceneManagement;
 using UnityEngine.UI;
@@ -6,14 +7,19 @@ using UnityEngine.UI;
 /// **ラウンドの始まりの演出。**（2026/10/7・大槻さん「スプラトゥーンみたいに、マップを一通り紹介して、
 /// プレイヤーの近くにカメラが寄って、3・2・1・Start で始まるようにしてほしい」）
 ///
+/// 2026/10/20 に流れを作り直した（大槻さん「まだどんな演出がいいか分かっていないので、色々試していきたい」）。
+///
 /// | 順番 | 何が起きるか | 長さ（初期値） |
 /// | --- | --- | --- |
-/// | ① マップの紹介 | カメラがマップの上をぐるっと回る。マップの名前と「ラウンド ○」が出る | 4 秒 |
-/// | ② 自分に寄る | カメラが自分のプレイヤーの後ろへ寄る | 1.5 秒 |
+/// | ⓪ 読み込み待ち | ① の回り始めの位置で止まったまま。マップの名前と「ラウンド ○」が出る | 1.5 秒 |
+/// | ① マップの紹介 | マップの中央（0,0,0）を向いたまま、真上から 45 度傾けた所を 180 度回る | 5 秒 |
+/// | ② 自分のチームに寄る | 自分のチームの後ろ（マップの外側、少し上）へ寄る | 1.5 秒 |
 /// | ③ カウントダウン | 「3」「2」「1」 | 3 秒 |
-/// | ④ START! | 動けるようになり、カメラがふだんの位置へ戻る | 0.7 秒で戻る |
+/// | ③' チームの周りを回る | チームの中央を中心に 220 度回る（寄ったときより少し下へ下がりながら） | 2 秒 |
+/// | ③'' 全体カメラへ戻る | ふだんのカメラ（全体カメラ）の位置へ戻る | 1.7 秒 |
+/// | ④ START! | 動けるようになる。「START!」を出す | 1 秒表示 |
 ///
-/// 長さは、マップに置いた <see cref="SpaceJunkRound"/> の「始まりの演出」で変えられる（演出を切ることもできる）。
+/// 秒数と角度は、マップに置いた <see cref="SpaceJunkRound"/> の「始まりの演出」で変えられる（演出を切ることもできる）。
 /// **時間は全員で同期された時計（ServerTime）で決めている**ので、どのPCでも同じタイミングで START になる。
 /// 演出中は誰も動けず、素材も出ない（<see cref="SpaceJunkRound.IsIntro"/>）。残り時間とイベントは START から数える。
 ///
@@ -26,11 +32,14 @@ public class SpaceJunkRoundIntro : MonoBehaviour
     /// <summary>START! の文字を出しておく秒数。</summary>
     private const float StartTextSeconds = 1f;
 
-    /// <summary>START! のあと、ふだんのカメラへ戻るまでの秒数。</summary>
-    private const float BlendOutSeconds = 0.7f;
+    /// <summary>② で寄ったときの、チームの中央から後ろへの距離（水平）。</summary>
+    private const float CloseBack = 6f;
 
-    /// <summary>マップをぐるっと回る角度（度）。</summary>
-    private const float FlyoverAngle = 160f;
+    /// <summary>② で寄ったときの高さ。</summary>
+    private const float CloseHeight = 3.5f;
+
+    /// <summary>チームの周りを回り始めてから、寄った位置の距離と高さから回るときの距離と高さへ移り終わるまでの割合。</summary>
+    private const float OrbitSettle = 0.3f;
 
     private SpaceJunkRound round;
     private Camera introCamera;
@@ -40,7 +49,6 @@ public class SpaceJunkRoundIntro : MonoBehaviour
     private bool finished;
 
     private bool boundsReady;
-    private Vector3 center;
     private float radius = 20f;
 
     private void Awake()
@@ -71,7 +79,7 @@ public class SpaceJunkRoundIntro : MonoBehaviour
         double now = round.ServerNow;
         float sinceStart = (float)(now - playStart);
 
-        if (sinceStart > Mathf.Max(StartTextSeconds, BlendOutSeconds) || round.Phase != SpaceJunkRoundPhase.Playing)
+        if (sinceStart > StartTextSeconds || round.Phase != SpaceJunkRoundPhase.Playing)
         {
             Finish();
             return;
@@ -81,50 +89,74 @@ public class SpaceJunkRoundIntro : MonoBehaviour
         PrepareBounds();
 
         float t = (float)(now - round.IntroStartServerTime);
-        float flyover = round.IntroFlyoverSeconds;
-        float zoom = round.IntroZoomSeconds;
+        float flyoverEnd = round.IntroFlyoverSeconds;
+        float zoomEnd = flyoverEnd + round.IntroZoomSeconds;
+        float countdownEnd = zoomEnd + round.IntroCountdownSeconds;
+        float orbitEnd = countdownEnd + round.IntroTeamOrbitSeconds;
 
-        Transform player = LocalPlayer();
-        GetClosePose(player, out Vector3 closePosition, out Quaternion closeRotation);
+        bool hasTeam = TryGetTeam(out Vector3 team, out float spread);
+        GetClosePose(hasTeam, team, spread, out Vector3 closePosition, out Quaternion closeRotation);
 
-        Vector3 position;
-        Quaternion rotation;
+        Vector3 position = closePosition;
+        Quaternion rotation = closeRotation;
 
-        if (t < flyover)
+        if (t < flyoverEnd)
         {
-            // ① マップをぐるっと見せる（読み込み待ちの間は、回り始めの位置で止めておく）
-            GetFlyoverPose(Mathf.Clamp01(t / Mathf.Max(0.01f, flyover)), player, out position, out rotation);
+            // ⓪① マップをぐるっと見せる（読み込み待ちの間は、回り始めの位置で止めておく）
+            GetFlyoverPose(Mathf.Clamp01(t / Mathf.Max(0.01f, round.IntroFlyoverSeconds)), hasTeam, team,
+                out position, out rotation);
             ShowTexts(MapName(), RoundText());
         }
-        else if (t < flyover + zoom)
+        else if (t < zoomEnd)
         {
-            // ② 自分のプレイヤーへ寄る
-            GetFlyoverPose(1f, player, out Vector3 fromPosition, out Quaternion fromRotation);
-            float k = Mathf.SmoothStep(0f, 1f, (t - flyover) / Mathf.Max(0.01f, zoom));
+            // ② 自分のチームへ寄る
+            GetFlyoverPose(1f, hasTeam, team, out Vector3 fromPosition, out Quaternion fromRotation);
+            float k = Mathf.SmoothStep(0f, 1f, (t - flyoverEnd) / Mathf.Max(0.01f, round.IntroZoomSeconds));
             position = Vector3.Lerp(fromPosition, closePosition, k);
             rotation = Quaternion.Slerp(fromRotation, closeRotation, k);
             ShowTexts(string.Empty, string.Empty);
         }
-        else if (sinceStart < 0f)
+        else if (t < countdownEnd)
         {
             // ③ 3・2・1
-            position = closePosition;
-            rotation = closeRotation;
-            ShowTexts(Mathf.CeilToInt(-sinceStart).ToString(), string.Empty);
+            ShowTexts(Mathf.CeilToInt(countdownEnd - t).ToString(), string.Empty);
+        }
+        else if (t < orbitEnd)
+        {
+            // ③' チームの周りを回る
+            if (hasTeam)
+            {
+                GetOrbitPose((t - countdownEnd) / Mathf.Max(0.01f, round.IntroTeamOrbitSeconds), team, spread,
+                    out position, out rotation);
+            }
+
+            ShowTexts(string.Empty, string.Empty);
+        }
+        else if (sinceStart < 0f)
+        {
+            // ③'' 全体カメラ（ふだんのカメラ）へ戻る
+            Vector3 fromPosition = closePosition;
+            Quaternion fromRotation = closeRotation;
+            if (hasTeam)
+            {
+                GetOrbitPose(1f, team, spread, out fromPosition, out fromRotation);
+            }
+
+            Camera main = Camera.main;
+            float k = Mathf.SmoothStep(0f, 1f, (t - orbitEnd) / Mathf.Max(0.01f, round.IntroReturnSeconds));
+            position = main != null ? Vector3.Lerp(fromPosition, main.transform.position, k) : fromPosition;
+            rotation = main != null ? Quaternion.Slerp(fromRotation, main.transform.rotation, k) : fromRotation;
+            ShowTexts(string.Empty, string.Empty);
         }
         else
         {
-            // ④ START!（ふだんのカメラへ戻る）
-            Camera main = Camera.main;
-            float k = Mathf.SmoothStep(0f, 1f, sinceStart / BlendOutSeconds);
-            position = main != null ? Vector3.Lerp(closePosition, main.transform.position, k) : closePosition;
-            rotation = main != null ? Quaternion.Slerp(closeRotation, main.transform.rotation, k) : closeRotation;
-            ShowTexts(sinceStart < StartTextSeconds ? "START!" : string.Empty, string.Empty);
-
-            if (sinceStart >= BlendOutSeconds && introCamera != null)
+            // ④ START!（カメラはもう戻り終わっているので、演出用のカメラを止めて文字だけ出す）
+            if (introCamera != null)
             {
                 introCamera.enabled = false;
             }
+
+            ShowTexts("START!", string.Empty);
         }
 
         if (introCamera != null && introCamera.enabled)
@@ -137,8 +169,11 @@ public class SpaceJunkRoundIntro : MonoBehaviour
     // カメラの位置
     // ------------------------------------------------------------
 
+    /// <summary>マップの中央（<see cref="SpaceJunkRound.IntroLookCenter"/>）。</summary>
+    private Vector3 Center => round.IntroLookCenter;
+
     /// <summary>
-    /// マップの真ん中と大きさを決める。**このマップのゴールの位置**から求める（ゴールはマップの端にあるため）。
+    /// マップの大きさ（中央からの半径）を決める。**このマップのゴールの位置**から求める（ゴールはマップの端にあるため）。
     /// ゴールが無ければ、このシーンの見える物の範囲から求める。
     /// </summary>
     private void PrepareBounds()
@@ -149,53 +184,34 @@ public class SpaceJunkRoundIntro : MonoBehaviour
         }
 
         Scene scene = gameObject.scene;
-        Vector3 sum = Vector3.zero;
         int count = 0;
+        radius = 0f;
 
         foreach (SpaceJunkGoal goal in SpaceJunkGoal.All)
         {
             if (goal != null && goal.gameObject.scene == scene)
             {
-                sum += goal.transform.position;
+                radius = Mathf.Max(radius, Vector3.Distance(Flat(goal.transform.position), Flat(Center)));
                 count++;
             }
         }
 
-        if (count >= 2)
+        if (count > 0)
         {
-            center = sum / count;
-            radius = 0f;
-            foreach (SpaceJunkGoal goal in SpaceJunkGoal.All)
-            {
-                if (goal != null && goal.gameObject.scene == scene)
-                {
-                    radius = Mathf.Max(radius, Vector3.Distance(Flat(goal.transform.position), Flat(center)));
-                }
-            }
             radius += 4f;
         }
         else
         {
-            Bounds bounds = new Bounds(transform.position, Vector3.one);
-            bool any = false;
             foreach (GameObject root in scene.GetRootGameObjects())
             {
                 foreach (Renderer renderer in root.GetComponentsInChildren<Renderer>())
                 {
-                    if (!any)
-                    {
-                        bounds = renderer.bounds;
-                        any = true;
-                    }
-                    else
-                    {
-                        bounds.Encapsulate(renderer.bounds);
-                    }
+                    Bounds b = renderer.bounds;
+                    radius = Mathf.Max(radius,
+                        Vector3.Distance(Flat(b.min), Flat(Center)),
+                        Vector3.Distance(Flat(b.max), Flat(Center)));
                 }
             }
-
-            center = bounds.center;
-            radius = Mathf.Max(10f, new Vector2(bounds.extents.x, bounds.extents.z).magnitude);
         }
 
         radius = Mathf.Clamp(radius, 8f, 80f);
@@ -203,39 +219,74 @@ public class SpaceJunkRoundIntro : MonoBehaviour
     }
 
     /// <summary>
-    /// マップの上をぐるっと回るカメラの位置（0〜1）。**最後に自分のプレイヤーの側に来る**ように回り始めを決める。
+    /// ① マップの中央を向いたまま回るカメラの位置（0〜1）。真上（Y軸）から <see cref="SpaceJunkRound.IntroFlyoverTilt"/> 度傾けた所を、
+    /// <see cref="SpaceJunkRound.IntroFlyoverDegrees"/> 度回る。**最後に自分のチームの側に来る**ように回り始めを決める。
     /// </summary>
-    private void GetFlyoverPose(float progress, Transform player, out Vector3 position, out Quaternion rotation)
+    private void GetFlyoverPose(float progress, bool hasTeam, Vector3 team, out Vector3 position, out Quaternion rotation)
     {
-        Vector3 toPlayer = player != null ? Flat(player.position - center) : Vector3.back;
-        if (toPlayer.sqrMagnitude < 0.01f)
+        Vector3 toTeam = hasTeam ? Flat(team - Center) : Vector3.back;
+        if (toTeam.sqrMagnitude < 0.01f)
         {
-            toPlayer = Vector3.back;
+            toTeam = Vector3.back;
         }
 
-        float endAngle = Mathf.Atan2(toPlayer.z, toPlayer.x) * Mathf.Rad2Deg;
-        float angle = endAngle - FlyoverAngle * (1f - Mathf.SmoothStep(0f, 1f, progress));
-        Vector3 direction = new Vector3(Mathf.Cos(angle * Mathf.Deg2Rad), 0f, Mathf.Sin(angle * Mathf.Deg2Rad));
+        float endAngle = Mathf.Atan2(toTeam.z, toTeam.x) * Mathf.Rad2Deg;
+        float angle = endAngle - round.IntroFlyoverDegrees * (1f - Mathf.SmoothStep(0f, 1f, progress));
+        Vector3 horizontal = new Vector3(Mathf.Cos(angle * Mathf.Deg2Rad), 0f, Mathf.Sin(angle * Mathf.Deg2Rad));
 
-        position = center + direction * (radius * 1.3f) + Vector3.up * (radius * 0.9f);
-        rotation = Quaternion.LookRotation(center - position, Vector3.up);
+        float tilt = round.IntroFlyoverTilt * Mathf.Deg2Rad;
+        float distance = radius * 1.6f;
+        position = Center + (horizontal * Mathf.Sin(tilt) + Vector3.up * Mathf.Cos(tilt)) * distance;
+
+        // 真上から見るときは「上」が決まらないので、回っている向きを画面の上にする
+        rotation = Quaternion.LookRotation(Center - position, tilt < 0.01f ? -horizontal : Vector3.up);
     }
 
-    /// <summary>自分のプレイヤーの後ろ（マップの外側）から、マップの真ん中のほうを向いて見る位置。</summary>
-    private void GetClosePose(Transform player, out Vector3 position, out Quaternion rotation)
+    /// <summary>② 自分のチームの後ろ（マップの外側、少し上）から、マップの中央のほうを向いて見る位置。</summary>
+    private void GetClosePose(bool hasTeam, Vector3 team, float spread, out Vector3 position, out Quaternion rotation)
     {
-        if (player == null)
+        if (!hasTeam)
         {
-            GetFlyoverPose(1f, null, out position, out rotation);
+            GetFlyoverPose(1f, false, team, out position, out rotation);
             return;
         }
 
-        Vector3 outward = Flat(player.position - center);
-        outward = outward.sqrMagnitude < 0.01f ? Vector3.back : outward.normalized;
-
-        Vector3 focus = player.position + Vector3.up * 1f - outward * 2f;
-        position = player.position + outward * 6f + Vector3.up * 3.5f;
+        Vector3 outward = Outward(team);
+        Vector3 focus = team + Vector3.up * 1f - outward * 2f;
+        position = team + outward * (CloseBack + spread) + Vector3.up * CloseHeight;
         rotation = Quaternion.LookRotation(focus - position, Vector3.up);
+    }
+
+    /// <summary>
+    /// ③' チームの中央を中心に回るカメラの位置（0〜1）。② で寄った位置から回り始め、
+    /// 回りながら少し下（<see cref="SpaceJunkRound.IntroTeamOrbitHeight"/>）へ下がる。
+    /// </summary>
+    private void GetOrbitPose(float progress, Vector3 team, float spread, out Vector3 position, out Quaternion rotation)
+    {
+        progress = Mathf.Clamp01(progress);
+        Vector3 outward = Outward(team);
+
+        float startAngle = Mathf.Atan2(outward.z, outward.x) * Mathf.Rad2Deg;
+        float angle = startAngle + round.IntroTeamOrbitDegrees * Mathf.SmoothStep(0f, 1f, progress);
+        Vector3 horizontal = new Vector3(Mathf.Cos(angle * Mathf.Deg2Rad), 0f, Mathf.Sin(angle * Mathf.Deg2Rad));
+
+        // 寄った位置の距離と高さから、回るときの距離と高さへなめらかに移す（いきなり飛ばないように）
+        float settle = Mathf.SmoothStep(0f, 1f, progress / OrbitSettle);
+        float distance = Mathf.Lerp(CloseBack + spread, round.IntroTeamOrbitDistance + spread, settle);
+        float height = Mathf.Lerp(CloseHeight, round.IntroTeamOrbitHeight, settle);
+
+        Vector3 closeFocus = team + Vector3.up * 1f - outward * 2f;
+        Vector3 focus = Vector3.Lerp(closeFocus, team + Vector3.up * 1f, settle);
+
+        position = team + horizontal * distance + Vector3.up * height;
+        rotation = Quaternion.LookRotation(focus - position, Vector3.up);
+    }
+
+    /// <summary>マップの中央からチームの中央へ向かう水平の向き（マップの外側）。</summary>
+    private Vector3 Outward(Vector3 team)
+    {
+        Vector3 outward = Flat(team - Center);
+        return outward.sqrMagnitude < 0.01f ? Vector3.back : outward.normalized;
     }
 
     private static Vector3 Flat(Vector3 value)
@@ -244,11 +295,68 @@ public class SpaceJunkRoundIntro : MonoBehaviour
         return value;
     }
 
+    /// <summary>
+    /// **自分のチームの中央**と、中央からいちばん遠い味方までの距離（水平）。
+    /// チームが分からない（1人で試しているなど）ときは、自分のプレイヤーだけで求める。
+    /// </summary>
+    private static bool TryGetTeam(out Vector3 center, out float spread)
+    {
+        center = Vector3.zero;
+        spread = 0f;
+
+        Transform self = LocalPlayer();
+        SpaceJunkSession session = SpaceJunkSession.Current;
+        NetworkManager manager = NetworkManager.Singleton;
+
+        Vector3 sum = Vector3.zero;
+        int count = 0;
+
+        if (session != null && manager != null)
+        {
+            int myTeam = session.TeamOf(manager.LocalClientId);
+            foreach (FishingNetPlayer player in FishingNetPlayer.All)
+            {
+                if (player != null && session.TeamOf(player.OwnerClientId) == myTeam)
+                {
+                    sum += player.transform.position;
+                    count++;
+                }
+            }
+        }
+
+        if (count == 0)
+        {
+            if (self == null)
+            {
+                return false;
+            }
+
+            sum = self.position;
+            count = 1;
+        }
+
+        center = sum / count;
+
+        if (session != null && manager != null)
+        {
+            int myTeam = session.TeamOf(manager.LocalClientId);
+            foreach (FishingNetPlayer player in FishingNetPlayer.All)
+            {
+                if (player != null && session.TeamOf(player.OwnerClientId) == myTeam)
+                {
+                    spread = Mathf.Max(spread, Vector3.Distance(Flat(player.transform.position), Flat(center)));
+                }
+            }
+        }
+
+        return true;
+    }
+
     private static Transform LocalPlayer()
     {
         foreach (FishingNetPlayer player in FishingNetPlayer.All)
         {
-            // 1台で複数人なら、そのPCの1人目に寄る（カメラはそのPCの1人目に付いているため）
+            // 1台で複数人なら、そのPCの1人目（カメラはそのPCの1人目に付いているため）
             if (player != null && player.IsOwner && player.LocalSeat == 0)
             {
                 return player.transform;

@@ -68,29 +68,69 @@ public partial class SpaceJunkRound : NetworkBehaviour
              "**ふだんはホストがロビーで決めた値が使われる**ので、ここは効かない")]
     [SerializeField] private float fallbackSeconds = 60f;
 
-    [Header("始まりの演出（2026/10/7。スプラトゥーンのようにマップを見せてから 3・2・1・START）")]
+    [Header("始まりの演出（2026/10/7。10/20 に流れを作り直した。いろいろ試すため、秒数と角度はここで変えられる）")]
     [Tooltip("OFF にすると演出をせず、すぐに始まる")]
     [SerializeField] private bool playIntro = true;
 
-    [Tooltip("全員の読み込みを待つ秒数（演出の前）。遅いPCでも最初から見られるように")]
+    [Tooltip("全員の読み込みを待つ秒数（演出の前）。遅いPCでも最初から見られるように。この間は ① の回り始めの位置で止まる")]
     [Min(0f)]
     [SerializeField] private float introLeadSeconds = 1.5f;
 
-    [Tooltip("マップをぐるっと見せる秒数")]
+    [Tooltip("① マップをぐるっと見せる秒数")]
     [Min(0f)]
-    [SerializeField] private float introFlyoverSeconds = 4f;
+    [SerializeField] private float introFlyoverSeconds = 5f;
 
-    [Tooltip("自分のプレイヤーへカメラが寄る秒数")]
+    [Tooltip("① マップの紹介で、カメラが向き続ける場所（マップの中央）")]
+    [SerializeField] private Vector3 introLookCenter = Vector3.zero;
+
+    [Tooltip("① マップの紹介で、真上（Y軸）から何度傾けた所から見るか。0 で真上、90 で真横")]
+    [Range(0f, 90f)]
+    [SerializeField] private float introFlyoverTilt = 45f;
+
+    [Tooltip("① マップの紹介で、マップの中央を中心に回る角度（度）")]
+    [SerializeField] private float introFlyoverDegrees = 180f;
+
+    [Tooltip("② 自分のチームへカメラが寄る秒数")]
     [Min(0f)]
     [SerializeField] private float introZoomSeconds = 1.5f;
 
-    [Tooltip("3・2・1 のカウントダウンの秒数")]
+    [Tooltip("③ 3・2・1 のカウントダウンの秒数")]
     [Min(0f)]
     [SerializeField] private float introCountdownSeconds = 3f;
 
+    [Tooltip("カウントダウンのあと、チームの中央を中心に回る秒数")]
+    [Min(0f)]
+    [SerializeField] private float introTeamOrbitSeconds = 2f;
+
+    [Tooltip("カウントダウンのあと、チームの中央を中心に回る角度（度）")]
+    [SerializeField] private float introTeamOrbitDegrees = 220f;
+
+    [Tooltip("チームの周りを回るときの、チームの中央からの距離（水平）")]
+    [Min(0f)]
+    [SerializeField] private float introTeamOrbitDistance = 5f;
+
+    [Tooltip("チームの周りを回るときの高さ（② で寄ったとき（3.5）より少し下）")]
+    [SerializeField] private float introTeamOrbitHeight = 1.5f;
+
+    [Tooltip("回ったあと、全体カメラ（ふだんのカメラ）の位置へ戻る秒数。戻り終わると START!")]
+    [Min(0f)]
+    [SerializeField] private float introReturnSeconds = 1.7f;
+
     public float IntroFlyoverSeconds => introFlyoverSeconds;
+    public Vector3 IntroLookCenter => introLookCenter;
+    public float IntroFlyoverTilt => introFlyoverTilt;
+    public float IntroFlyoverDegrees => introFlyoverDegrees;
     public float IntroZoomSeconds => introZoomSeconds;
     public float IntroCountdownSeconds => introCountdownSeconds;
+    public float IntroTeamOrbitSeconds => introTeamOrbitSeconds;
+    public float IntroTeamOrbitDegrees => introTeamOrbitDegrees;
+    public float IntroTeamOrbitDistance => introTeamOrbitDistance;
+    public float IntroTeamOrbitHeight => introTeamOrbitHeight;
+    public float IntroReturnSeconds => introReturnSeconds;
+
+    /// <summary>演出の長さ（① マップの紹介〜全体カメラへ戻り終わるまで。読み込み待ちは入れない）。</summary>
+    private float IntroTotalSeconds =>
+        introFlyoverSeconds + introZoomSeconds + introCountdownSeconds + introTeamOrbitSeconds + introReturnSeconds;
 
     /// <summary>
     /// **動き出してよい時刻**（全員で同期された時計 ServerTime）。これより前は始まりの演出中で、誰も動けない。
@@ -103,12 +143,12 @@ public partial class SpaceJunkRound : NetworkBehaviour
 
     /// <summary>始まりの演出が始まる時刻（ServerTime）。</summary>
     public double IntroStartServerTime =>
-        playStartServerTime.Value - introFlyoverSeconds - introZoomSeconds - introCountdownSeconds;
+        playStartServerTime.Value - IntroTotalSeconds;
 
     /// <summary>いまの時刻（全員で同期された時計）。</summary>
     public double ServerNow => NetworkManager != null ? NetworkManager.ServerTime.Time : 0d;
 
-    /// <summary>**始まりの演出中か**（マップの紹介〜カウントダウン）。この間は誰も動けず、素材も出ない。</summary>
+    /// <summary>**始まりの演出中か**（マップの紹介〜全体カメラへ戻り終わるまで）。この間は誰も動けず、素材も出ない。</summary>
     public bool IsIntro =>
         phase.Value == SpaceJunkRoundPhase.Playing && playStartServerTime.Value > 0d && ServerNow < playStartServerTime.Value;
 
@@ -272,7 +312,7 @@ public partial class SpaceJunkRound : NetworkBehaviour
             // **始まりの演出のぶん、動き出す時刻を後ろにずらす。** 残り時間とイベントは、動き出してから数える
             double now = NetworkManager.ServerTime.Time;
             double playStart = playIntro
-                ? now + introLeadSeconds + introFlyoverSeconds + introZoomSeconds + introCountdownSeconds
+                ? now + introLeadSeconds + IntroTotalSeconds
                 : 0d;
             playStartServerTime.Value = playStart;
 
