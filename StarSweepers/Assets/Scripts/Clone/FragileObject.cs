@@ -32,12 +32,14 @@ public class FragileObject : MonoBehaviour
     private float spawnedTime;
     private bool isBroken;
 
+    /// <summary>置かれた（有効になった）時刻を覚える。壊れない時間の起点になる。</summary>
     private void OnEnable()
     {
         spawnedTime = Time.time;
         isBroken = false;
     }
 
+    /// <summary>ぶつかった勢いが基準を超えていたら壊す。</summary>
     private void OnCollisionEnter(Collision collision)
     {
         if (isBroken)
@@ -84,12 +86,16 @@ public class FragileObject : MonoBehaviour
         Material pieceMaterial = sourceRenderer != null ? sourceRenderer.sharedMaterial : null;
 
         Vector3 center = transform.position;
+
+        // 破片の大きさは、元の物の大きさの 8%（最低 8cm）
         float pieceSize = Mathf.Max(0.08f, transform.localScale.magnitude * 0.08f);
 
         for (int i = 0; i < pieceCount; i++)
         {
             GameObject piece = GameObject.CreatePrimitive(PrimitiveType.Cube);
             piece.name = name + "_Piece";
+
+            // 中心から 15cm 以内にばらけて出す
             piece.transform.position = center + Random.insideUnitSphere * 0.15f;
             piece.transform.rotation = Random.rotation;
             piece.transform.localScale = Vector3.one * pieceSize;
@@ -99,6 +105,7 @@ public class FragileObject : MonoBehaviour
                 piece.GetComponent<Renderer>().sharedMaterial = pieceMaterial;
             }
 
+            // 軽い（0.2kg）破片を、でたらめな方向へ弾く
             Rigidbody body = piece.AddComponent<Rigidbody>();
             body.mass = 0.2f;
             body.AddForce(Random.onUnitSphere * scatterForce, ForceMode.Impulse);

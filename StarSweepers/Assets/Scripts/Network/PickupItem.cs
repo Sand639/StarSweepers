@@ -90,6 +90,23 @@ public class PickupItem : NetworkBehaviour
     /// <summary>近くにいるプレイヤーを探して、いれば取らせる。</summary>
     private void CheckPickup()
     {
+        PlayerScore nearest = FindNearestPlayerInRange();
+
+        if (nearest == null)
+        {
+            return;
+        }
+
+        // 一番近い1人にだけ入る。同時に触っても二重取りにならない
+        nearest.AddScore(scoreAmount);
+        isAvailable.Value = false;
+
+        StartCoroutine(RespawnAfterDelay());
+    }
+
+    /// <summary>取れる範囲にいるプレイヤーのうち、一番近い1人。誰もいなければ null。</summary>
+    private PlayerScore FindNearestPlayerInRange()
+    {
         PlayerScore nearest = null;
         float nearestDistance = float.MaxValue;
 
@@ -107,6 +124,7 @@ public class PickupItem : NetworkBehaviour
                 continue;
             }
 
+            // 距離は水平（真上から見た）で測る。高さの差は、上で別に見ている
             gap.y = 0f;
             float distance = gap.magnitude;
 
@@ -117,18 +135,13 @@ public class PickupItem : NetworkBehaviour
             }
         }
 
-        if (nearest == null)
-        {
-            return;
-        }
-
-        // 一番近い1人にだけ入る。同時に触っても二重取りにならない
-        nearest.AddScore(scoreAmount);
-        isAvailable.Value = false;
-
-        StartCoroutine(RespawnAfterDelay());
+        return nearest;
     }
 
+    /// <summary>
+    /// 復活までの待ち。待っている間に切断された・消された場合は何もしない
+    /// （ホストのままで、まだ出ているときだけ書き換える）。
+    /// </summary>
     private IEnumerator RespawnAfterDelay()
     {
         yield return new WaitForSeconds(respawnSeconds);
@@ -139,11 +152,13 @@ public class PickupItem : NetworkBehaviour
         }
     }
 
+    /// <summary>ホストが <see cref="isAvailable"/> を書き換えると、全員のPCでこれが呼ばれる。</summary>
     private void HandleAvailableChanged(bool previous, bool current)
     {
         ApplyVisual(current);
     }
 
+    /// <summary>取れる状態なら見た目を出し、取られていれば隠す。物そのものは消さない（復活するため）。</summary>
     private void ApplyVisual(bool available)
     {
         if (visual != null)

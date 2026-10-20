@@ -26,6 +26,9 @@ public static class ObjectClonerSetup
 
     private const string InputActionsPath = "Assets/InputSystem_Actions.inputactions";
 
+    /// <summary>
+    /// 順に、フォルダとタグの準備 → マテリアル → 複製元のプレハブ3種（軽い箱・重い箱・壊れる板）→ 検証シーン。
+    /// </summary>
     [MenuItem("Tools/StarSweepers/アーカイブ/共通の部品/複製配置の検証シーンを作り直す")]
     public static void CreateAll()
     {
@@ -99,6 +102,7 @@ public static class ObjectClonerSetup
         light.shadows = LightShadows.Soft;
         lightObject.transform.rotation = Quaternion.Euler(50f, -30f, 0f);
 
+        // 地面。Plane は 10m 四方なので、4倍で 40m 四方
         GameObject ground = GameObject.CreatePrimitive(PrimitiveType.Plane);
         ground.name = "Ground";
         ground.transform.localScale = new Vector3(4f, 1f, 4f);
@@ -126,6 +130,7 @@ public static class ObjectClonerSetup
         EditorSceneManager.SaveScene(scene, ScenePath);
     }
 
+    /// <summary>複製元をシーンに1つ置く。</summary>
     private static void PlaceSource(GameObject prefab, Vector3 position)
     {
         if (prefab == null)
@@ -206,6 +211,8 @@ public static class ObjectClonerSetup
     /// <summary>タグが未登録なら登録する。手でタグを作る手間をなくすため。</summary>
     private static void EnsureTag(string tagName)
     {
+        // タグの一覧は ProjectSettings/TagManager.asset の中にある。
+        // 直接いじる API が無いので、SerializedObject で開いて "tags" の配列に足す
         SerializedObject tagManager = new SerializedObject(
             AssetDatabase.LoadAllAssetsAtPath("ProjectSettings/TagManager.asset")[0]);
 
@@ -226,6 +233,10 @@ public static class ObjectClonerSetup
         Debug.Log($"タグ「{tagName}」を登録しました。");
     }
 
+    /// <summary>
+    /// 色だけのマテリアルを作る。既にあれば色を入れ直して使い回す（参照が切れないように）。
+    /// URP のシェーダーが無い環境でも動くよう、Standard に逃がしている。
+    /// </summary>
     private static Material CreateMaterial(string path, Color color)
     {
         Material existing = AssetDatabase.LoadAssetAtPath<Material>(path);
@@ -247,6 +258,7 @@ public static class ObjectClonerSetup
         return material;
     }
 
+    /// <summary>フォルダが無ければ作る。親も無ければ、親から順に作る。</summary>
     private static void EnsureFolder(string path)
     {
         if (AssetDatabase.IsValidFolder(path))

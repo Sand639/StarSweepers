@@ -73,6 +73,11 @@ public class SteamFriendsService : MonoBehaviour
     /// `connect` は Steam が決めている特別な鍵で、これを書いておくとフレンド一覧に「ゲームに参加」が出る。
     /// </summary>
     private const string ConnectKey = "connect";
+
+    /// <summary>
+    /// 「ゲームに参加」の文字の先頭に付ける印。末尾の半角スペースも含む。
+    /// 書くとき（<see cref="UpdatePresence"/>）と読むとき（<see cref="OnJoinRequested"/>）で同じものを使う。
+    /// </summary>
     private const string JoinPrefix = "+join ";
 
     /// <summary>リッチプレゼンスを書き直す間隔（秒）。</summary>
@@ -134,6 +139,12 @@ public class SteamFriendsService : MonoBehaviour
     }
 
 #if STARSWEEPERS_STEAM
+    /// <summary>
+    /// Steam につなぐ。**つながらなくてもゲームは止めない。**
+    /// <see cref="IsAvailable"/> を false のままにして、理由を <see cref="StatusMessage"/>（画面に出す）とログに残すだけ。
+    ///
+    /// Steam の部品（DLL）が無い環境では、Steam の関数を呼んだ瞬間に例外が出るので、まとめて try で受けている。
+    /// </summary>
     private void Awake()
     {
         try
@@ -161,27 +172,15 @@ public class SteamFriendsService : MonoBehaviour
 
             if (!IsAvailable)
             {
-                switch (result)
-                {
-                    case ESteamAPIInitResult.k_ESteamAPIInitResult_NoSteamClient:
-                        StatusMessage = "Steam が起動していないので、フレンドのサーバーは出せません。\nSteam を起動してから、ゲームを立ち上げ直してください。";
-                        break;
-                    case ESteamAPIInitResult.k_ESteamAPIInitResult_VersionMismatch:
-                        StatusMessage = "Steam が古いので、フレンドのサーバーは出せません。Steam を更新してください。";
-                        break;
-                    default:
-                        StatusMessage = $"Steam につながりませんでした（{error}）。\nSteam にログインしているか確かめて、ゲームを立ち上げ直してください。";
-                        break;
-                }
-
+                StatusMessage = DescribeInitFailure(result, error);
                 Debug.Log($"[STEAM] Steam につながりませんでした（{result}：{error}）。フレンドの機能は使いません。ほかは今までどおり動きます。");
                 return;
             }
         }
-        catch (System.DllNotFoundException error)
+        catch (System.DllNotFoundException missingDll)
         {
             StatusMessage = "steam_api64.dll が見つからないので、Steam の機能は使えません。";
-            Debug.LogWarning($"[STEAM] {StatusMessage}（{error.Message}）");
+            Debug.LogWarning($"[STEAM] {StatusMessage}（{missingDll.Message}）");
             IsAvailable = false;
             return;
         }
@@ -190,7 +189,29 @@ public class SteamFriendsService : MonoBehaviour
         Debug.Log($"[STEAM] Steam につながりました（{SteamFriends.GetPersonaName()}・App ID {SteamUtils.GetAppID()}）。");
         joinRequested = Callback<GameRichPresenceJoinRequested_t>.Create(OnJoinRequested);
 
-        // Steam の「ゲームに参加」から起動されたときは、コマンドラインに "+join 参加コード" が付いてくる
+        ReadJoinCodeFromCommandLine();
+    }
+
+    /// <summary>Steam につながらなかった理由を、画面に出す言葉にする。</summary>
+    private static string DescribeInitFailure(ESteamAPIInitResult result, string error)
+    {
+        switch (result)
+        {
+            case ESteamAPIInitResult.k_ESteamAPIInitResult_NoSteamClient:
+                return "Steam が起動していないので、フレンドのサーバーは出せません。\nSteam を起動してから、ゲームを立ち上げ直してください。";
+            case ESteamAPIInitResult.k_ESteamAPIInitResult_VersionMismatch:
+                return "Steam が古いので、フレンドのサーバーは出せません。Steam を更新してください。";
+            default:
+                return $"Steam につながりませんでした（{error}）。\nSteam にログインしているか確かめて、ゲームを立ち上げ直してください。";
+        }
+    }
+
+    /// <summary>
+    /// Steam の「ゲームに参加」から**ゲームごと起動された**ときは、コマンドラインに "+join 参加コード" が付いてくるので拾う。
+    /// （すでにゲームを起動していたときは、代わりに <see cref="OnJoinRequested"/> に知らせが来る）
+    /// </summary>
+    private static void ReadJoinCodeFromCommandLine()
+    {
         string[] args = System.Environment.GetCommandLineArgs();
         for (int i = 0; i < args.Length - 1; i++)
         {
@@ -208,6 +229,7 @@ public class SteamFriendsService : MonoBehaviour
             return;
         }
 
+        // これを毎フレーム呼ばないと、Steam からの知らせ（「ゲームに参加」など）が届かない
         SteamAPI.RunCallbacks();
 
         presenceTimer -= Time.unscaledDeltaTime;
@@ -218,6 +240,7 @@ public class SteamFriendsService : MonoBehaviour
         }
     }
 
+    /// <summary>ゲームを閉じるとき、フレンドから見える「部屋にいる」表示を消してから Steam との接続を切る。</summary>
     private void OnDestroy()
     {
         if (IsAvailable)
@@ -237,6 +260,8 @@ public class SteamFriendsService : MonoBehaviour
         bool inRoom = internet != null && internet.State == InternetConnection.Phase.Connected &&
                       !string.IsNullOrEmpty(internet.JoinCode);
 
+        // Steam に書く内容を1本の文字にまとめたもの。**前回と変わったかを見るためだけ**に使う
+        // （Steam に実際に書くのは、この下で鍵ごとに分けて書く）
         string presence = inRoom
             ? $"{internet.JoinCode}|{internet.RoomName}|{internet.RoomPlayers}/{internet.RoomMaxPlayers}|{internet.HasPassword}"
             : string.Empty;
@@ -261,7 +286,10 @@ public class SteamFriendsService : MonoBehaviour
         SteamFriends.SetRichPresence(ConnectKey, JoinPrefix + internet.JoinCode);
     }
 
-    /// <summary>Steam のフレンド一覧の「ゲームに参加」が押されたとき。</summary>
+    /// <summary>
+    /// Steam のフレンド一覧の「ゲームに参加」が押されたとき（ゲームをすでに起動していた場合）。
+    /// ここでは参加コードを <see cref="PendingJoinCode"/> に置くだけで、実際に入るのはタイトル画面。
+    /// </summary>
     private void OnJoinRequested(GameRichPresenceJoinRequested_t request)
     {
         string connect = request.m_rgchConnect ?? string.Empty;
@@ -341,7 +369,10 @@ public class SteamFriendsService : MonoBehaviour
         return IsAvailable ? FriendsPlayingThisGame().Count : 0;
     }
 
-    /// <summary>いまこのゲーム（同じ App ID）を遊んでいるフレンド。</summary>
+    /// <summary>
+    /// いまこのゲーム（同じ App ID）を遊んでいるフレンド。
+    /// `k_EFriendFlagImmediate` は「ふつうのフレンド」（ブロック中や申請中などは含めない）。
+    /// </summary>
     private static List<CSteamID> FriendsPlayingThisGame()
     {
         List<CSteamID> friends = new List<CSteamID>();
@@ -384,6 +415,10 @@ public class SteamFriendsService : MonoBehaviour
     }
 #endif
 
+    /// <summary>
+    /// インターネットの部屋の部品（<see cref="InternetConnection"/>）。`NetworkManager` に付いているので、そこから取る。
+    /// `NetworkManager` が無い場面では null（呼ぶ側は null を「部屋に入っていない」として扱う）。
+    /// </summary>
     private static InternetConnection Internet()
     {
         NetworkManager manager = NetworkManager.Singleton;

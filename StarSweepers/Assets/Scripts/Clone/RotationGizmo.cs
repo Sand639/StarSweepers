@@ -31,6 +31,7 @@ public class RotationGizmo : MonoBehaviour
         return gizmo;
     }
 
+    /// <summary>3つの輪を作る。色は X＝赤 / Y＝緑 / Z＝青。</summary>
     private void Build()
     {
         // X軸で回る＝YZ平面の輪、という関係になる
@@ -77,6 +78,7 @@ public class RotationGizmo : MonoBehaviour
         return line;
     }
 
+    /// <summary>光の影響を受けない、色だけの線のマテリアル。URP のシェーダーが無ければ Sprites/Default に逃がす。</summary>
     private static Material CreateLineMaterial(Color color)
     {
         Shader shader = Shader.Find("Universal Render Pipeline/Unlit");
@@ -115,13 +117,14 @@ public class RotationGizmo : MonoBehaviour
         // 大きさを変えると輪の半径も変わる
         transform.localScale = Vector3.one * radius;
 
-        // 遠くでも近くでも見やすいよう、太さを半径に合わせる
+        // 遠くでも近くでも見やすいよう、太さを半径に合わせる（半径の 3.5%。最低 1cm）
         float width = Mathf.Max(0.01f, radius * 0.035f);
         SetWidth(ringX, width);
         SetWidth(ringY, width);
         SetWidth(ringZ, width);
     }
 
+    /// <summary>線の太さを、世界の単位（メートル）で指定する。</summary>
     private static void SetWidth(LineRenderer line, float width)
     {
         if (line != null)

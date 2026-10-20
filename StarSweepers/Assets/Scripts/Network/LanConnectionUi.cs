@@ -32,7 +32,10 @@ public class LanConnectionUi : MonoBehaviour
     [Tooltip("OFFにすると画面に何も出さなくなる（本番の画面ができたら切る）")]
     [SerializeField] private bool showUi = true;
 
+    /// <summary>通信のまとめ役。同じ GameObject に付いている（RequireComponent）。</summary>
     private NetworkManager manager;
+
+    /// <summary>このPCのIPアドレス（複数あれば改行区切り）。起動時に1回だけ調べて、画面に出し続ける。</summary>
     private string myAddresses = "調べています…";
 
     private void Awake()
@@ -57,9 +60,10 @@ public class LanConnectionUi : MonoBehaviour
         panel.Draw(uiScale, DrawContents);
     }
 
-    /// <summary>枠（左上に出す）。</summary>
+    /// <summary>枠（左上に出す）。引数は「帯の名前・横の基準（0＝左端）・横のずらし・縦の位置・幅」。</summary>
     private readonly DraggableGuiPanel panel = new DraggableGuiPanel("接続", 0f, 12f, 12f, 340f);
 
+    /// <summary>枠の中身。つながっているかどうかで、出す画面を切り替える。<see cref="DraggableGuiPanel"/> から呼ばれる。</summary>
     private void DrawContents(int windowId)
     {
         if (manager == null)
@@ -89,6 +93,7 @@ public class LanConnectionUi : MonoBehaviour
         Internet,
     }
 
+    /// <summary>つながっていないときに出している画面。切断すると遊び方を選ぶ画面に戻す。</summary>
     private UiPage page = UiPage.ModeSelect;
 
     /// <summary>参加するときに入力する合言葉。</summary>
@@ -138,6 +143,8 @@ public class LanConnectionUi : MonoBehaviour
 
         GUILayout.Space(8f);
 
+        // 「通信を使わない」と言いつつ、中身は1人だけのホスト。
+        // プレイヤーの生成や得点など、通信前提で作ってある部品をそのまま動かすため
         if (GUILayout.Button("1人で練習する（通信を使わない）"))
         {
             Apply("0.0.0.0");
@@ -259,6 +266,8 @@ public class LanConnectionUi : MonoBehaviour
         GUILayout.BeginHorizontal();
         GUILayout.Label("ポート", GUILayout.Width(50f));
         string portText = GUILayout.TextField(port.ToString());
+
+        // 数字として読めるときだけ反映する（消している途中や文字を打ったときは、前の値のまま）
         if (ushort.TryParse(portText, out ushort parsed))
         {
             port = parsed;
@@ -282,6 +291,7 @@ public class LanConnectionUi : MonoBehaviour
     /// <summary>つながっているときの表示。</summary>
     private void DrawConnected()
     {
+        // ホスト＝サーバーでもあり参加者でもある1台。「サーバー」だけになるのは専用サーバーのときで、このゲームでは使っていない
         string role = manager.IsHost ? "ホスト（親）" : manager.IsServer ? "サーバー" : "参加者";
 
         GUILayout.Label($"■ {role} として動作中");
@@ -329,7 +339,13 @@ public class LanConnectionUi : MonoBehaviour
         }
     }
 
-    /// <summary>入力されたIPとポートを通信部品に反映する。</summary>
+    /// <summary>
+    /// 入力されたIPとポートを通信部品に反映する。
+    ///
+    /// <paramref name="listenAddress"/> は「待ち受けるアドレス」。
+    /// ホストは "0.0.0.0"（どのネットワークからの参加も受け付ける）、
+    /// 参加者は null（つなぎ先の <see cref="address"/> がそのまま使われる。参加者は待ち受けないので何でもよい）。
+    /// </summary>
     private void Apply(string listenAddress)
     {
         if (manager.NetworkConfig.NetworkTransport is UnityTransport transport)
@@ -350,6 +366,7 @@ public class LanConnectionUi : MonoBehaviour
         {
             foreach (IPAddress ip in Dns.GetHostEntry(Dns.GetHostName()).AddressList)
             {
+                // IPv4（192.168.x.x のような形）だけ。IPv6 は長くて打ち込めないので出さない
                 if (ip.AddressFamily == AddressFamily.InterNetwork)
                 {
                     found.Add(ip.ToString());

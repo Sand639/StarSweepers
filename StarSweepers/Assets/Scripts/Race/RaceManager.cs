@@ -227,6 +227,7 @@ public class RaceManager : MonoBehaviour
     /// </summary>
     private void AdvancePhase()
     {
+        // 「スタート！」の表示は、段階とは別の時計で消す（走り出してから StartSignalSeconds 秒）
         if (StartSignalRemaining > 0f)
         {
             StartSignalRemaining -= Time.deltaTime;
@@ -301,6 +302,7 @@ public class RaceManager : MonoBehaviour
                 continue;
             }
 
+            // 番号は PassCheckpoint で常に範囲内に収めているので、ふだんは割っても値は変わらない
             RaceCheckpoint next = checkpoints[racer.NextCheckpoint % checkpoints.Count];
 
             if (next == null || !next.WasCrossed(racer.PreviousPosition, racer.TrackedPosition))
@@ -338,6 +340,15 @@ public class RaceManager : MonoBehaviour
             return;
         }
 
+        FinishRacer(racer);
+    }
+
+    /// <summary>
+    /// ゴールの記録。**順位はゴールした順**（それまでにゴールした人数 + 1）。
+    /// ゴールした人は操作できなくなり、全員がゴールしたらレースを「終了」にする。
+    /// </summary>
+    private void FinishRacer(RaceRacer racer)
+    {
         finishedCount++;
 
         racer.Finished = true;
@@ -404,6 +415,7 @@ public class RaceManager : MonoBehaviour
         Vector3 forward = checkpoint.Forward;
         forward.y = 0f;
 
+        // 通過点がほぼ真上・真下を向いていて水平な向きが取れないときは、とりあえず +Z を向かせる
         if (forward.sqrMagnitude < 0.0001f)
         {
             forward = Vector3.forward;
@@ -536,6 +548,7 @@ public class RaceManager : MonoBehaviour
 
             GetRespawnPoint(checkpoint, out Vector3 position, out _);
 
+            // 黄緑の球（半径 0.3m）と、通過点までを結ぶ線
             Gizmos.color = new Color(0.6f, 1f, 0.3f, 0.9f);
             Gizmos.DrawSphere(position, 0.3f);
             Gizmos.DrawLine(position, checkpoint.transform.position);

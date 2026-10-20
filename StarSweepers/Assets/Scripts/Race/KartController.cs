@@ -76,6 +76,8 @@ public class KartController : MonoBehaviour
     private CharacterController controller;
     private InputActionMap playerMap;
     private InputAction moveAction;
+
+    /// <summary>上下の速さ（1秒あたりのメートル）。落ちている間はマイナス。前後の <see cref="Speed"/> とは別に持つ。</summary>
     private float verticalVelocity;
 
     private void Awake()
@@ -144,17 +146,22 @@ public class KartController : MonoBehaviour
         verticalVelocity = 0f;
     }
 
+    /// <summary>
+    /// アクセル・ブレーキで前後の速さを変える。
+    /// <paramref name="throttle"/> は -1（S）〜 +1（W）。
+    /// </summary>
     private void UpdateSpeed(float throttle)
     {
         float delta = Time.deltaTime;
 
+        // ±0.01 は入力の遊び。これより小さい入力は「何も押していない」扱い
         if (throttle > 0.01f)
         {
             Speed += acceleration * throttle * delta;
         }
         else if (throttle < -0.01f)
         {
-            // 前に進んでいる間はブレーキ。止まったらバックに変わる
+            // 前に進んでいる間はブレーキ。止まったら（0.1 m/s 以下）バックに変わる
             float power = Speed > 0.1f ? brakePower : acceleration;
             Speed += power * throttle * delta;
         }
@@ -166,8 +173,13 @@ public class KartController : MonoBehaviour
         Speed = Mathf.Clamp(Speed, -maxReverseSpeed, maxSpeed);
     }
 
+    /// <summary>
+    /// ハンドルで向きを変える。<paramref name="steer"/> は -1（A）〜 +1（D）。
+    /// 曲がる量は「動き出してからの効き」と「速すぎるときの鈍り」を掛けて決める。
+    /// </summary>
     private void UpdateSteering(float steer)
     {
+        // 入力の遊び（±0.01）か、ほぼ止まっている（0.05 m/s 未満）ときは回さない
         if (Mathf.Abs(steer) < 0.01f || Mathf.Abs(Speed) < 0.05f)
         {
             return;
@@ -187,6 +199,10 @@ public class KartController : MonoBehaviour
         transform.Rotate(Vector3.up, angle, Space.World);
     }
 
+    /// <summary>
+    /// 決めた速さと向きで、実際に動かす。
+    /// 上下は重力、前後は <see cref="Speed"/> で決め、壁や坂の処理は <see cref="CharacterController"/> に任せる。
+    /// </summary>
     private void ApplyMove()
     {
         float delta = Time.deltaTime;
@@ -215,6 +231,7 @@ public class KartController : MonoBehaviour
 
         float wanted = Mathf.Abs(Speed) * delta;
 
+        // 進めたのが狙いの半分未満なら「ぶつかった」とみなす（狙いがほぼ 0 のときは判定しない）
         if (wanted > 0.0001f && moved.magnitude < wanted * 0.5f)
         {
             Speed *= wallSpeedKeep;

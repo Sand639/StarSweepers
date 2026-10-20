@@ -32,6 +32,7 @@ public class PlayerScore : NetworkBehaviour
 
     public override void OnNetworkSpawn()
     {
+        // 同じ物が二度登録されないように
         if (!All.Contains(this))
         {
             All.Add(this);

@@ -27,6 +27,17 @@ using UnityEngine.InputSystem;
 ///
 /// PlayerRig に付けて使う。参照はインスペクターから受け取るので、
 /// 他のオブジェクトを名前で探しにいかない。
+///
+/// ## 流れ（毎フレーム、Update で）
+///
+/// 1. **止まっている間は何もしない**（<see cref="GamePause.BlocksInput"/>）
+/// 2. 消える予告の点滅を進める（<see cref="UpdateWarningBlink"/>）
+/// 3. **プレビューが無いとき** … 狙っている物を強調し、E で複製を始める／R で消す（<see cref="UpdateAiming"/>）
+/// 4. **プレビュー中** … 位置を決め直し、左クリックで確定／Escape でやめる（<see cref="UpdatePreview"/>）
+///
+/// 位置決め（<see cref="UpdatePreviewPosition"/>）の中身は
+/// 「ホイールで距離 → キーで回転 → 壁の手前で止める → 重なるなら近くの空きを探す」の順。
+/// 確定したら、上限を超えた分だけ一番古いものを点滅させてから消す。
 /// </summary>
 public class ObjectCloner : MonoBehaviour
 {
@@ -176,7 +187,13 @@ public class ObjectCloner : MonoBehaviour
     /// <summary>自分が置いた複製だと分かるタグ。</summary>
     public const string PlacedCloneTag = "PlacedClone";
 
+    /// <summary>消える予告の点滅で、色を入れ替える間隔（秒）。</summary>
+    private const float WarningBlinkInterval = 0.08f;
+
+    /// <summary>自分が置いた物。古い順に並んでいて、先頭が一番古い。</summary>
     private readonly Queue<GameObject> placedObjects = new Queue<GameObject>();
+
+    /// <summary>狙いや壁の判定で、当たった物を受け取る入れ物（最大16個）。毎回作らずに使い回す。</summary>
     private readonly RaycastHit[] hitBuffer = new RaycastHit[16];
 
     // 色を変える前に元の色を控えておく。
@@ -312,6 +329,7 @@ public class ObjectCloner : MonoBehaviour
         }
     }
 
+    /// <summary>毎フレームの入り口。全体の流れはクラスの説明を参照。</summary>
     private void Update()
     {
         // **止まっている間と、閉じた瞬間のフレームは何も受け付けない。**
@@ -333,23 +351,35 @@ public class ObjectCloner : MonoBehaviour
 
         if (previewObject == null)
         {
-            UpdateHighlight();
+            UpdateAiming();
+        }
+        else
+        {
+            UpdatePreview();
+        }
+    }
 
-            // 入力設定の Interact は「長押し」設定になっているため、
-            // 押した瞬間に反応するようキー直接の判定も併用している
-            if (pickAction.WasPressedThisFrame() || WasKeyPressed(pickKey))
-            {
-                TryStartPreview();
-            }
+    /// <summary>プレビューが無いとき。狙っている物を強調し、E で複製を始める／R で置いた物を消す。</summary>
+    private void UpdateAiming()
+    {
+        UpdateHighlight();
 
-            if (WasKeyPressed(removeKey))
-            {
-                TryRemoveAimedClone();
-            }
-
-            return;
+        // 入力設定の Interact は「長押し」設定になっているため、
+        // 押した瞬間に反応するようキー直接の判定も併用している
+        if (pickAction.WasPressedThisFrame() || WasKeyPressed(pickKey))
+        {
+            TryStartPreview();
         }
 
+        if (WasKeyPressed(removeKey))
+        {
+            TryRemoveAimedClone();
+        }
+    }
+
+    /// <summary>プレビュー中。位置を決め直し、左クリックで確定／Escape でやめる。</summary>
+    private void UpdatePreview()
+    {
         // プレビュー中は、置こうとしているもの自体が目印になるので強調はしない
         ClearHighlight();
         UpdatePreviewPosition();
@@ -443,6 +473,7 @@ public class ObjectCloner : MonoBehaviour
     // 1. 目の前のものを複製してプレビューに入る
     // ------------------------------------------------------------
 
+    /// <summary>狙っている物が複製できる物（Duplicable タグ）なら、複製してプレビューを始める。</summary>
     private void TryStartPreview()
     {
         if (!TryAim(pickDistance, out RaycastHit hit))
@@ -626,14 +657,7 @@ public class ObjectCloner : MonoBehaviour
 
         for (int i = 0; i < count; i++)
         {
-            Transform hitTransform = hitBuffer[i].collider.transform;
-
-            if (playerRoot != null && hitTransform.IsChildOf(playerRoot))
-            {
-                continue;
-            }
-
-            if (hitTransform.IsChildOf(previewObject.transform))
+            if (ShouldIgnoreHit(hitBuffer[i].collider.transform))
             {
                 continue;
             }
@@ -691,12 +715,7 @@ public class ObjectCloner : MonoBehaviour
                 continue;
             }
 
-            if (playerRoot != null && found.transform.IsChildOf(playerRoot))
-            {
-                continue;
-            }
-
-            if (found.transform.IsChildOf(previewObject.transform))
+            if (ShouldIgnoreHit(found.transform))
             {
                 continue;
             }
@@ -765,12 +784,7 @@ public class ObjectCloner : MonoBehaviour
                 continue;
             }
 
-            if (playerRoot != null && hit.collider.transform.IsChildOf(playerRoot))
-            {
-                continue;
-            }
-
-            if (hit.collider.transform.IsChildOf(previewObject.transform))
+            if (ShouldIgnoreHit(hit.collider.transform))
             {
                 continue;
             }
@@ -812,6 +826,8 @@ public class ObjectCloner : MonoBehaviour
     /// 置く前に、キーで物を回す。
     /// Z/X/C でそれぞれ X軸・Y軸・Z軸まわりに回り、Shiftを押しながらだと逆に回る。
     /// T で回した分がまっすぐに戻る。
+    ///
+    /// ※ いまのコードに Shift の判定は無い（2026/10/20 確認）。逆に回したいときは、マウスを逆向きに動かす。
     /// </summary>
     private void UpdateManualRotation(Transform camera)
     {
@@ -908,12 +924,13 @@ public class ObjectCloner : MonoBehaviour
         // 世界の軸で回す設定なら輪も世界の軸に合わせ、物基準なら物と一緒に傾ける
         Quaternion gizmoRotation = rotateInWorldSpace ? Quaternion.identity : rotation;
 
-        // 物より少し大きめの輪にして、中に埋もれないようにする
+        // 物より少し大きめ（1.2倍）の輪にして、中に埋もれないようにする。小さな物でも最低 0.3m は確保する
         float radius = Mathf.Max(0.3f, previewHalfExtents.magnitude * 1.2f);
 
         rotationGizmo.Place(center, gizmoRotation, radius);
     }
 
+    /// <summary>自分で回した分に、<paramref name="axis"/> まわりの回転を <paramref name="angle"/> 度ぶん足す。</summary>
     private void AddManualRotation(Vector3 axis, float angle)
     {
         if (Mathf.Approximately(angle, 0f))
@@ -978,10 +995,12 @@ public class ObjectCloner : MonoBehaviour
             maxPlaceDistance);
     }
 
+    /// <summary>左クリックで確定。物理と色を元に戻し、置いた物の列に入れる。</summary>
     private void ConfirmPlacement()
     {
         // 空中に置けるようにするため、既定では落ちないまま固定する。
         // keepFloatingAfterPlace を OFF にすると、置いた瞬間に落ち始める
+        // （※ インスペクターの初期値は OFF（false）なので、何も変えていなければ落ちる。2026/10/20 確認）
         SetPhysicsEnabled(previewObject, true, keepFloatingAfterPlace);
         RestoreOriginalColors();
 
@@ -997,6 +1016,7 @@ public class ObjectCloner : MonoBehaviour
         UpdateOldestWarning();
     }
 
+    /// <summary>Escape でやめる。プレビューを消して、何も無かったことにする。</summary>
     private void CancelPreview()
     {
         Destroy(previewObject);
@@ -1057,6 +1077,7 @@ public class ObjectCloner : MonoBehaviour
         CaptureColors(warningObject, warningRenderers, warningOriginalColors);
     }
 
+    /// <summary>消える予告の点滅を進め、時間が来たら一番古いものを消す。予告中でなければ何もしない。</summary>
     private void UpdateWarningBlink()
     {
         if (warningObject == null)
@@ -1066,8 +1087,8 @@ public class ObjectCloner : MonoBehaviour
 
         warningTimer -= Time.deltaTime;
 
-        // 点滅させる。0.08秒ごとに色を入れ替える
-        bool highlight = Mathf.FloorToInt(warningTimer / 0.08f) % 2 == 0;
+        // 点滅させる。0.08秒（WarningBlinkInterval）ごとに色を入れ替える
+        bool highlight = Mathf.FloorToInt(warningTimer / WarningBlinkInterval) % 2 == 0;
         if (highlight)
         {
             Tint(warningRenderers, warningColor);
@@ -1083,6 +1104,7 @@ public class ObjectCloner : MonoBehaviour
         }
     }
 
+    /// <summary>一番古い（列の先頭の）物を消す。</summary>
     private void RemoveOldest()
     {
         ClearWarning();
@@ -1099,6 +1121,7 @@ public class ObjectCloner : MonoBehaviour
         }
     }
 
+    /// <summary>消える予告をやめて、色を元に戻す。</summary>
     private void ClearWarning()
     {
         RestoreColors(warningRenderers, warningOriginalColors);
@@ -1110,6 +1133,7 @@ public class ObjectCloner : MonoBehaviour
     // 4. 手で消す
     // ------------------------------------------------------------
 
+    /// <summary>R で、狙っている物が自分の置いた複製（PlacedClone タグ）なら消す。複製元や他の物は消さない。</summary>
     private void TryRemoveAimedClone()
     {
         if (!TryAim(pickDistance, out RaycastHit hit))
@@ -1136,7 +1160,9 @@ public class ObjectCloner : MonoBehaviour
 
     /// <summary>
     /// 順番待ちの列から、指定のものだけを抜く。
-    /// Queue は途中から抜けないので、作り直している。
+    /// Queue は途中から抜けないので、作り直している
+    /// （placedObjects は readonly で入れ替えられないため、一度空にして詰め直す）。
+    /// ついでに、既に消えている（null の）ものも取り除く。
     /// </summary>
     private void RemoveFromQueue(GameObject target)
     {
@@ -1166,6 +1192,21 @@ public class ObjectCloner : MonoBehaviour
     // ------------------------------------------------------------
 
     /// <summary>
+    /// 当たった物が、**自分の体かプレビュー中の物**なら true。
+    /// 狙い・壁・重なりのどの判定でも、この2つは無いものとして扱う
+    /// （自分に当たって進まなくなる・プレビュー自身を壁とみなす、を防ぐ）。
+    /// </summary>
+    private bool ShouldIgnoreHit(Transform hitTransform)
+    {
+        if (playerRoot != null && hitTransform.IsChildOf(playerRoot))
+        {
+            return true;
+        }
+
+        return previewObject != null && hitTransform.IsChildOf(previewObject.transform);
+    }
+
+    /// <summary>
     /// 画面の中央から狙いの線を飛ばす。
     /// 自分自身とプレビュー中のものは無視する（自分に当たって進まなくなるのを防ぐ）。
     /// </summary>
@@ -1186,7 +1227,6 @@ public class ObjectCloner : MonoBehaviour
         for (int i = 0; i < count; i++)
         {
             RaycastHit hit = hitBuffer[i];
-            Transform hitTransform = hit.collider.transform;
 
             // 自分より手前（カメラと自分の間）にあるものは、背後にあるので狙いの対象にしない
             if (hit.distance < originOffset)
@@ -1194,12 +1234,7 @@ public class ObjectCloner : MonoBehaviour
                 continue;
             }
 
-            if (playerRoot != null && hitTransform.IsChildOf(playerRoot))
-            {
-                continue;
-            }
-
-            if (previewObject != null && hitTransform.IsChildOf(previewObject.transform))
+            if (ShouldIgnoreHit(hit.collider.transform))
             {
                 continue;
             }
@@ -1296,6 +1331,7 @@ public class ObjectCloner : MonoBehaviour
         }
     }
 
+    /// <summary>そのキーを、このフレームに押したか。キーボードが無ければ false。</summary>
     private static bool WasKeyPressed(Key key)
     {
         Keyboard keyboard = Keyboard.current;

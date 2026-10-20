@@ -1,4 +1,3 @@
-using Unity.Netcode;
 using UnityEngine;
 using UnityEngine.InputSystem;
 using UnityEngine.InputSystem.LowLevel;
@@ -80,10 +79,21 @@ public class SpaceJunkPlayerSetup : MonoBehaviour
     /// </summary>
     public static float LocalRespawnRemaining { get; private set; }
 
+    // 同じプレハブに付いている釣りの部品（Awake で取る）。無いものは null のまま使う
+
+    /// <summary>通信上のプレイヤー（自分のぶんか・何人目か・接続番号）。</summary>
     private FishingNetPlayer netPlayer;
+
+    /// <summary>歩く・落ちるの当たり判定。位置を直接動かすときはいったん切る。</summary>
     private CharacterController characterController;
+
+    /// <summary>歩く部品。動けなくするときに enabled を切る。</summary>
     private FishingPlayerController mover;
+
+    /// <summary>フックの部品。動けなくするときに enabled を切り、出てくる場所へ戻すときにフックを戻す。</summary>
     private HookController hookController;
+
+    /// <summary>キー／コントローラーの入力（1台で複数人のとき、自分の担当だけを読む）。</summary>
     private PlayerInputSource input;
 
     /// <summary>復活までの残り秒数（自分のぶんだけ使う）。</summary>
@@ -98,7 +108,7 @@ public class SpaceJunkPlayerSetup : MonoBehaviour
     /// <summary>頭の上の名前のタグ。</summary>
     private SpaceJunkNameplate nameplate;
 
-    /// <summary>直前に塗ったチーム。変わったときだけ塗り直すために持つ。</summary>
+    /// <summary>直前に塗ったチーム。変わったときだけ塗り直すために持つ。-999 は「まだ一度も塗っていない」印（チーム番号としてあり得ない値）。</summary>
     private int lastAppliedTeam = -999;
 
     private void Awake()
@@ -110,6 +120,10 @@ public class SpaceJunkPlayerSetup : MonoBehaviour
         input = PlayerInputSource.Get(this);
     }
 
+    /// <summary>
+    /// 毎フレーム。前半（色・名前のタグ）は**全員のぶん**、後半は**自分が操作しているぶんだけ**。
+    /// 後半の流れ：案内とレーダー → 置き直しと復活待ちの進み → ラウンドの始まり／ロビーへ戻ったときの切り替え → 落ちた・R キーの立て直し。
+    /// </summary>
     private void Update()
     {
         // チームの色は、**自分のぶんも他の人のぶんも**塗る（誰が味方か分かるように）
@@ -223,6 +237,8 @@ public class SpaceJunkPlayerSetup : MonoBehaviour
             return terminal == null || !terminal.IsOpen;
         }
     }
+
+    // シーンの読み込みを見張る（プレイヤーはシーンをまたいで生き続けるので、移った先で置き直す必要がある）
 
     private void OnEnable()
     {
@@ -462,6 +478,7 @@ public class SpaceJunkPlayerSetup : MonoBehaviour
         SetControlEnabled(false);
     }
 
+    /// <summary>復活待ちの残りを減らし、0 になったら動けるように戻す（ラウンドが止まっていなければ）。</summary>
     private void TickRespawnLock()
     {
         if (respawnRemaining <= 0f)
@@ -571,10 +588,10 @@ public class SpaceJunkPlayerSetup : MonoBehaviour
         }
 
         Vector3 position = FindSpawnPosition();
-        Quaternion rotation = Quaternion.LookRotation(
-            new Vector3(-position.x, 0f, -position.z).sqrMagnitude > 0.01f
-                ? new Vector3(-position.x, 0f, -position.z)
-                : Vector3.forward);
+
+        // ステージの中心（原点）のほうを向く。ほぼ中心にいるときは向きが決まらないので、前向き
+        Vector3 toCenter = new Vector3(-position.x, 0f, -position.z);
+        Quaternion rotation = Quaternion.LookRotation(toCenter.sqrMagnitude > 0.01f ? toCenter : Vector3.forward);
 
         // CharacterController が付いたまま動かすと位置が戻されるので、いったん切る
         if (characterController != null)
@@ -589,8 +606,14 @@ public class SpaceJunkPlayerSetup : MonoBehaviour
         }
     }
 
+    /// <summary>
+    /// 出てくる場所を決める。ラウンド中で自分のゴールが分かれば**ゴールの少し内側**、
+    /// それ以外（ロビー・ゴールがまだ届いていない）は床のある決まった場所。
+    /// ゴールが届いていなかったときは <see cref="placedByFallback"/> を立て、あとで置き直す。
+    /// </summary>
     private Vector3 FindSpawnPosition()
     {
+        // 重ならないよう、Spawn Scatter（m）の円の中でばらけさせる
         Vector2 scatter = Random.insideUnitCircle * spawnScatter;
 
         // **ゴールを当てにするのは、ラウンドが動いているときだけ。**
@@ -615,6 +638,7 @@ public class SpaceJunkPlayerSetup : MonoBehaviour
             Vector3 goalPosition = goal.transform.position;
             Vector3 toCenter = new Vector3(-goalPosition.x, 0f, -goalPosition.z);
 
+            // ゴールがほぼ中心にあると向きが決まらないので、前向きにする
             if (toCenter.sqrMagnitude < 0.01f)
             {
                 toCenter = Vector3.forward;
@@ -643,6 +667,7 @@ public class SpaceJunkPlayerSetup : MonoBehaviour
             return grounded;
         }
 
+        // 中心からの距離の候補（m）。設定の距離 → 近く → 中心 → 遠く の順に、それぞれ8方向（45度ずつ）を見る
         float[] radii = { fallbackRadius, 3f, 0f, 9f, 12f, 15f };
         for (int r = 0; r < radii.Length; r++)
         {
@@ -663,6 +688,8 @@ public class SpaceJunkPlayerSetup : MonoBehaviour
     private bool TryGroundAt(Vector3 spot, out Vector3 grounded)
     {
         grounded = spot;
+
+        // その場所の 6m 上から、20m 下まで全レイヤー（~0）を見る（一段高い土台や、少し低い床でも見つかるように）
         Vector3 from = new Vector3(spot.x, spot.y + 6f, spot.z);
 
         foreach (RaycastHit hit in Physics.RaycastAll(from, Vector3.down, 20f, ~0, QueryTriggerInteraction.Ignore))

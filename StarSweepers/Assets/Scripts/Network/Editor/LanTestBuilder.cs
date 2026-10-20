@@ -22,8 +22,12 @@ using UnityEngine;
 /// </summary>
 public static class LanTestBuilder
 {
+    /// <summary>ビルドに入れるシーン。検証用のこの1つだけ（<see cref="LanPlayTestSetup"/> が作るもの）。</summary>
     private const string ScenePath = "Assets/Scenes/Test/LanPlayTest.unity";
+
+    /// <summary>出力先（プロジェクトのフォルダからの相対）。`-buildOutput` で変えられる。</summary>
     private const string DefaultOutputFolder = "Build/LanTest";
+
     private const string ExeName = "LanPlayTest.exe";
 
     // 2つ並べて見られるように、全画面ではなく小さめの窓で起動させる
@@ -53,6 +57,7 @@ public static class LanTestBuilder
         Build(output);
     }
 
+    /// <summary>Windows 用にビルドし、成功したら起動用の `.bat` を隣に置く。失敗したらログに理由を出すだけ。</summary>
     private static void Build(string outputFolder)
     {
         BuildPlayerOptions options = new BuildPlayerOptions

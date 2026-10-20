@@ -21,6 +21,7 @@ public class LocalPlayerCamera : MonoBehaviour
     [Range(1f, 30f)]
     [SerializeField] private float followSmooth = 8f;
 
+    /// <summary>追いかける相手。null の間は動かない。</summary>
     private Transform target;
 
     /// <summary>追いかける相手を決める。null を渡すと止まる。</summary>
@@ -36,6 +37,7 @@ public class LocalPlayerCamera : MonoBehaviour
         }
     }
 
+    /// <summary>LateUpdate ＝ プレイヤーが動いた**あと**に追いかける（Update だと順番しだいで1フレーム遅れて揺れる）。</summary>
     private void LateUpdate()
     {
         if (target == null)
@@ -45,6 +47,7 @@ public class LocalPlayerCamera : MonoBehaviour
 
         Vector3 wanted = target.position + offset;
 
+        // フレームレートが変わっても同じ速さで追いつく計算（1 - e^(-速さ×経過秒)）
         transform.position = Vector3.Lerp(
             transform.position, wanted, 1f - Mathf.Exp(-followSmooth * Time.deltaTime));
 

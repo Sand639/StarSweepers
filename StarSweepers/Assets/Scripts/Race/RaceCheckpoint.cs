@@ -70,7 +70,7 @@ public class RaceCheckpoint : MonoBehaviour
             return false;
         }
 
-        // 面を横切った瞬間の位置を求める
+        // 面を横切った瞬間の位置を求める（t は from→to の道のりのうち、面に達した割合 0〜1）
         float t = before / (before - after);
         Vector3 hit = Vector3.Lerp(from, to, t) - center;
 
@@ -84,17 +84,20 @@ public class RaceCheckpoint : MonoBehaviour
         return up >= -height * 0.5f && up <= height * 0.5f;
     }
 
+    /// <summary>エディタで線の位置と向きが分かるよう、半透明の板と、走る向きの矢印を描く。</summary>
     private void OnDrawGizmos()
     {
+        // この線の位置・向きを基準にして描く（以降の座標は、線から見たもの）
         Gizmos.matrix = Matrix4x4.TRS(transform.position, transform.rotation, Vector3.one);
 
+        // 板の厚み 0.2m は見た目だけ。通過の判定は厚みの無い面で行う（WasCrossed）
         Gizmos.color = gizmoColor;
         Gizmos.DrawCube(Vector3.zero, new Vector3(width, height, 0.2f));
 
         Gizmos.color = new Color(gizmoColor.r, gizmoColor.g, gizmoColor.b, 1f);
         Gizmos.DrawWireCube(Vector3.zero, new Vector3(width, height, 0.2f));
 
-        // 走る向きを矢印で示す
+        // 走る向きを矢印で示す（長さ 3m）
         Gizmos.DrawLine(Vector3.zero, Vector3.forward * 3f);
         Gizmos.DrawLine(Vector3.forward * 3f, Vector3.forward * 2f + Vector3.right * 0.8f);
         Gizmos.DrawLine(Vector3.forward * 3f, Vector3.forward * 2f - Vector3.right * 0.8f);

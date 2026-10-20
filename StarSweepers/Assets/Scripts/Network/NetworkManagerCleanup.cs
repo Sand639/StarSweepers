@@ -47,6 +47,10 @@ public static class NetworkManagerCleanup
         SceneManager.sceneLoaded += OnSceneLoaded;
     }
 
+    /// <summary>
+    /// シーンが読み込まれるたびに呼ばれる。
+    /// 本物（`Singleton`。先に生き残っていたほう）以外の `NetworkManager` を、GameObject ごと消す。
+    /// </summary>
     private static void OnSceneLoaded(Scene scene, LoadSceneMode mode)
     {
         NetworkManager singleton = NetworkManager.Singleton;

@@ -50,22 +50,22 @@ public class RaceCamera : MonoBehaviour
             return;
         }
 
-        Vector3 wanted = target.position - target.forward * distance + Vector3.up * height;
+        // 「1 - exp(-勢い × 経過秒)」は、フレームの間隔が変わっても同じ速さで追いつく割合。
+        // 毎フレーム残りの距離の一定割合を詰めるので、近づくほどゆっくりになる
+        float positionBlend = 1f - Mathf.Exp(-positionSmooth * Time.deltaTime);
+        transform.position = Vector3.Lerp(transform.position, BehindTarget(), positionBlend);
 
-        transform.position = Vector3.Lerp(
-            transform.position, wanted, 1f - Mathf.Exp(-positionSmooth * Time.deltaTime));
+        Vector3 direction = LookPoint() - transform.position;
 
-        Vector3 lookAt = target.position + Vector3.up * lookHeight;
-        Vector3 direction = lookAt - transform.position;
-
+        // 相手と重なっていて向きが決められないときは、向きを触らない
         if (direction.sqrMagnitude < 0.0001f)
         {
             return;
         }
 
+        float rotationBlend = 1f - Mathf.Exp(-rotationSmooth * Time.deltaTime);
         transform.rotation = Quaternion.Slerp(
-            transform.rotation, Quaternion.LookRotation(direction),
-            1f - Mathf.Exp(-rotationSmooth * Time.deltaTime));
+            transform.rotation, Quaternion.LookRotation(direction), rotationBlend);
     }
 
     /// <summary>追う相手を入れ替える。通信で自分のカートが出てきたときに使う。</summary>
@@ -83,11 +83,23 @@ public class RaceCamera : MonoBehaviour
             return;
         }
 
-        transform.position = target.position - target.forward * distance + Vector3.up * height;
-        transform.rotation = Quaternion.LookRotation(
-            target.position + Vector3.up * lookHeight - transform.position);
+        transform.position = BehindTarget();
+        transform.rotation = Quaternion.LookRotation(LookPoint() - transform.position);
     }
 
+    /// <summary>カメラが落ち着く先。相手の後ろ <see cref="distance"/> メートル、上 <see cref="height"/> メートル。</summary>
+    private Vector3 BehindTarget()
+    {
+        return target.position - target.forward * distance + Vector3.up * height;
+    }
+
+    /// <summary>カメラが見つめる点。相手の <see cref="lookHeight"/> メートル上。</summary>
+    private Vector3 LookPoint()
+    {
+        return target.position + Vector3.up * lookHeight;
+    }
+
+    /// <summary>自分が操作しているカートを探す。見つからなければ、いる中の先頭（1人で遊ぶとき用）。</summary>
     private static Transform FindLocalKart()
     {
         for (int i = 0; i < RaceRacer.All.Count; i++)

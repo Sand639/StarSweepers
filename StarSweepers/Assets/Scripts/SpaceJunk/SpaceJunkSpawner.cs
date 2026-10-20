@@ -142,11 +142,19 @@ public class SpaceJunkSpawner : MonoBehaviour
              "「敵陣まで取りに行く」ように、種類ごとに出る場所を分けたいとき")]
     [SerializeField] private KindZone[] kindZones = new KindZone[0];
 
-    private float timer;
-    private bool initialDone;
+    /// <summary>
+    /// 次に出すまでの秒数を数える。最初は「出し始めるまで」（Start Delay）、そのあとは「前に出してから」（Spawn Interval）を数える。
+    /// </summary>
+    private float spawnTimer;
+
+    /// <summary>ラウンドの始まりのまとめ出し（Initial Spawn Count）を済ませたか。</summary>
+    private bool initialSpawnDone;
 
     /// <summary>1巡法で、この巡でまだ出していないゾーン（先頭から使う）。</summary>
     private readonly List<Transform> zoneBag = new List<Transform>();
+
+    /// <summary>シーン画面に出す「出す範囲」の枠の色（緑）。</summary>
+    private static readonly Color SpawnAreaGizmoColor = new Color(0.3f, 1f, 0.4f, 0.8f);
 
     private void Awake()
     {
@@ -210,6 +218,7 @@ public class SpaceJunkSpawner : MonoBehaviour
         return spawnList.Count > 0;
     }
 
+    /// <summary>古い書き方の1項目を Spawn List に足し、足した出やすさを返す（プレハブが無ければ足さずに 0）。</summary>
     private float AddLegacy(GameObject prefab, int weight)
     {
         if (prefab == null)
@@ -221,6 +230,7 @@ public class SpaceJunkSpawner : MonoBehaviour
         return Mathf.Max(0, weight);
     }
 
+    /// <summary>シーンのスポナーとして名乗る（<see cref="Current"/>）。</summary>
     private void OnEnable()
     {
         Current = this;
@@ -237,6 +247,7 @@ public class SpaceJunkSpawner : MonoBehaviour
     /// <summary>この種類の素材を出すか（プレハブが入っていて、出やすさが0より大きいか）。</summary>
     public bool UsesKind(SpaceJunkMaterialKind kind)
     {
+        // Awake より先に（他の部品から）呼ばれても、古い書き方のシーンで一覧が空のままにならないように
         MigrateLegacy();
 
         foreach (SpawnEntry entry in spawnList)
@@ -250,6 +261,10 @@ public class SpaceJunkSpawner : MonoBehaviour
         return false;
     }
 
+    /// <summary>
+    /// 流れ：Start Delay 秒待つ → Initial Spawn Count 個をまとめて出す → あとは Spawn Interval 秒ごとに1個。
+    /// 出す役目でないPC（参加者）や、結果が出たあとは何もしない。
+    /// </summary>
     private void Update()
     {
         if (!CanSpawnOnThisPC())
@@ -257,17 +272,17 @@ public class SpaceJunkSpawner : MonoBehaviour
             return;
         }
 
-        timer += Time.deltaTime;
+        spawnTimer += Time.deltaTime;
 
-        if (!initialDone)
+        if (!initialSpawnDone)
         {
-            if (timer < startDelaySeconds)
+            if (spawnTimer < startDelaySeconds)
             {
                 return;
             }
 
-            initialDone = true;
-            timer = 0f;
+            initialSpawnDone = true;
+            spawnTimer = 0f;
 
             for (int i = 0; i < initialSpawnCount; i++)
             {
@@ -276,12 +291,12 @@ public class SpaceJunkSpawner : MonoBehaviour
             return;
         }
 
-        if (timer < spawnIntervalSeconds)
+        if (spawnTimer < spawnIntervalSeconds)
         {
             return;
         }
 
-        timer = 0f;
+        spawnTimer = 0f;
         TrySpawnOne();
     }
 
@@ -304,6 +319,7 @@ public class SpaceJunkSpawner : MonoBehaviour
     /// <summary>
     /// **イベント用に、数の上限を気にせず1つ出す**（期間限定高価値デブリで使う）。**ホストだけが呼ぶ。**
     /// 置き場所が見つからなければ null。
+    /// ※ 2026/10 時点では、特殊デブリ（重いデブリ）のイベント（<see cref="SpaceJunkRound"/> のイベント側）が使っている。
     /// </summary>
     public GameObject ServerSpawnExtra()
     {
@@ -319,11 +335,16 @@ public class SpaceJunkSpawner : MonoBehaviour
         return ChoosePrefab(bombsAllowed: false);
     }
 
+    /// <summary>ふだんの1回ぶん（上限あり）。出せなくても何もしない。</summary>
     private void TrySpawnOne()
     {
         SpawnOne(ignoreLimit: false);
     }
 
+    /// <summary>
+    /// 1つ出す。流れ：何を出すか選ぶ → 上限を見る → 空いた場所を探す → 置く（通信中なら全員の画面へ）。
+    /// 出せなかった回は null。<paramref name="ignoreLimit"/> が true なら、数の上限を見ず、爆弾も選ばない（イベント用）。
+    /// </summary>
     private GameObject SpawnOne(bool ignoreLimit)
     {
         // 爆弾は、素材の数とは別に数えて上限までだけ出す（イベント用の追加では出さない）
@@ -347,26 +368,37 @@ public class SpaceJunkSpawner : MonoBehaviour
             return null;
         }
 
+        // 向きは水平にランダム（0〜360度）
         Quaternion rotation = Quaternion.Euler(0f, Random.Range(0f, 360f), 0f);
         GameObject spawned = Instantiate(prefab, position, rotation);
 
-        // 通信中なら、全員の画面に出す
-        NetworkManager network = NetworkManager.Singleton;
-        if (network != null && network.IsListening)
-        {
-            NetworkObject networkObject = spawned.GetComponent<NetworkObject>();
-            if (networkObject != null)
-            {
-                networkObject.Spawn(true);
-            }
-            else
-            {
-                Debug.LogWarning($"[JUNK] {prefab.name} に NetworkObject が無いため、ホストの画面にしか出ません。" +
-                                 "オンライン用のプレハブを入れてください。");
-            }
-        }
+        SpawnOnNetwork(spawned, prefab);
 
         return spawned;
+    }
+
+    /// <summary>
+    /// 通信中なら、出した物を全員の画面に出す（Netcode の Spawn）。通信していなければ何もしない。
+    /// プレハブに NetworkObject が無いと、ホストの画面にしか出ない（警告だけ出して続ける）。
+    /// </summary>
+    private static void SpawnOnNetwork(GameObject spawned, GameObject prefab)
+    {
+        NetworkManager network = NetworkManager.Singleton;
+        if (network == null || !network.IsListening)
+        {
+            return;
+        }
+
+        NetworkObject networkObject = spawned.GetComponent<NetworkObject>();
+        if (networkObject != null)
+        {
+            networkObject.Spawn(true);
+        }
+        else
+        {
+            Debug.LogWarning($"[JUNK] {prefab.name} に NetworkObject が無いため、ホストの画面にしか出ません。" +
+                             "オンライン用のプレハブを入れてください。");
+        }
     }
 
     /// <summary>
@@ -412,8 +444,10 @@ public class SpaceJunkSpawner : MonoBehaviour
     /// </summary>
     private GameObject ChoosePrefab(bool bombsAllowed)
     {
+        // Awake より先に（他の部品から）呼ばれても、古い書き方のシーンで一覧が空のままにならないように
         MigrateLegacy();
 
+        // 出やすさの合計のうち、どこに当たったかで決める（ルーレット方式）
         float total = 0f;
         foreach (SpawnEntry entry in spawnList)
         {
@@ -491,7 +525,8 @@ public class SpaceJunkSpawner : MonoBehaviour
                 candidate.y = Mathf.Max(candidate.y, floorY + dropHeight);
             }
 
-            // 落とす高さから床の少し上まで、縦に長く調べる（プレイヤーや障害物の真上を避ける）
+            // 落とす高さから床の少し上まで、縦に長く調べる（プレイヤーや障害物の真上を避ける）。
+            // 下端は床に当たらないよう、半径ぶん＋0.1m 浮かせる。全レイヤー（~0）を見る
             Vector3 bottom = new Vector3(candidate.x, floorY + clearRadius + 0.1f, candidate.z);
             bool blocked = Physics.CheckCapsule(bottom, candidate, clearRadius, ~0, QueryTriggerInteraction.Ignore);
 
@@ -562,7 +597,10 @@ public class SpaceJunkSpawner : MonoBehaviour
         return next;
     }
 
-    /// <summary>ゾーン（四角）の中のランダムな1点（高さは「床＋Drop Height」）。</summary>
+    /// <summary>
+    /// ゾーン（四角）の中のランダムな1点（高さは「床＋Drop Height」）。
+    /// 四角の中の1点は、-0.5〜0.5 を四角の大きさと向きに合わせて広げて決める（Scale 1 の立方体の中、と同じ）。
+    /// </summary>
     private Vector3 PointInZone(Transform zone)
     {
         Vector3 local = new Vector3(Random.Range(-0.5f, 0.5f), 0f, Random.Range(-0.5f, 0.5f));
@@ -580,8 +618,10 @@ public class SpaceJunkSpawner : MonoBehaviour
         floorY = float.MinValue;
         bool found = false;
 
+        // 真下 50m まで、全レイヤー（~0）を見る
         foreach (RaycastHit hit in Physics.RaycastAll(candidate, Vector3.down, 50f, ~0, QueryTriggerInteraction.Ignore))
         {
+            // プレイヤー（CharacterController）と、物理で動く物（Rigidbody が kinematic でない）は床ではない
             if (hit.collider is CharacterController ||
                 (hit.rigidbody != null && !hit.rigidbody.isKinematic))
             {
@@ -609,6 +649,7 @@ public class SpaceJunkSpawner : MonoBehaviour
             return true;
         }
 
+        // 落とす高さより 2m 余分に下まで見る（床がスポナーより少し低くても見つかるように）
         return Physics.Raycast(candidate, Vector3.down, dropHeight + 2f, ~0, QueryTriggerInteraction.Ignore);
     }
 
@@ -660,6 +701,7 @@ public class SpaceJunkSpawner : MonoBehaviour
                 Random.Range(-areaHalfSize.y, areaHalfSize.y));
         }
 
+        // 広さの合計のうち、どこに当たったかでゾーンを決める（広いほど選ばれやすい）
         float roll = Random.Range(0f, totalArea);
         foreach (Transform zone in zones)
         {
@@ -672,14 +714,12 @@ public class SpaceJunkSpawner : MonoBehaviour
             if (roll <= area)
             {
                 // 四角の中の1点（-0.5〜0.5 を、四角の大きさと向きに合わせて広げる）
-                Vector3 local = new Vector3(Random.Range(-0.5f, 0.5f), 0f, Random.Range(-0.5f, 0.5f));
-                Vector3 point = zone.TransformPoint(local);
-                point.y = transform.position.y + dropHeight;
-                return point;
+                return PointInZone(zone);
             }
             roll -= area;
         }
 
+        // 丸め誤差などでどのゾーンにも当たらなかったときの保険（ふつうは通らない）
         return transform.position + Vector3.up * dropHeight;
     }
 
@@ -695,10 +735,14 @@ public class SpaceJunkSpawner : MonoBehaviour
         return Mathf.Abs(size.x * size.z);
     }
 
+    /// <summary>
+    /// 選んでいる間、出す範囲をシーン画面に枠で出す。
+    /// Spawn Zones は緑、Kind Zones はその素材の色。どちらも無ければ、円（Spawn Circle Radius）か四角（Area Half Size）。
+    /// </summary>
     private void OnDrawGizmosSelected()
     {
         // 出す範囲をシーン画面に緑の枠で出す
-        Gizmos.color = new Color(0.3f, 1f, 0.4f, 0.8f);
+        Gizmos.color = SpawnAreaGizmoColor;
 
         bool hasZone = false;
         foreach (Transform zone in spawnZones)
@@ -709,8 +753,7 @@ public class SpaceJunkSpawner : MonoBehaviour
             }
 
             hasZone = true;
-            Gizmos.matrix = zone.localToWorldMatrix;
-            Gizmos.DrawWireCube(Vector3.zero, new Vector3(1f, 0.05f, 1f));
+            DrawZoneOutline(zone);
         }
 
         // 種類ごとの範囲は、その素材の色の枠で出す
@@ -730,16 +773,15 @@ public class SpaceJunkSpawner : MonoBehaviour
                 }
 
                 hasZone = true;
-                Gizmos.matrix = zone.localToWorldMatrix;
-                Gizmos.DrawWireCube(Vector3.zero, new Vector3(1f, 0.05f, 1f));
+                DrawZoneOutline(zone);
             }
         }
         Gizmos.matrix = Matrix4x4.identity;
-        Gizmos.color = new Color(0.3f, 1f, 0.4f, 0.8f);
+        Gizmos.color = SpawnAreaGizmoColor;
 
         if (!hasZone && spawnCircleRadius > 0f)
         {
-            // 円を線でつないで描く
+            // 円を線でつないで描く（48本の線で1周）
             Vector3 center = transform.position + Vector3.up * dropHeight;
             const int segments = 48;
             for (int i = 0; i < segments; i++)
@@ -757,5 +799,15 @@ public class SpaceJunkSpawner : MonoBehaviour
                 transform.position + Vector3.up * dropHeight,
                 new Vector3(areaHalfSize.x * 2f, 0.1f, areaHalfSize.y * 2f));
         }
+    }
+
+    /// <summary>
+    /// ゾーン（四角）の枠を、その位置・向き・大きさで描く（薄い板の形）。
+    /// 呼んだあと <c>Gizmos.matrix</c> はそのゾーンのままなので、描き終わったら呼ぶ側で戻す。
+    /// </summary>
+    private static void DrawZoneOutline(Transform zone)
+    {
+        Gizmos.matrix = zone.localToWorldMatrix;
+        Gizmos.DrawWireCube(Vector3.zero, new Vector3(1f, 0.05f, 1f));
     }
 }

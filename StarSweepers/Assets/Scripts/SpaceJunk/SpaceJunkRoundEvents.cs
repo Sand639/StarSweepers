@@ -345,37 +345,15 @@ public partial class SpaceJunkRound
     // ホストだけが動かす
     // ------------------------------------------------------------
 
-    /// <summary>ラウンドの始まりに、イベントの時刻を決める。<see cref="OnNetworkSpawn"/> から呼ぶ。</summary>
+    /// <summary>
+    /// ラウンドの始まりに、イベントの時刻を決める。<see cref="OnNetworkSpawn"/> から呼ぶ。
+    ///
+    /// 流れ：一覧を空の枠に作り直す → ホストの設定を全員へ配る値に写す →
+    /// 得点制で候補があるときだけ、動き出してから <see cref="SpaceJunkEventSettings.startSeconds"/> 秒後を開始時刻にする。
+    /// </summary>
     private void ServerInitEvents(float roundSeconds)
     {
-        setRequired.Clear();
-        setProgress.Clear();
-        setBonus.Clear();
-        setsCompleted.Clear();
-        setSequence.Clear();
-        setStep.Clear();
-        heavyIds.Clear();
-        heavyWeights.Clear();
-        stageHeavyIds.Clear();
-        stageHeavyWeights.Clear();
-
-        for (int i = 0; i < SpaceJunkTeams.MaxTeams * SpaceJunkMaterials.Count; i++)
-        {
-            setRequired.Add(0);
-            setProgress.Add(0);
-        }
-
-        for (int i = 0; i < SpaceJunkTeams.MaxTeams * MaxSetSize; i++)
-        {
-            setSequence.Add(-1);
-        }
-
-        for (int team = 0; team < SpaceJunkTeams.MaxTeams; team++)
-        {
-            setBonus.Add(0);
-            setsCompleted.Add(0);
-            setStep.Add(0);
-        }
+        ServerResetEventLists();
 
         activeEvent.Value = SpaceJunkEventKind.None;
         eventServerTime.Value = 0d;
@@ -414,12 +392,53 @@ public partial class SpaceJunkRound
         eventServerTime.Value = playStart + settings.startSeconds;
     }
 
+    /// <summary>
+    /// 全員へ配る一覧を、**全チームぶんの空の枠**に作り直す（お題の必要数・進み具合・並び、重いデブリの一覧）。
+    /// NetworkList は「何番目」で引くので、先に枠だけ全部入れておく（あとから足すと並びがずれる）。
+    /// </summary>
+    private void ServerResetEventLists()
+    {
+        setRequired.Clear();
+        setProgress.Clear();
+        setBonus.Clear();
+        setsCompleted.Clear();
+        setSequence.Clear();
+        setStep.Clear();
+        heavyIds.Clear();
+        heavyWeights.Clear();
+        stageHeavyIds.Clear();
+        stageHeavyWeights.Clear();
+
+        // チーム × 種類
+        for (int i = 0; i < SpaceJunkTeams.MaxTeams * SpaceJunkMaterials.Count; i++)
+        {
+            setRequired.Add(0);
+            setProgress.Add(0);
+        }
+
+        // チーム × お題の枠（空いている枠は -1）
+        for (int i = 0; i < SpaceJunkTeams.MaxTeams * MaxSetSize; i++)
+        {
+            setSequence.Add(-1);
+        }
+
+        // チームごとに1つ
+        for (int team = 0; team < SpaceJunkTeams.MaxTeams; team++)
+        {
+            setBonus.Add(0);
+            setsCompleted.Add(0);
+            setStep.Add(0);
+        }
+    }
+
     /// <summary>時間が来たらイベントを始め、続く秒数が過ぎたら終わらせる。<see cref="Update"/> から呼ぶ。</summary>
     private void ServerUpdateEvents()
     {
         // ステージに置いた重いデブリは、イベントに関係なく、場外へ落ちて消えたら一覧から外す
         ServerPruneLost(stageHeavyIds, stageHeavyWeights);
 
+        // もう始まっている：続く秒数が過ぎていれば片付ける（1回だけ）。
+        // 重いデブリのイベント中は、落ちて消えたぶんを一覧から外し続ける（「あと ○個」の表示のため）
         if (activeEvent.Value != SpaceJunkEventKind.None)
         {
             if (!serverEventFinished && !IsEventRunning)
@@ -433,6 +452,7 @@ public partial class SpaceJunkRound
             return;
         }
 
+        // まだ始まっていない：このラウンドでは起きない（0）か、開始時刻がまだなら待つ
         if (eventServerTime.Value <= 0d || NetworkManager.ServerTime.Time < eventServerTime.Value)
         {
             return;
@@ -451,6 +471,10 @@ public partial class SpaceJunkRound
         ServerStartEvent(picked);
     }
 
+    /// <summary>
+    /// 選ばれたイベントを始める。先に種類ごとの準備（お題を引く・高価値の種類を選ぶ・重いデブリを出す）をしてから、
+    /// 時刻・名前・説明を全員へ配る。**<see cref="activeEvent"/> は最後に入れる**（参加者が一覧より先に「始まった」を見ないように）。
+    /// </summary>
     private void ServerStartEvent(SpaceJunkEventEntry entry)
     {
         SpaceJunkEventSettings settings = EventSettings;
@@ -644,15 +668,16 @@ public partial class SpaceJunkRound
 
     /// <summary>
     /// **マップの外へ落ちて消えた重いデブリを、一覧から外す**。
-    /// 外さないと「あと ○個」が減らないまま残る。<paramref name="parallel"/> は同じ並びの一覧（重さ）。無ければ null。
+    /// 外さないと「あと ○個」が減らないまま残る。<paramref name="weights"/> は同じ並びの一覧（重さ）。無ければ null。
     /// </summary>
-    private void ServerPruneLost(NetworkList<ulong> ids, NetworkList<float> parallel)
+    private void ServerPruneLost(NetworkList<ulong> ids, NetworkList<float> weights)
     {
         if (ids.Count == 0 || NetworkManager == null || NetworkManager.SpawnManager == null)
         {
             return;
         }
 
+        // 後ろから見る（途中で外しても、まだ見ていない番号がずれないように）
         for (int i = ids.Count - 1; i >= 0; i--)
         {
             bool alive = NetworkManager.SpawnManager.SpawnedObjects.TryGetValue(ids[i], out NetworkObject networkObject)
@@ -663,9 +688,9 @@ public partial class SpaceJunkRound
             if (!alive)
             {
                 ids.RemoveAt(i);
-                if (parallel != null && i < parallel.Count)
+                if (weights != null && i < weights.Count)
                 {
-                    parallel.RemoveAt(i);
+                    weights.RemoveAt(i);
                 }
             }
         }
@@ -690,6 +715,7 @@ public partial class SpaceJunkRound
             return;
         }
 
+        // 設定が 0 以下でも、最低1個は出す
         for (int n = 0; n < Mathf.Max(1, settings.heavyInitialCount); n++)
         {
             float weight = settings.PickHeavyWeight();
@@ -704,7 +730,7 @@ public partial class SpaceJunkRound
             }
 
             heavyIds.Add(networkObject.NetworkObjectId);
-            heavyWeights.Add(Mathf.Max(0.1f, weight));
+            heavyWeights.Add(Mathf.Max(MinHeavyWeight, weight));
         }
     }
 
@@ -719,7 +745,7 @@ public partial class SpaceJunkRound
             return;
         }
 
-        float weight = Mathf.Max(0.1f, EventSettings.PickHeavyWeight());
+        float weight = Mathf.Max(MinHeavyWeight, EventSettings.PickHeavyWeight());
         stageHeavyIds.Add(item.NetworkObjectId);
         stageHeavyWeights.Add(weight);
 
@@ -744,12 +770,7 @@ public partial class SpaceJunkRound
             return false;
         }
 
-        float weight = index < stageHeavyWeights.Count ? stageHeavyWeights[index] : 1f;
-        stageHeavyIds.RemoveAt(index);
-        if (index < stageHeavyWeights.Count)
-        {
-            stageHeavyWeights.RemoveAt(index);
-        }
+        float weight = RemoveHeavyAt(stageHeavyIds, stageHeavyWeights, index);
 
         int points = EventSettings.HeavyPointsFor(weight);
         Debug.Log($"[JUNK] {SpaceJunkTeams.TeamName(team)} がステージの重いデブリ（重さ {weight:0.#}）を入れました（{points} 点）。");
@@ -772,12 +793,7 @@ public partial class SpaceJunkRound
             return 0;
         }
 
-        float weight = index < heavyWeights.Count ? heavyWeights[index] : 1f;
-        heavyIds.RemoveAt(index);
-        if (index < heavyWeights.Count)
-        {
-            heavyWeights.RemoveAt(index);
-        }
+        float weight = RemoveHeavyAt(heavyIds, heavyWeights, index);
 
         // 重さボーナスが ON なら、重いほど高い（設定は HeavyPointsFor の1か所）
         int points = EventSettings.HeavyPointsFor(weight);
@@ -786,6 +802,21 @@ public partial class SpaceJunkRound
                   $"残り {heavyIds.Count} 個。");
 
         return Mathf.Max(0, points - PointPerItem);
+    }
+
+    /// <summary>
+    /// 一覧の <paramref name="index"/> 番目の重いデブリを外し、その重さを返す
+    /// （重さの一覧が短くて見つからなければ 1 とみなす）。イベントの重いデブリとステージの重いデブリで共通。
+    /// </summary>
+    private static float RemoveHeavyAt(NetworkList<ulong> ids, NetworkList<float> weights, int index)
+    {
+        float weight = index < weights.Count ? weights[index] : 1f;
+        ids.RemoveAt(index);
+        if (index < weights.Count)
+        {
+            weights.RemoveAt(index);
+        }
+        return weight;
     }
 
     // ------------------------------------------------------------
@@ -810,11 +841,21 @@ public partial class SpaceJunkRound
         ApplyHeavyMarks(heavyIds, heavyWeights, spawned, settings);
         ApplyHeavyMarks(stageHeavyIds, stageHeavyWeights, spawned, settings);
 
+        RemoveStaleHeavyMarks(spawned);
+    }
+
+    /// <summary>
+    /// このPCで重い物にしていたのに、ホストの一覧から外れたデブリ（ゴールに入った・イベントが時間切れで戻した）を、
+    /// ふつうのデブリの見た目に戻す。
+    /// </summary>
+    private void RemoveStaleHeavyMarks(Dictionary<ulong, NetworkObject> spawned)
+    {
         if (appliedHeavyIds.Count == 0)
         {
             return;
         }
 
+        // foreach の途中で HashSet から消せないので、外すものをいったん集める（外すものが無い回は作らない）
         List<ulong> removed = null;
 
         foreach (ulong id in appliedHeavyIds)
@@ -824,6 +865,7 @@ public partial class SpaceJunkRound
                 continue;
             }
 
+            // もう消えている（場外に落ちた など）なら、見た目を戻す相手がいないので覚え書きだけ外す
             if (spawned.TryGetValue(id, out NetworkObject networkObject) && networkObject != null)
             {
                 if (networkObject.TryGetComponent(out HeavyHookable heavy))

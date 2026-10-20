@@ -190,33 +190,42 @@ public class RaceRacer : MonoBehaviour
         }
         else
         {
-            // CharacterController が付いていると、位置を入れても押し戻されることがある。
-            // 一度切ってから動かすのが確実
-            CharacterController controller = GetComponent<CharacterController>();
-            bool wasEnabled = controller != null && controller.enabled;
-
-            if (wasEnabled)
-            {
-                controller.enabled = false;
-            }
-
-            transform.SetPositionAndRotation(position, rotation);
-
-            if (wasEnabled)
-            {
-                controller.enabled = true;
-            }
-
-            KartController kart = GetComponent<KartController>();
-
-            if (kart != null)
-            {
-                kart.StopImmediately();
-            }
+            TeleportSelf(position, rotation);
         }
 
         // **「前のフレームの位置」も移動先に合わせる。**
         // 合わせないと、瞬間移動の途中で通過点を横切ったと勘違いされる
         PreviousPosition = TrackedPosition;
+    }
+
+    /// <summary>
+    /// 自分自身（カートのように体が1つの作り）を動かす。
+    /// 動かしたあと、カートの勢いも消しておく。
+    /// </summary>
+    private void TeleportSelf(Vector3 position, Quaternion rotation)
+    {
+        // CharacterController が付いていると、位置を入れても押し戻されることがある。
+        // 一度切ってから動かすのが確実
+        CharacterController controller = GetComponent<CharacterController>();
+        bool wasEnabled = controller != null && controller.enabled;
+
+        if (wasEnabled)
+        {
+            controller.enabled = false;
+        }
+
+        transform.SetPositionAndRotation(position, rotation);
+
+        if (wasEnabled)
+        {
+            controller.enabled = true;
+        }
+
+        KartController kart = GetComponent<KartController>();
+
+        if (kart != null)
+        {
+            kart.StopImmediately();
+        }
     }
 }
