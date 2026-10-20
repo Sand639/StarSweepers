@@ -43,6 +43,7 @@ public class SpaceJunkCameraTestTargets : MonoBehaviour
 
     private void OnEnable()
     {
+        // シーンに置いて有効になっているだけで「検証モード」になる。カメラの種類の部品は Active を見て切り替わる
         Active = this;
     }
 

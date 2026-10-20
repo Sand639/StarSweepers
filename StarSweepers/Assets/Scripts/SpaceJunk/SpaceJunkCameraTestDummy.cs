@@ -62,6 +62,7 @@ public class SpaceJunkCameraTestDummy : MonoBehaviour
 
     private void Start()
     {
+        // 最初に置かれた位置を「家」にする。勝手に歩く範囲の中心と、地面の高さの両方に使う
         home = transform.position;
         wanderGoal = home;
     }

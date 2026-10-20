@@ -118,6 +118,10 @@ public class SpaceJunkCameraModeSwitch : MonoBehaviour
         }
     }
 
+    /// <summary>
+    /// いまの種類に「置きたい位置」を聞いて、カメラを動かす。プレイヤーが動いたあと（LateUpdate）に行う。
+    /// 置き場所が決まらないとき（相手がまだいない など）はカメラをそのままにする。
+    /// </summary>
     private void LateUpdate()
     {
         if (Current == null || !Current.TryGetPose(Time.deltaTime, out Vector3 position, out Quaternion rotation))

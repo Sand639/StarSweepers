@@ -62,6 +62,7 @@ public abstract class SpaceJunkCameraMode : MonoBehaviour
 
     protected virtual void Awake()
     {
+        // 切り替え部品が同じカメラに付いているかは、ここで1回だけ調べる（無ければ自分で動かす側になる）
         View = GetComponent<Camera>();
         owner = GetComponent<SpaceJunkCameraModeSwitch>();
     }
