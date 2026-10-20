@@ -503,6 +503,13 @@ public static class SpaceJunkSetup
             {
                 host.AddComponent<SpaceJunkRound>();
             }
+
+            // 2026/10/21〜 進行役はプレハブ（SpaceJunkRound.prefab）を置いたものにそろえる。値を1か所で変えられるように
+            GameObject prefab = SpaceJunkRoundPrefabSetup.EnsurePrefab();
+            if (prefab != null)
+            {
+                SpaceJunkRoundPrefabSetup.ReplaceWithPrefab(host, prefab);
+            }
         }
     }
 
