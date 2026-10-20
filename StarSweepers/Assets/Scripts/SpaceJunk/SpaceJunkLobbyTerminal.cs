@@ -55,6 +55,7 @@ public class SpaceJunkLobbyTerminal : MonoBehaviour
     /// <summary>押すキーとボタンの名前（案内の文言に使う。例：「E／A」）。</summary>
     public string InteractKeyName => $"{interactKey}／{GamepadInput.Label(interactButton)}";
 
+    /// <summary>近づいていないときに戻す、見た目の元の色。</summary>
     private Color originalColor = Color.white;
 
     private void Awake()
@@ -78,6 +79,8 @@ public class SpaceJunkLobbyTerminal : MonoBehaviour
 
     private void Update()
     {
+        // 「このPCがホストで、このPCの1人目が端末の近くにいる」ときだけ使える
+        // （IsListening … 通信が動いているか。IsServer … このPCがホスト（サーバー）か）
         NetworkManager manager = NetworkManager.Singleton;
         bool isHost = manager != null && manager.IsListening && manager.IsServer;
 
@@ -120,6 +123,7 @@ public class SpaceJunkLobbyTerminal : MonoBehaviour
         //
         // 閉じ方は「もう一度 E」か、画面の「閉じる」ボタン。
 
+        // 色と操作は、開く・閉じるが切り替わったときだけでなく毎フレーム合わせ直している
         ApplyHighlight();
         SetLocalPlayerControlEnabled(!IsOpen);
     }
@@ -157,6 +161,7 @@ public class SpaceJunkLobbyTerminal : MonoBehaviour
         return null;
     }
 
+    /// <summary>ホストが近いときだけ、見た目を <see cref="nearColor"/> にする。</summary>
     private void ApplyHighlight()
     {
         if (highlightRenderer == null)
@@ -164,10 +169,14 @@ public class SpaceJunkLobbyTerminal : MonoBehaviour
             return;
         }
 
+        // material（この見た目専用の複製）の色を変える。sharedMaterial を変えると、同じ素材を使うほかの物の色まで変わってしまう
         highlightRenderer.material.color = IsHostNearby ? nearColor : originalColor;
     }
 
-    /// <summary>設定を開いている間、自分の移動とフックを止める。</summary>
+    /// <summary>
+    /// 設定を開いている間、自分の移動とフックを止める。
+    /// 止めるのは**このPCで操作している全員**（IsOwner の全員。1台で複数人なら2人目以降も止まる）。
+    /// </summary>
     private void SetLocalPlayerControlEnabled(bool enabledState)
     {
         foreach (FishingNetPlayer player in FishingNetPlayer.All)

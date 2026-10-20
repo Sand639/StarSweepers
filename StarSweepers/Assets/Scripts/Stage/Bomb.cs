@@ -94,14 +94,31 @@ public class Bomb : MonoBehaviour
     /// <summary>もう爆発したか。</summary>
     public bool HasExploded { get; private set; }
 
+    /// <summary>
+    /// 近くの当たり判定を探すときの入れ物。**毎フレーム作り直さないよう、全部の爆弾で使い回している。**
+    /// 一度に拾えるのは16個まで。
+    /// </summary>
     private static readonly Collider[] Hits = new Collider[16];
+
+    /// <summary>
+    /// 「吹っ飛ばせない人が触れた」とコンソールに知らせたか。
+    /// **全部の爆弾で1回きり**にするため static にしている（毎回出すとコンソールが埋まる）。
+    /// </summary>
     private static bool warnedNotLaunchable;
 
+    /// <summary>この爆発で、もう飛ばした相手。1人を2回飛ばさないために覚えておく。</summary>
     private readonly HashSet<ILaunchable> launchedThisTime = new HashSet<ILaunchable>();
 
+    /// <summary>爆弾の見た目（子も含む）。爆発したら消し、戻ったら出す。</summary>
     private Renderer[] visuals;
+
+    /// <summary>置いた位置。上下に揺らすときの中心で、戻るときもここへ戻す。</summary>
     private Vector3 restLocalPosition;
+
+    /// <summary>上下の揺れの始まりのずれ（ラジアン）。</summary>
     private float bobPhase;
+
+    /// <summary>爆発してから元に戻るまでの残り秒数。</summary>
     private float respawnTimer;
 
     private void Awake()
@@ -144,10 +161,12 @@ public class Bomb : MonoBehaviour
     // 触れたか
     // ------------------------------------------------------------
 
+    /// <summary>
+    /// 爆発する前、毎フレーム呼ぶ。**周りの球の中に人が1人でも入っていたら、爆発させる。**
+    /// </summary>
     private void CheckTouch()
     {
-        int count = Physics.OverlapSphereNonAlloc(
-            transform.position, touchRadius, Hits, ~0, QueryTriggerInteraction.Ignore);
+        int count = CollectNearby(transform.position);
 
         for (int i = 0; i < count; i++)
         {
@@ -157,6 +176,16 @@ public class Bomb : MonoBehaviour
                 return;
             }
         }
+    }
+
+    /// <summary>
+    /// <paramref name="center"/> から <see cref="touchRadius"/> の球の中にある当たり判定を、<see cref="Hits"/> に集める。
+    /// 戻り値は見つかった数。~0 は「すべてのレイヤー」で、すり抜ける当たり判定（トリガー）は数えない。
+    /// </summary>
+    private int CollectNearby(Vector3 center)
+    {
+        return Physics.OverlapSphereNonAlloc(
+            center, touchRadius, Hits, ~0, QueryTriggerInteraction.Ignore);
     }
 
     // ------------------------------------------------------------
@@ -182,8 +211,7 @@ public class Bomb : MonoBehaviour
 
         launchedThisTime.Clear();
 
-        int count = Physics.OverlapSphereNonAlloc(
-            center, touchRadius, Hits, ~0, QueryTriggerInteraction.Ignore);
+        int count = CollectNearby(center);
 
         for (int i = 0; i < count; i++)
         {
@@ -212,14 +240,20 @@ public class Bomb : MonoBehaviour
     /// </summary>
     public float CurrentLaunchSpeed()
     {
+        // Scale は「ふつうの何倍の重力か」（地球なら 1）。0 で割らないよう、下を 0.01 で止める
         float scale = Mathf.Max(0.01f, WorldGravity.Scale);
         float multiplier = Mathf.Pow(1f / scale, gravityInfluence);
 
         return launchSpeed * Mathf.Clamp(multiplier, minMultiplier, maxMultiplier);
     }
 
+    /// <summary>
+    /// 触れていた1人を、<paramref name="center"/>（爆弾の中心）から離れる向きへ、<paramref name="speed"/> の速さで飛ばす。
+    /// 実際に飛ぶ動きは、相手の <see cref="ILaunchable"/> に任せている。
+    /// </summary>
     private void LaunchCharacter(CharacterController character, Vector3 center, float speed)
     {
+        // 当たり判定は体の子に付いていることがあるので、親までさかのぼって探す
         ILaunchable target = character.GetComponentInParent<ILaunchable>();
 
         if (target == null)
@@ -248,6 +282,7 @@ public class Bomb : MonoBehaviour
             direction = Vector3.up;
         }
 
+        // 上向きを少し足してから長さ1に直し、上を向きすぎていたら角度の上限までねかせる
         direction = (direction.normalized + Vector3.up * upwardBias).normalized;
         direction = LimitAngle(direction, character);
 
@@ -268,6 +303,7 @@ public class Bomb : MonoBehaviour
             return direction;
         }
 
+        // 地面からの角度（度）。direction は長さ1なので、y がそのまま「上向きの割合」＝ sin(角度) になる
         float angle = Mathf.Asin(Mathf.Clamp(direction.y, -1f, 1f)) * Mathf.Rad2Deg;
 
         if (angle <= maxLaunchAngle)
@@ -275,29 +311,39 @@ public class Bomb : MonoBehaviour
             return direction;
         }
 
+        // 横の向き（上下の成分を除いたもの）
         Vector3 flat = new Vector3(direction.x, 0f, direction.z);
 
         // ほぼ真上（約6度以内）のときは、横の向きがぶれやすいので使わない
+        // （横の長さ 0.1 未満。direction は長さ1なので、真上から asin(0.1)＝約5.7度以内）
         if (flat.sqrMagnitude < 0.1f * 0.1f)
         {
+            // 代わりに、人が動いていた向き（秒速0.1メートル未満なら「止まっている」とみなす）
             flat = new Vector3(character.velocity.x, 0f, character.velocity.z);
 
             if (flat.sqrMagnitude < 0.1f * 0.1f)
             {
+                // 止まっていたら、人の向いている向き
                 flat = new Vector3(character.transform.forward.x, 0f, character.transform.forward.z);
             }
 
+            // 人の向きまで真上か真下を向いていて、それでも横の向きが決まらないとき
             if (flat.sqrMagnitude < 0.0001f)
             {
                 flat = Vector3.forward;
             }
         }
 
+        // 横の向きを保ったまま、ちょうど上限の角度になる向きを作る（長さ1）
         float radians = maxLaunchAngle * Mathf.Deg2Rad;
 
         return flat.normalized * Mathf.Cos(radians) + Vector3.up * Mathf.Sin(radians);
     }
 
+    /// <summary>
+    /// 爆発の見た目（広がって消える球、<see cref="BlastEffect"/>）を出す。
+    /// マテリアルが入っていなければ、見た目は出さない（爆発そのものはする）。
+    /// </summary>
     private void SpawnBlast(Vector3 center)
     {
         if (blastMaterial == null)
@@ -308,6 +354,7 @@ public class Bomb : MonoBehaviour
         GameObject blast = GameObject.CreatePrimitive(PrimitiveType.Sphere);
         blast.name = name + "_Blast";
 
+        // 見た目だけなので、当たり判定を外す。消えるのはフレームの終わりなので、先に切っておく
         Collider collider = blast.GetComponent<Collider>();
         collider.enabled = false;
         Destroy(collider);
@@ -326,6 +373,7 @@ public class Bomb : MonoBehaviour
     // 見た目・戻る
     // ------------------------------------------------------------
 
+    /// <summary>浮いていると分かるように、置いた位置を中心にゆっくり上下させる。</summary>
     private void Bob()
     {
         if (bobHeight <= 0f)
@@ -333,10 +381,12 @@ public class Bomb : MonoBehaviour
             return;
         }
 
+        // 2 は揺れの速さ（1秒あたりのラジアン）。約3.1秒で1往復する
         float offset = Mathf.Sin(Time.time * 2f + bobPhase) * bobHeight;
         transform.localPosition = restLocalPosition + Vector3.up * offset;
     }
 
+    /// <summary>爆発したあと、毎フレーム呼ぶ。「元に戻る秒数」が決めてあれば、時間が来たら戻す。</summary>
     private void UpdateRespawn()
     {
         if (respawnSeconds <= 0f)
@@ -363,6 +413,10 @@ public class Bomb : MonoBehaviour
         SetVisible(true);
     }
 
+    /// <summary>
+    /// 見た目を出す・消す。**ゲームオブジェクトは止めずに、描くのだけをやめる**
+    /// （止めてしまうと Update も止まり、元に戻る時間を数えられなくなるため）。
+    /// </summary>
     private void SetVisible(bool visible)
     {
         for (int i = 0; i < visuals.Length; i++)

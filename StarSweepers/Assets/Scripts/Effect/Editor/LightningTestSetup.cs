@@ -16,6 +16,8 @@ using UnityEngine.Rendering.Universal;
 /// </summary>
 public static class LightningTestSetup
 {
+    // 作る物の置き場所。AssetDatabase に渡す文字列なので、変えると既にある物を見つけられなくなる
+
     private const string MaterialFolder = "Assets/Art/Materials";
     private const string LightningMaterialPath = MaterialFolder + "/LightningAdditive.mat";
     private const string CharacterMaterialPath = MaterialFolder + "/LightningTestCharacter.mat";
@@ -28,6 +30,10 @@ public static class LightningTestSetup
     private const string VolumeProfilePath = "Assets/Settings/LightningTestVolume.asset";
     private const string ScenePath = "Assets/Scenes/Test/LightningTest.unity";
 
+    /// <summary>
+    /// 検証シーンを一から作って保存する（既にあれば上書き）。
+    /// 必要な素材（マテリアル・プレハブ・後処理の設定）は、無いものだけ先に作る。
+    /// </summary>
     [MenuItem("Tools/StarSweepers/電撃エフェクトの検証シーンを作り直す")]
     public static void CreateTestScene()
     {
@@ -102,6 +108,8 @@ public static class LightningTestSetup
         GameObject driverObject = new GameObject("LightningTestDriver");
         LightningTestDriver driver = driverObject.AddComponent<LightningTestDriver>();
 
+        // private の [SerializeField] に、インスペクターで入れるのと同じ仕組みで参照を入れる
+        // （フィールド名の文字列で引くので、LightningTestDriver 側の名前を変えたらここも変えること）
         SerializedObject driverSerialized = new SerializedObject(driver);
         driverSerialized.FindProperty("lightning").objectReferenceValue = lightning;
         driverSerialized.FindProperty("beam").objectReferenceValue = beam;
@@ -184,6 +192,7 @@ public static class LightningTestSetup
         return SavePrefab(root, BeamPrefabPath);
     }
 
+    /// <summary>電撃の色に合わせた緑がかった点光源を、<paramref name="parent"/> の子に作る（影は無し）。</summary>
     private static Light CreatePointLight(Transform parent, string name, Vector3 localPosition, float range)
     {
         GameObject lightObject = new GameObject(name);
@@ -199,6 +208,10 @@ public static class LightningTestSetup
         return light;
     }
 
+    /// <summary>
+    /// 組み立てたオブジェクトをプレハブとして保存し、シーンに残った元のオブジェクトは消す。
+    /// 置き場のフォルダが無ければ作る（`Assets/Prefabs` はある前提）。
+    /// </summary>
     private static GameObject SavePrefab(GameObject root, string path)
     {
         if (!AssetDatabase.IsValidFolder(PrefabFolder))
@@ -215,6 +228,7 @@ public static class LightningTestSetup
     // 素材
     // ------------------------------------------------------------
 
+    /// <summary>電撃用の加算合成のマテリアル。実行時に作るのと同じ物をアセットとして保存しておく。</summary>
     private static Material GetOrCreateLightningMaterial()
     {
         Material existing = AssetDatabase.LoadAssetAtPath<Material>(LightningMaterialPath);
@@ -229,6 +243,7 @@ public static class LightningTestSetup
         return material;
     }
 
+    /// <summary>キャラクターや床に使う、ふつうの（光を受ける）単色のマテリアル。</summary>
     private static Material GetOrCreateLitMaterial(string path, Color color)
     {
         Material existing = AssetDatabase.LoadAssetAtPath<Material>(path);
@@ -245,6 +260,7 @@ public static class LightningTestSetup
             shader = Shader.Find("Standard");
         }
 
+        // 色のプロパティ名が URP（_BaseColor）と Standard（_Color）で違うので、両方に入れておく
         Material material = new Material(shader);
         material.SetColor("_BaseColor", color);
         material.color = color;
@@ -266,6 +282,7 @@ public static class LightningTestSetup
         VolumeProfile profile = ScriptableObject.CreateInstance<VolumeProfile>();
         AssetDatabase.CreateAsset(profile, VolumeProfilePath);
 
+        // threshold 1 ＝ 明るさが 1 を超えた部分だけがにじむ。電撃の色を HDR で 1 より大きくしているのはこのため
         Bloom bloom = profile.Add<Bloom>(true);
         bloom.threshold.Override(1f);
         bloom.intensity.Override(1.5f);
@@ -280,6 +297,7 @@ public static class LightningTestSetup
         return profile;
     }
 
+    /// <summary>マテリアルを付ける（null なら付けず、Unity の既定のまま）。</summary>
     private static void SetMaterial(GameObject target, Material material)
     {
         if (material != null)

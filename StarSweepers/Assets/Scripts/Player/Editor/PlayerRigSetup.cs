@@ -1,9 +1,7 @@
-using System.Collections.Generic;
 using UnityEditor;
 using UnityEditor.SceneManagement;
 using UnityEngine;
 using UnityEngine.InputSystem;
-using UnityEngine.UI;
 
 /// <summary>
 /// PlayerRig のプレハブと、その検証用シーンを自動で作り直すツール。
@@ -66,12 +64,13 @@ public static class PlayerRigSetup
     {
         GameObject root = new GameObject("PlayerRig");
 
+        // 当たり判定。足元が原点（y=0）で、身長2mのカプセルの中心は y=1m
         CharacterController controller = root.AddComponent<CharacterController>();
         controller.height = 2f;
         controller.radius = 0.4f;
         controller.center = new Vector3(0f, 1f, 0f);
-        controller.slopeLimit = 50f;
-        controller.stepOffset = 0.3f;
+        controller.slopeLimit = 50f;   // これより急な坂（度）は登れない
+        controller.stepOffset = 0.3f;  // これより低い段差（メートル）は乗り越えられる
 
         // 見た目のカプセル。当たり判定は CharacterController が持つので、コライダーは外す
         GameObject body = GameObject.CreatePrimitive(PrimitiveType.Capsule);
@@ -83,16 +82,16 @@ public static class PlayerRigSetup
         MeshRenderer bodyRenderer = body.GetComponent<MeshRenderer>();
         bodyRenderer.sharedMaterial = bodyMaterial;
 
-        // 前がどちらか分かるようにする目印
-        GameObject nose = GameObject.CreatePrimitive(PrimitiveType.Cube);
-        nose.name = "FrontMark";
-        nose.transform.SetParent(body.transform, false);
-        nose.transform.localPosition = new Vector3(0f, 0.25f, 0.5f);
-        nose.transform.localScale = new Vector3(0.25f, 0.25f, 0.25f);
-        Object.DestroyImmediate(nose.GetComponent<Collider>());
-        nose.GetComponent<MeshRenderer>().sharedMaterial = bodyMaterial;
+        // 前がどちらか分かるようにする目印（体の前面、少し上に付けた小さな箱）
+        GameObject frontMark = GameObject.CreatePrimitive(PrimitiveType.Cube);
+        frontMark.name = "FrontMark";
+        frontMark.transform.SetParent(body.transform, false);
+        frontMark.transform.localPosition = new Vector3(0f, 0.25f, 0.5f);
+        frontMark.transform.localScale = new Vector3(0.25f, 0.25f, 0.25f);
+        Object.DestroyImmediate(frontMark.GetComponent<Collider>());
+        frontMark.GetComponent<MeshRenderer>().sharedMaterial = bodyMaterial;
 
-        // 上下の首振りをさせる場所。目の高さに置く
+        // 上下の首振りをさせる場所。目の高さ（1.6m）に置く
         GameObject pivot = new GameObject("CameraPivot");
         pivot.transform.SetParent(root.transform, false);
         pivot.transform.localPosition = new Vector3(0f, 1.6f, 0f);
@@ -101,6 +100,7 @@ public static class PlayerRigSetup
         cameraObject.transform.SetParent(pivot.transform, false);
         cameraObject.tag = "MainCamera";
         Camera camera = cameraObject.AddComponent<Camera>();
+        // 一人称の腕はカメラのすぐ手前（0.2m ほど）にあるので、描ける一番近い距離を短くしておく
         camera.nearClipPlane = 0.05f;
         cameraObject.AddComponent<AudioListener>();
 
@@ -125,7 +125,8 @@ public static class PlayerRigSetup
             Debug.LogWarning($"{InputActionsPath} が見つかりませんでした。PlayerRig の入力設定は手で入れてください。");
         }
 
-        // private な [SerializeField] にエディタから値を入れる
+        // private な [SerializeField] にエディタから値を入れる。
+        // 文字列はフィールド名そのもの。フィールドを改名したらここも直すこと
         SerializedObject controllerSerialized = new SerializedObject(playerController);
         controllerSerialized.FindProperty("cameraPivot").objectReferenceValue = pivot.transform;
         controllerSerialized.FindProperty("inputActions").objectReferenceValue = inputActions;
@@ -172,6 +173,7 @@ public static class PlayerRigSetup
         hand.transform.localScale = new Vector3(0.15f, 0.15f, 0.15f);
     }
 
+    /// <summary>腕を作る四角を1つ作る。当たり判定と影は持たせない。</summary>
     private static GameObject CreateArmPart(Transform parent, string name, Material material)
     {
         GameObject part = GameObject.CreatePrimitive(PrimitiveType.Cube);
@@ -230,6 +232,7 @@ public static class PlayerRigSetup
         EditorSceneManager.SaveScene(scene, ScenePath);
     }
 
+    /// <summary>検証シーンに置く目印の箱（1m 角）を1つ作る。</summary>
     private static void CreateMarker(Vector3 position, Material material)
     {
         GameObject marker = GameObject.CreatePrimitive(PrimitiveType.Cube);
@@ -289,6 +292,7 @@ public static class PlayerRigSetup
         }
     }
 
+    /// <summary>フォルダが無ければ作る。途中のフォルダも一緒に作る。</summary>
     private static void EnsureFolder(string path)
     {
         if (AssetDatabase.IsValidFolder(path))

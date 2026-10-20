@@ -87,7 +87,13 @@ public class RobotRope : MonoBehaviour
     /// 設定項目にしていないのは、**見た目と動きが食い違う事故を防ぐため。**
     /// 横に倒して置いたのに上下移動になる、ということが起きない。
     /// </summary>
-    public bool IsHorizontal => Mathf.Abs(Vector3.Dot(Direction, Vector3.up)) < 0.707f;
+    public bool IsHorizontal => Mathf.Abs(Vector3.Dot(Direction, Vector3.up)) < Cos45Degrees;
+
+    /// <summary>
+    /// cos 45度（約0.707）。ロープの向きと真上との内積がこれより小さい＝**真上から45度より倒れている。**
+    /// 逆さまに置いたときも同じに扱えるよう、内積は絶対値で比べている。
+    /// </summary>
+    private const float Cos45Degrees = 0.707f;
 
     /// <summary>つかまれる一番下の高さ（下端からの距離）。</summary>
     public float MinHold => Mathf.Min(bottomMargin, height);
@@ -97,6 +103,7 @@ public class RobotRope : MonoBehaviour
 
     private void OnEnable()
     {
+        // 出ている間だけ一覧に載せる。止めたロープは、つかまる側から見つからなくなる
         All.Add(this);
     }
 
@@ -152,6 +159,7 @@ public class RobotRope : MonoBehaviour
         Gizmos.DrawLine(Bottom, Top);
 
         // つかまれる範囲を、少しだけ太い線で重ねて描く
+        // （実際には、つかまれる一番下と一番上に、半径 0.08メートルの半透明の球を置いて示している）
         Gizmos.color = new Color(1f, 0.85f, 0.35f, 0.5f);
         Gizmos.DrawSphere(PointAt(MinHold), 0.08f);
         Gizmos.DrawSphere(PointAt(MaxHold), 0.08f);

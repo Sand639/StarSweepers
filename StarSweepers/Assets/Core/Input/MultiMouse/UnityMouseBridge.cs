@@ -23,6 +23,7 @@ namespace ProjectEL4S.MultiMouse
             _delta += new Vector2(rawDeltaX, -rawDeltaY);
         }
 
+        /// <summary>溜めていた移動量を捨てる（Unity には書かない）。フォーカスが外れていた・流し直しを切っている ときなど。</summary>
         public void Clear()
         {
             _delta = Vector2.zero;

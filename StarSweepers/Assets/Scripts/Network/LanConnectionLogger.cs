@@ -13,6 +13,7 @@ using UnityEngine;
 [RequireComponent(typeof(NetworkManager))]
 public class LanConnectionLogger : MonoBehaviour
 {
+    /// <summary>通信のまとめ役。同じ GameObject に付いている（RequireComponent）。これの知らせ（つながった・切れた）を記録する。</summary>
     private NetworkManager manager;
 
     private void Awake()
@@ -76,6 +77,7 @@ public class LanConnectionLogger : MonoBehaviour
         {
             yield return wait;
 
+            // つながっていない間は何も残さず、待ち続ける（止めないのは、つなぎ直したときにまた記録するため）
             if (manager == null || (!manager.IsClient && !manager.IsServer))
             {
                 continue;
@@ -107,8 +109,10 @@ public class LanConnectionLogger : MonoBehaviour
         }
     }
 
+    /// <summary>誰かがつながったとき。ホストでは「誰が・いま何人」、参加者では「自分がつながった」の意味になる。</summary>
     private void HandleClientConnected(ulong clientId)
     {
+        // 人数が分かるのはホストだけ。参加者側は -1 にして、文面を変える
         int count = manager.IsServer ? manager.ConnectedClientsIds.Count : -1;
 
         Debug.Log(count >= 0
@@ -116,6 +120,7 @@ public class LanConnectionLogger : MonoBehaviour
             : $"[LAN] つながりました（自分の番号：{clientId}）");
     }
 
+    /// <summary>誰かが切れたとき。参加者側では「自分が切られた」ときにも呼ばれる（理由があれば一緒に残す）。</summary>
     private void HandleClientDisconnected(ulong clientId)
     {
         string reason = string.IsNullOrEmpty(manager.DisconnectReason)

@@ -51,13 +51,29 @@ public class SpaceJunkCameraModeSwitch : MonoBehaviour
     /// <summary>いま動いている切り替え部品（シーンが切り替わる間は、古い物と新しい物が一瞬重なるため）。</summary>
     private static SpaceJunkCameraModeSwitch current;
 
+    /// <summary>切り替えに入れる種類（カメラに付いている順）。<see cref="RefreshModes"/> で集め直す。</summary>
     private readonly List<SpaceJunkCameraMode> modes = new List<SpaceJunkCameraMode>();
+
+    /// <summary>案内の文字を毎フレーム組み立てるときの入れ物（使い回してごみを減らす）。</summary>
     private readonly System.Text.StringBuilder summary = new System.Text.StringBuilder();
+
+    /// <summary>案内に出す、切り替えのキーとボタンの名前（例：「C／Back」）。Awake で1回だけ作る。</summary>
     private string toggleLabel;
 
+    // ── 切り替えのつなぎ ──
+    // 切り替えた瞬間のカメラの位置・向きを控えておき、新しい種類が求めた位置へ blendSeconds かけて寄せる。
+    // 新しい種類の側は SnapNext で「その場所へ飛ぶ」ので、なめらかさはこちらだけが受け持つ
+
+    /// <summary>切り替えた瞬間のカメラの位置（つなぎの出発点）。</summary>
     private Vector3 blendFromPosition;
+
+    /// <summary>切り替えた瞬間のカメラの向き（つなぎの出発点）。</summary>
     private Quaternion blendFromRotation;
+
+    /// <summary>切り替えてから経った秒数。</summary>
     private float blendTime;
+
+    /// <summary>いま、つなぎの途中か。</summary>
     private bool blending;
 
     private void Awake()
@@ -79,12 +95,14 @@ public class SpaceJunkCameraModeSwitch : MonoBehaviour
     {
         RefreshModes();
 
+        // 最初のカメラに指定された種類が「切り替えに入れない」設定なら、指定を無視して順でいちばん上から
         SpaceJunkCameraMode start = firstMode != null && firstMode.InCycle ? firstMode : null;
         if (start == null && modes.Count > 0)
         {
             start = modes[0];
         }
 
+        // 始まりはつなぎ無しでその場所へ（start が null なら SetMode は何もしない）
         SetMode(start, snap: true);
     }
 
@@ -100,6 +118,10 @@ public class SpaceJunkCameraModeSwitch : MonoBehaviour
         }
     }
 
+    /// <summary>
+    /// いまの種類に「置きたい位置」を聞いて、カメラを動かす。プレイヤーが動いたあと（LateUpdate）に行う。
+    /// 置き場所が決まらないとき（相手がまだいない など）はカメラをそのままにする。
+    /// </summary>
     private void LateUpdate()
     {
         if (Current == null || !Current.TryGetPose(Time.deltaTime, out Vector3 position, out Quaternion rotation))
@@ -109,6 +131,8 @@ public class SpaceJunkCameraModeSwitch : MonoBehaviour
 
         if (blending)
         {
+            // 切り替えた瞬間の位置から、新しい種類が求めた位置へ寄せる。
+            // k は 0（出発点）〜1（新しい位置）の進み具合。SmoothStep で、出だしと終わりをゆるやかにしている
             blendTime += Time.deltaTime;
             float k = blendSeconds > 0f ? Mathf.SmoothStep(0f, 1f, blendTime / blendSeconds) : 1f;
             position = Vector3.Lerp(blendFromPosition, position, k);
@@ -128,6 +152,8 @@ public class SpaceJunkCameraModeSwitch : MonoBehaviour
             return;
         }
 
+        // いまの種類が切り替えから外れていた（再生中に OFF にした など）ときは IndexOf が -1 を返すので、
+        // 自然と先頭（0 番）へ行く
         int index = modes.IndexOf(Current);
         SetMode(modes[(index + 1) % modes.Count], snap: false);
     }
@@ -143,6 +169,7 @@ public class SpaceJunkCameraModeSwitch : MonoBehaviour
         Current = mode;
         mode.Activate();
 
+        // つなぎの出発点は「いまカメラがある場所」（前の種類が最後に置いた位置）
         blending = !snap && blendSeconds > 0f;
         blendTime = 0f;
         blendFromPosition = transform.position;
@@ -175,6 +202,7 @@ public class SpaceJunkCameraModeSwitch : MonoBehaviour
         }
     }
 
+    /// <summary>案内の文字「いま：チーム（全体／チーム／自分）」を組み立てる。種類が1つだけなら括弧は付けない。</summary>
     private string Summary()
     {
         if (Current == null)

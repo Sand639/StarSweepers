@@ -11,15 +11,18 @@ namespace ProjectEL4S.MultiKeyboard
     [RequireComponent(typeof(MultiKeyboardManager))]
     public sealed class MultiKeyboardTestHud : MonoBehaviour
     {
+        [Tooltip("キーボードごとに動かす四角の一辺（px）")]
         [SerializeField] private float _boxSize = 60f;
         [Tooltip("四角の移動速度（px/秒）")]
         [SerializeField] private float _moveSpeed = 400f;
+        [Tooltip("四角を動かすキー（WASD／矢印／両方）")]
         [SerializeField] private MultiKeyboardMoveKeys _moveKeys = MultiKeyboardMoveKeys.WasdAndArrows;
 
         private MultiKeyboardManager _manager;
+        // 1×1 の白い画像。色を変えて四角を塗るのに使う（IMGUI には塗りつぶしの命令が無いため）
         private Texture2D _pixel;
         private Vector2[] _boxPositions;   // GUI 座標（左上原点）の中心
-        private int[] _keyDownCounts;
+        private int[] _keyDownCounts;      // キーボードごとの「何かを押した」フレーム数（取りこぼし・二重カウントの確認用）
         private GUIStyle _labelStyle;
         private readonly StringBuilder _sb = new StringBuilder();
 
@@ -122,6 +125,7 @@ namespace ProjectEL4S.MultiKeyboard
                 _sb.AppendLine($"     {Shorten(kb.DeviceName)}");
             }
 
+            // 同じ文字を黒で 1px ずらして先に描き、影にして読みやすくする
             GUI.color = Color.black;
             GUI.Label(new Rect(13f, 11f, 1000f, 260f), _sb.ToString(), _labelStyle);
             GUI.color = Color.white;
@@ -145,6 +149,7 @@ namespace ProjectEL4S.MultiKeyboard
             GUI.color = Color.white;
         }
 
+        /// <summary>四角を画面の下寄りに、番号順で横一列に並べ直す（間隔は画面の幅の 15%）。</summary>
         private void ResetBoxes()
         {
             for (int i = 0; i < _boxPositions.Length; i++)
@@ -155,6 +160,7 @@ namespace ProjectEL4S.MultiKeyboard
             }
         }
 
+        /// <summary>デバイスパスは 100 文字を超えることがあるので、画面に収まるよう 70 文字で切る。</summary>
         private static string Shorten(string deviceName)
         {
             if (string.IsNullOrEmpty(deviceName)) return "(unknown)";

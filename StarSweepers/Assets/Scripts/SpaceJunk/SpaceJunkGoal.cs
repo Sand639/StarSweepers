@@ -104,6 +104,7 @@ public class SpaceJunkGoal : NetworkBehaviour
         }
     }
 
+    /// <summary>光っている間（素材が入った直後）だけ Flash Color、それ以外はチームの色で床を塗る。</summary>
     private void Update()
     {
         if (padRenderer == null)

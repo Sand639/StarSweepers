@@ -74,6 +74,7 @@ public static class RaceCourseSetup
     // メニュー
     // ------------------------------------------------------------
 
+    /// <summary>カートのレース。カートのプレハブも、このとき作り直す。</summary>
     [MenuItem("Tools/StarSweepers/アーカイブ/カーレース/レースの検証シーンを作り直す")]
     public static void CreateAll()
     {
@@ -90,6 +91,7 @@ public static class RaceCourseSetup
         Finish(KartScenePath);
     }
 
+    /// <summary>ロボットが走るレース。ロボットのプレハブは既にあるものを使う（無ければ中止する）。</summary>
     [MenuItem("Tools/StarSweepers/アーカイブ/月面運動会/走るレースの検証シーンを作り直す")]
     public static void CreateRunnerRace()
     {
@@ -110,6 +112,7 @@ public static class RaceCourseSetup
         Finish(RunnerScenePath);
     }
 
+    /// <summary>成果物を置くフォルダをあらかじめ作っておく（無いと保存に失敗する）。</summary>
     private static void PrepareFolders()
     {
         EnsureFolder(PrefabFolder);
@@ -119,6 +122,7 @@ public static class RaceCourseSetup
         EnsureFolder(MaterialFolder);
     }
 
+    /// <summary>作ったものをディスクに書き出して、できたことをコンソールで知らせる。</summary>
     private static void Finish(string scenePath)
     {
         AssetDatabase.SaveAssets();
@@ -131,10 +135,16 @@ public static class RaceCourseSetup
     // カートのプレハブ
     // ------------------------------------------------------------
 
+    /// <summary>
+    /// カートのプレハブを作って保存する。
+    /// 当たり判定は本体の <see cref="CharacterController"/>（半径 0.8m・高さ 1.6m のカプセル）だけで、
+    /// 車体やタイヤは見た目だけ。
+    /// </summary>
     private static GameObject CreateKartPrefab(Material bodyMaterial, Material wheelMaterial)
     {
         GameObject root = new GameObject("RaceKart");
 
+        // カプセルの中心を 0.8m 上げて、底が地面（高さ0）に付くようにする
         CharacterController controller = root.AddComponent<CharacterController>();
         controller.radius = 0.8f;
         controller.height = 1.6f;
@@ -148,6 +158,7 @@ public static class RaceCourseSetup
 
         var inputActions = AssetDatabase.LoadAssetAtPath<InputActionAsset>(InputActionsPath);
 
+        // private のフィールドなので、SerializedObject 経由で入れる
         SerializedObject serialized = new SerializedObject(kart);
         serialized.FindProperty("racer").objectReferenceValue = racer;
 
@@ -181,6 +192,7 @@ public static class RaceCourseSetup
         return saved;
     }
 
+    /// <summary>タイヤを1つ作る（見た目だけ）。</summary>
     private static void CreateWheel(Transform parent, string name, Vector3 position, Material material)
     {
         GameObject wheel = CreatePart(parent, PrimitiveType.Cylinder, name,
@@ -190,6 +202,7 @@ public static class RaceCourseSetup
         wheel.transform.localRotation = Quaternion.Euler(0f, 0f, 90f);
     }
 
+    /// <summary>見た目の部品を1つ作る。当たり判定は付けない。</summary>
     private static GameObject CreatePart(Transform parent, PrimitiveType type, string name,
         Vector3 position, Vector3 scale, Material material)
     {
@@ -230,19 +243,71 @@ public static class RaceCourseSetup
 
         var scene = EditorSceneManager.NewScene(NewSceneSetup.EmptyScene, NewSceneMode.Single);
 
+        // ※ シーンの中の並び順は、作った順になる。以下の順番は変えないこと
+        // ----- 光と地面 -----
+        CreateLight();
+        CreateGround(ground);
+
+        // ----- コース -----
+        BuildCourse(size, road, wall, line, out List<RaceCheckpoint> checkpoints, out List<Transform> grid);
+
+        // ----- 進行役 -----
+        CreateRaceManager(checkpoints, grid);
+
+        // ----- 重力を変える係 -----
+        if (withGravityShifter)
+        {
+            GameObject gravityObject = new GameObject("GravityShifter");
+            gravityObject.AddComponent<GravityShifter>();
+        }
+
+        // ----- 画面表示 -----
+        CreateHud(hint);
+
+        // ----- 走る人 -----
+        GameObject placed = PlaceRacer(racerPrefab, grid);
+
+        // ----- カメラ -----
+        // プレハブがカメラを持っているときは置かない（2つあると何も映らない）
+        if (!prefabHasCamera)
+        {
+            CreateFollowCamera(placed);
+        }
+
+        EditorSceneManager.SaveScene(scene, scenePath);
+    }
+
+    /// <summary>太陽の光。斜め上（下向き 50度・左へ 30度）から、柔らかい影を落とす。</summary>
+    private static void CreateLight()
+    {
         GameObject lightObject = new GameObject("Directional Light");
         Light light = lightObject.AddComponent<Light>();
         light.type = LightType.Directional;
         light.intensity = 1.1f;
         light.shadows = LightShadows.Soft;
         lightObject.transform.rotation = Quaternion.Euler(50f, -30f, 0f);
+    }
 
+    /// <summary>
+    /// コースの外側に広がる地面。道（高さ0）より少し下（-0.2m）に置いて、道と重ならないようにする。
+    /// Plane は 10m 四方なので、30倍で 300m 四方。
+    /// </summary>
+    private static void CreateGround(Material material)
+    {
         GameObject groundObject = GameObject.CreatePrimitive(PrimitiveType.Plane);
         groundObject.name = "Ground";
         groundObject.transform.position = new Vector3(0f, -0.2f, 0f);
         groundObject.transform.localScale = new Vector3(30f, 1f, 30f);
-        groundObject.GetComponent<MeshRenderer>().sharedMaterial = ground;
+        groundObject.GetComponent<MeshRenderer>().sharedMaterial = material;
+    }
 
+    /// <summary>
+    /// コース一式（道・壁・通過点・スタートの線・スタート位置）を「Course」の下に作る。
+    /// 通過点とスタート位置は、進行役に繋ぐために返す。
+    /// </summary>
+    private static void BuildCourse(CourseSize size, Material road, Material wall, Material line,
+        out List<RaceCheckpoint> checkpoints, out List<Transform> grid)
+    {
         GameObject course = new GameObject("Course");
         GameObject roadRoot = new GameObject("Road");
         GameObject wallRoot = new GameObject("Walls");
@@ -256,11 +321,17 @@ public static class RaceCourseSetup
 
         BuildRoad(size, roadRoot.transform, wallRoot.transform, road, wall);
 
-        List<RaceCheckpoint> checkpoints = BuildCheckpoints(size, checkpointRoot.transform);
+        checkpoints = BuildCheckpoints(size, checkpointRoot.transform);
         BuildStartLineMark(size, course.transform, line);
-        List<Transform> grid = BuildStartGrid(size, gridRoot.transform);
+        grid = BuildStartGrid(size, gridRoot.transform);
+    }
 
-        // ----- 進行役 -----
+    /// <summary>
+    /// 進行役（<see cref="RaceManager"/>）を置き、通過点とスタート位置を順番どおりに繋ぐ。
+    /// どちらも private のフィールドなので、SerializedObject 経由で入れている。
+    /// </summary>
+    private static void CreateRaceManager(List<RaceCheckpoint> checkpoints, List<Transform> grid)
+    {
         GameObject managerObject = new GameObject("RaceManager");
         RaceManager manager = managerObject.AddComponent<RaceManager>();
 
@@ -268,53 +339,60 @@ public static class RaceCourseSetup
         SetObjectList(serialized.FindProperty("checkpoints"), checkpoints.ConvertAll(point => (Object)point));
         SetObjectList(serialized.FindProperty("startGrid"), grid.ConvertAll(slot => (Object)slot));
         serialized.ApplyModifiedPropertiesWithoutUndo();
+    }
 
-        // ----- 重力を変える係 -----
-        if (withGravityShifter)
-        {
-            GameObject gravityObject = new GameObject("GravityShifter");
-            gravityObject.AddComponent<GravityShifter>();
-        }
-
+    /// <summary>画面表示（<see cref="RaceHud"/>）を置き、左下に出す操作の案内の文を入れる。</summary>
+    private static void CreateHud(string hint)
+    {
         GameObject hudObject = new GameObject("RaceHud");
         RaceHud hud = hudObject.AddComponent<RaceHud>();
 
         SerializedObject hudSerialized = new SerializedObject(hud);
         hudSerialized.FindProperty("hintText").stringValue = hint;
         hudSerialized.ApplyModifiedPropertiesWithoutUndo();
+    }
 
-        // ----- 走る人 -----
-        GameObject placed = null;
-
-        if (racerPrefab != null && grid.Count > 0)
+    /// <summary>
+    /// 走る人（カートかロボット）を1人、先頭のスタート位置に置く。
+    /// プレハブが無い・スタート位置が無いときは置かず、null を返す。
+    /// </summary>
+    private static GameObject PlaceRacer(GameObject racerPrefab, List<Transform> grid)
+    {
+        if (racerPrefab == null || grid.Count == 0)
         {
-            placed = (GameObject)PrefabUtility.InstantiatePrefab(racerPrefab);
-            placed.transform.SetPositionAndRotation(grid[0].position, grid[0].rotation);
-
-            PrepareRacer(placed);
+            return null;
         }
 
-        // ----- カメラ -----
-        // プレハブがカメラを持っているときは置かない（2つあると何も映らない）
-        if (!prefabHasCamera)
+        GameObject placed = (GameObject)PrefabUtility.InstantiatePrefab(racerPrefab);
+        placed.transform.SetPositionAndRotation(grid[0].position, grid[0].rotation);
+
+        PrepareRacer(placed);
+
+        return placed;
+    }
+
+    /// <summary>
+    /// 後ろから追いかけるカメラ（<see cref="RaceCamera"/> 付き）を置く。
+    /// 走る人がいれば、その後ろ 8m・上 3.5m から、頭の高さ（1m 上）を見る位置に置いておく。
+    /// </summary>
+    private static void CreateFollowCamera(GameObject placed)
+    {
+        GameObject cameraObject = new GameObject("Main Camera");
+        cameraObject.tag = "MainCamera";
+        Camera camera = cameraObject.AddComponent<Camera>();
+
+        // コースが大きいので、遠く（500m）まで映す
+        camera.farClipPlane = 500f;
+        cameraObject.AddComponent<AudioListener>();
+        cameraObject.AddComponent<RaceCamera>();
+
+        if (placed != null)
         {
-            GameObject cameraObject = new GameObject("Main Camera");
-            cameraObject.tag = "MainCamera";
-            Camera camera = cameraObject.AddComponent<Camera>();
-            camera.farClipPlane = 500f;
-            cameraObject.AddComponent<AudioListener>();
-            cameraObject.AddComponent<RaceCamera>();
-
-            if (placed != null)
-            {
-                cameraObject.transform.position = placed.transform.position
-                    - placed.transform.forward * 8f + Vector3.up * 3.5f;
-                cameraObject.transform.rotation = Quaternion.LookRotation(
-                    placed.transform.position + Vector3.up - cameraObject.transform.position);
-            }
+            cameraObject.transform.position = placed.transform.position
+                - placed.transform.forward * 8f + Vector3.up * 3.5f;
+            cameraObject.transform.rotation = Quaternion.LookRotation(
+                placed.transform.position + Vector3.up - cameraObject.transform.position);
         }
-
-        EditorSceneManager.SaveScene(scene, scenePath);
     }
 
     /// <summary>
@@ -349,6 +427,7 @@ public static class RaceCourseSetup
         }
     }
 
+    /// <summary>SerializedObject の配列に、オブジェクトの一覧をそのまま入れる。</summary>
     private static void SetObjectList(SerializedProperty property, List<Object> values)
     {
         property.arraySize = values.Count;
@@ -367,57 +446,68 @@ public static class RaceCourseSetup
     /// **1周のうち <paramref name="distance"/> メートル進んだ地点**の、位置と進む向きを求める。
     ///
     /// 形は「陸上のトラック」と同じ。直線2本と、半円2つを繋いだもの。
+    /// スタート（0m）は右側の直線の始まりで、「右の直線 → 奥のカーブ → 左の直線 → 手前のカーブ」の順に1周する。
     /// </summary>
     private static void SamplePath(CourseSize size, float distance,
         out Vector3 position, out Vector3 forward)
     {
-        float s = Mathf.Repeat(distance, size.Perimeter);
+        // 1周を超えた分は巻き戻す（2周目の 10m 地点は、1周目の 10m 地点と同じ場所）
+        float remaining = Mathf.Repeat(distance, size.Perimeter);
 
+        // 半円1つの長さ
         float arc = Mathf.PI * size.Radius;
-        float half = size.Straight * 0.5f;
 
-        if (s < size.Straight)
+        // 直線の真ん中が Z=0 に来るようにするためのずれ
+        float halfStraight = size.Straight * 0.5f;
+
+        // 区間の長さを順に引いていき、どの区間にいるかを調べる
+        if (remaining < size.Straight)
         {
             // 右側の直線（+Z へ進む）
-            position = new Vector3(size.Radius, 0f, -half + s);
+            position = new Vector3(size.Radius, 0f, -halfStraight + remaining);
             forward = Vector3.forward;
             return;
         }
 
-        s -= size.Straight;
+        remaining -= size.Straight;
 
-        if (s < arc)
+        if (remaining < arc)
         {
-            // 奥のカーブ
-            float angle = s / size.Radius;
+            // 奥のカーブ。角度は 0（右端 +X）から π（左端 -X）まで
+            float angle = remaining / size.Radius;
             position = new Vector3(
-                size.Radius * Mathf.Cos(angle), 0f, half + size.Radius * Mathf.Sin(angle));
+                size.Radius * Mathf.Cos(angle), 0f, halfStraight + size.Radius * Mathf.Sin(angle));
             forward = new Vector3(-Mathf.Sin(angle), 0f, Mathf.Cos(angle));
             return;
         }
 
-        s -= arc;
+        remaining -= arc;
 
-        if (s < size.Straight)
+        if (remaining < size.Straight)
         {
             // 左側の直線（-Z へ進む）
-            position = new Vector3(-size.Radius, 0f, half - s);
+            position = new Vector3(-size.Radius, 0f, halfStraight - remaining);
             forward = Vector3.back;
             return;
         }
 
-        s -= size.Straight;
+        remaining -= size.Straight;
 
-        // 手前のカーブ
-        float back = Mathf.PI + s / size.Radius;
+        // 手前のカーブ。奥のカーブの続き（π から 2π）なので、角度に π を足す
+        float backAngle = Mathf.PI + remaining / size.Radius;
         position = new Vector3(
-            size.Radius * Mathf.Cos(back), 0f, -half + size.Radius * Mathf.Sin(back));
-        forward = new Vector3(-Mathf.Sin(back), 0f, Mathf.Cos(back));
+            size.Radius * Mathf.Cos(backAngle), 0f, -halfStraight + size.Radius * Mathf.Sin(backAngle));
+        forward = new Vector3(-Mathf.Sin(backAngle), 0f, Mathf.Cos(backAngle));
     }
 
+    /// <summary>
+    /// 道と壁を作る。1周を <see cref="CourseSize.Segments"/> 個の板に分け、
+    /// 前後の点を結ぶ向きに板を置いていく（カーブは短い板の連なりで表す）。
+    /// </summary>
     private static void BuildRoad(CourseSize size, Transform roadRoot, Transform wallRoot,
         Material roadMaterial, Material wallMaterial)
     {
+        // 板1枚ぶんの長さ（メートル）
         float step = size.Perimeter / size.Segments;
 
         for (int i = 0; i < size.Segments; i++)
@@ -439,7 +529,8 @@ public static class RaceCourseSetup
             Quaternion rotation = Quaternion.LookRotation(direction);
             Vector3 right = Vector3.Cross(Vector3.up, direction);
 
-            // 道。上の面がちょうど高さ0になるようにする
+            // 道。上の面がちょうど高さ0になるようにする（厚み 0.5m の板を、0.25m 下げて置く）。
+            // 長さは 8% 長くして、カーブで板と板の間に隙間が出ないようにしている
             GameObject road = GameObject.CreatePrimitive(PrimitiveType.Cube);
             road.name = $"Road{i:000}";
             road.transform.SetParent(roadRoot, false);
@@ -447,7 +538,7 @@ public static class RaceCourseSetup
             road.transform.localScale = new Vector3(size.Width, 0.5f, length * 1.08f);
             road.GetComponent<MeshRenderer>().sharedMaterial = roadMaterial;
 
-            // 壁。左右に1枚ずつ
+            // 壁。左右に1枚ずつ、道の端から 0.5m 外（壁の厚み 1m の半分）に置く
             CreateWall(wallRoot, $"WallOuter{i:000}",
                 middle + right * (size.Width * 0.5f + 0.5f), rotation, length, wallMaterial);
 
@@ -456,6 +547,7 @@ public static class RaceCourseSetup
         }
     }
 
+    /// <summary>壁を1枚作る。厚み 1m・高さ 2.5m。中心を高さの半分（1.25m）上げて、地面から生えるようにする。</summary>
     private static void CreateWall(Transform parent, string name, Vector3 position,
         Quaternion rotation, float length, Material material)
     {
@@ -463,16 +555,23 @@ public static class RaceCourseSetup
         wall.name = name;
         wall.transform.SetParent(parent, false);
         wall.transform.SetPositionAndRotation(position + Vector3.up * 1.25f, rotation);
+
+        // 長さは道と同じく 8% 長くして、隙間を消す
         wall.transform.localScale = new Vector3(1f, 2.5f, length * 1.08f);
         wall.GetComponent<MeshRenderer>().sharedMaterial = material;
     }
 
+    /// <summary>
+    /// 通過点を等間隔に作る。0番がスタート／ゴールの線。
+    /// 線は道より少し広く（+4m）、高さ 10m にして、中心を地面から 3m 上げる（飛び越えても取れるように）。
+    /// </summary>
     private static List<RaceCheckpoint> BuildCheckpoints(CourseSize size, Transform parent)
     {
         List<RaceCheckpoint> checkpoints = new List<RaceCheckpoint>();
 
         for (int i = 0; i < size.Checkpoints; i++)
         {
+            // 1周を通過点の数で等分した地点
             SamplePath(size, size.Perimeter * i / size.Checkpoints,
                 out Vector3 position, out Vector3 forward);
 
@@ -516,7 +615,8 @@ public static class RaceCourseSetup
     {
         List<Transform> grid = new List<Transform>();
 
-        // 道幅に合わせて、横のずれと前後の間隔を決める
+        // 道幅に合わせて、横のずれと前後の間隔を決める。
+        // 2列×2行。横は中央から道幅の 22% ずらし、前の行は線の手前 30%、後ろの行は 70%（いずれも道幅が基準）
         float side = size.Width * 0.22f;
         float[] backOffsets = { size.Width * 0.3f, size.Width * 0.3f, size.Width * 0.7f, size.Width * 0.7f };
         float[] sideOffsets = { -side, side, -side, side };
@@ -528,6 +628,7 @@ public static class RaceCourseSetup
             SamplePath(size, size.Perimeter - backOffsets[i], out Vector3 position, out Vector3 forward);
             Vector3 right = Vector3.Cross(Vector3.up, forward);
 
+            // 地面より少し上（0.2m）に置く。ぴったり地面だと、置かれた瞬間にめり込むことがあるため
             GameObject slot = new GameObject($"StartSlot{i + 1}");
             slot.transform.SetParent(parent, false);
             slot.transform.SetPositionAndRotation(
@@ -544,6 +645,10 @@ public static class RaceCourseSetup
     // 道具
     // ------------------------------------------------------------
 
+    /// <summary>
+    /// 色だけのマテリアルを作る。既にあれば色を入れ直して使い回す（参照が切れないように）。
+    /// URP のシェーダーが無い環境でも動くよう、Standard に逃がしている。
+    /// </summary>
     private static Material CreateMaterial(string path, Color color)
     {
         Material existing = AssetDatabase.LoadAssetAtPath<Material>(path);
@@ -568,6 +673,7 @@ public static class RaceCourseSetup
         return material;
     }
 
+    /// <summary>フォルダが無ければ作る。親も無ければ、親から順に作る（Unity は1段ずつしか作れない）。</summary>
     private static void EnsureFolder(string path)
     {
         if (AssetDatabase.IsValidFolder(path))

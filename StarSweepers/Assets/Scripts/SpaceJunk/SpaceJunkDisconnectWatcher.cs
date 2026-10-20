@@ -115,6 +115,7 @@ public class SpaceJunkDisconnectWatcher : MonoBehaviour
             };
         }
 
+        // 画面の上から 40px の位置に、横は最大 720px（狭い画面では左右 20px ずつ空ける）・高さ 56px の箱を中央に出す
         float width = Mathf.Min(720f, Screen.width - 40f);
         GUI.Box(new Rect((Screen.width - width) * 0.5f, 40f, width, 56f), message, messageStyle);
     }

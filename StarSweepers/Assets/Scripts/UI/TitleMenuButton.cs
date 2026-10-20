@@ -86,6 +86,7 @@ public enum TitleButtonAction
 public class TitleMenuButton : MonoBehaviour,
     IPointerEnterHandler, IPointerExitHandler, ISelectHandler, IDeselectHandler
 {
+    /// <summary>テーマが指定されていないときに読む、Resources フォルダの中のテーマの名前。</summary>
     private const string ThemeResourcePath = "TitleScreenTheme";
 
     [Tooltip("押したときにすること")]
@@ -103,12 +104,19 @@ public class TitleMenuButton : MonoBehaviour,
     [Tooltip("ボタンの文字")]
     [SerializeField] private Text label;
 
+    /// <summary>下地に付いているふち（無ければ null）。重なったときに色を濃くする。</summary>
     private Outline outline;
 
+    /// <summary>マウス（ポインター）が重なっているか。</summary>
     private bool pointerOver;
+
+    /// <summary>十字キー・スティックで選ばれているか。</summary>
     private bool selectedByNavigation;
+
+    /// <summary>「選ばれている」見た目にしているか（タブ・切り替えボタン用。<see cref="SetSelectedLook"/>）。</summary>
     private bool selectedLook;
 
+    /// <summary>Resources から読んだ共通のテーマ。全部のボタンで1つを使い回す。</summary>
     private static TitleScreenTheme defaultTheme;
 
     /// <summary>押したときにすること。</summary>
@@ -206,30 +214,38 @@ public class TitleMenuButton : MonoBehaviour,
         Refresh();
     }
 
+    /// <summary>いまの状態（重なり・選択）に合わせて、画像・色・文字の色・ふちを描き直す。</summary>
     private void Refresh()
     {
         TitleScreenTheme look = Theme;
+
+        // `this == null` は、消されたボタンに編集中のテーマ変更の知らせ（EditorChanged）が届いたときの用心
         if (!useTheme || this == null || background == null || look == null)
         {
             return;
         }
 
-        bool hot = pointerOver || selectedByNavigation;
-        bool lit = hot || selectedLook;
+        // highlighted … マウスか十字キーで指されている（重なり用の画像に変わる）
+        // emphasized  … それに加えて「選ばれている」見た目も含む（色・文字・ふちが変わる）
+        bool highlighted = pointerOver || selectedByNavigation;
+        bool emphasized = highlighted || selectedLook;
 
-        Sprite sprite = hot && look.buttonHover != null ? look.buttonHover : look.button;
+        Sprite sprite = highlighted && look.buttonHover != null ? look.buttonHover : look.button;
         background.sprite = sprite;
+
+        // Sprite Editor で9スライス（Border）を付けた画像は、角をつぶさずに引き伸ばす
         background.type = sprite != null && sprite.border != Vector4.zero ? Image.Type.Sliced : Image.Type.Simple;
-        background.color = lit ? look.buttonHoverColor : look.buttonColor;
+        background.color = emphasized ? look.buttonHoverColor : look.buttonColor;
 
         if (label != null)
         {
-            label.color = lit ? look.buttonHoverTextColor : look.buttonTextColor;
+            label.color = emphasized ? look.buttonHoverTextColor : look.buttonTextColor;
         }
 
         if (outline != null)
         {
-            outline.effectColor = lit ? look.buttonOutlineColor : new Color(look.buttonOutlineColor.r,
+            // ふだんは同じ色を薄く（不透明度 35%）残し、重なったときにはっきり出す
+            outline.effectColor = emphasized ? look.buttonOutlineColor : new Color(look.buttonOutlineColor.r,
                 look.buttonOutlineColor.g, look.buttonOutlineColor.b, 0.35f);
         }
     }

@@ -42,14 +42,27 @@ public class SpaceJunkCameraTestDummy : MonoBehaviour
     [Tooltip("歩ける範囲の半径（メートル。原点から）。床から落ちないように")]
     [SerializeField] private float areaRadius = 38f;
 
+    /// <summary>重力加速度（メートル／秒²）。ジャンプの放物線に使う。</summary>
+    private const float Gravity = 9.81f;
+
+    /// <summary>最初に置かれた位置。勝手に歩き回る範囲の中心であり、Y が「地面の高さ」になる。</summary>
     private Vector3 home;
+
+    /// <summary>勝手に歩くときの、いま向かっている場所。</summary>
     private Vector3 wanderGoal;
+
+    /// <summary>勝手に歩くときの、着いてから次の場所を決めるまでの残り秒数。</summary>
     private float wanderWait;
+
+    /// <summary>地面からの高さ（メートル）。ジャンプ中だけ 0 より大きい。</summary>
     private float height;
+
+    /// <summary>上向きの速さ（メートル／秒）。落ちているときはマイナス。</summary>
     private float verticalSpeed;
 
     private void Start()
     {
+        // 最初に置かれた位置を「家」にする。勝手に歩く範囲の中心と、地面の高さの両方に使う
         home = transform.position;
         wanderGoal = home;
     }
@@ -59,6 +72,7 @@ public class SpaceJunkCameraTestDummy : MonoBehaviour
         Vector2 input = ReadInput(out bool jump);
         Vector3 move;
 
+        // キーを押している（入力の長さがほぼ 0 でない）ときだけ、キーの向きに歩く
         if (input.sqrMagnitude > 0.01f)
         {
             // 画面の向きに合わせる（本物の FishingPlayerController と同じ）
@@ -75,15 +89,16 @@ public class SpaceJunkCameraTestDummy : MonoBehaviour
             move = Vector3.zero;
         }
 
-        Vector3 p = transform.position + move * (speed * Time.deltaTime);
-        Vector2 flat = Vector2.ClampMagnitude(new Vector2(p.x, p.z), areaRadius);
+        // 原点から areaRadius の円の中に収める（床から落ちないように）。flat は (X, Z) の2つ組
+        Vector3 nextPosition = transform.position + move * (speed * Time.deltaTime);
+        Vector2 flat = Vector2.ClampMagnitude(new Vector2(nextPosition.x, nextPosition.z), areaRadius);
 
-        // ジャンプ（地面の高さは最初の高さ）
+        // ジャンプ（地面の高さは最初の高さ）。初速は「jumpHeight までちょうど届く速さ」（v² = 2gh）
         if (jump && height <= 0f)
         {
-            verticalSpeed = Mathf.Sqrt(2f * 9.81f * jumpHeight);
+            verticalSpeed = Mathf.Sqrt(2f * Gravity * jumpHeight);
         }
-        verticalSpeed -= 9.81f * Time.deltaTime;
+        verticalSpeed -= Gravity * Time.deltaTime;
         height = Mathf.Max(0f, height + verticalSpeed * Time.deltaTime);
         if (height <= 0f)
         {
@@ -98,11 +113,15 @@ public class SpaceJunkCameraTestDummy : MonoBehaviour
         }
     }
 
+    /// <summary>
+    /// 「動かし方」に応じたキーを読む。X が右（＋）／左（−）、Y が奥（＋）／手前（−）。
+    /// `Still` のときは何も読まない（0 のまま）。
+    /// </summary>
     private Vector2 ReadInput(out bool jump)
     {
         jump = false;
-        Keyboard k = Keyboard.current;
-        if (k == null)
+        Keyboard keyboard = Keyboard.current;
+        if (keyboard == null)
         {
             return Vector2.zero;
         }
@@ -112,19 +131,19 @@ public class SpaceJunkCameraTestDummy : MonoBehaviour
         switch (control)
         {
             case Control.Wasd:
-                if (k.wKey.isPressed) input.y += 1f;
-                if (k.sKey.isPressed) input.y -= 1f;
-                if (k.dKey.isPressed) input.x += 1f;
-                if (k.aKey.isPressed) input.x -= 1f;
-                jump = k.spaceKey.wasPressedThisFrame;
+                if (keyboard.wKey.isPressed) input.y += 1f;
+                if (keyboard.sKey.isPressed) input.y -= 1f;
+                if (keyboard.dKey.isPressed) input.x += 1f;
+                if (keyboard.aKey.isPressed) input.x -= 1f;
+                jump = keyboard.spaceKey.wasPressedThisFrame;
                 break;
 
             case Control.Arrows:
-                if (k.upArrowKey.isPressed) input.y += 1f;
-                if (k.downArrowKey.isPressed) input.y -= 1f;
-                if (k.rightArrowKey.isPressed) input.x += 1f;
-                if (k.leftArrowKey.isPressed) input.x -= 1f;
-                jump = k.rightShiftKey.wasPressedThisFrame;
+                if (keyboard.upArrowKey.isPressed) input.y += 1f;
+                if (keyboard.downArrowKey.isPressed) input.y -= 1f;
+                if (keyboard.rightArrowKey.isPressed) input.x += 1f;
+                if (keyboard.leftArrowKey.isPressed) input.x -= 1f;
+                jump = keyboard.rightShiftKey.wasPressedThisFrame;
                 break;
         }
 
@@ -137,13 +156,14 @@ public class SpaceJunkCameraTestDummy : MonoBehaviour
         Vector3 gap = wanderGoal - transform.position;
         gap.y = 0f;
 
+        // 目的地まで 0.5m 以内なら「着いた」とみなし、0.3〜1.5 秒止まってから次の場所を決める
         if (gap.magnitude < 0.5f)
         {
             wanderWait -= Time.deltaTime;
             if (wanderWait <= 0f)
             {
-                Vector2 r = Random.insideUnitCircle * wanderRadius;
-                wanderGoal = home + new Vector3(r.x, 0f, r.y);
+                Vector2 offset = Random.insideUnitCircle * wanderRadius;
+                wanderGoal = home + new Vector3(offset.x, 0f, offset.y);
                 wanderWait = Random.Range(0.3f, 1.5f);
             }
             return Vector3.zero;

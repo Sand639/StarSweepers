@@ -11,20 +11,24 @@ namespace ProjectEL4S.MultiMouse
     [RequireComponent(typeof(MultiMouseManager))]
     public sealed class MultiMouseTestHud : MonoBehaviour
     {
+        /// <summary>画面に置く「つかんで動かせる箱」。2 台のマウスで別々の箱を同時にドラッグできるかの確認用。</summary>
         private sealed class Draggable
         {
             public Rect Rect;        // GUI 座標（左上原点）
-            public int Owner = -1;   // 掴んでいるポインタ index
-            public int GrabCount;
+            public int Owner = -1;   // 掴んでいるポインタ index（-1 = 誰も掴んでいない）
+            public int GrabCount;    // 掴まれた回数（表示用）
         }
 
+        [Tooltip("十字カーソルの腕の長さ（px）")]
         [SerializeField] private float _cursorSize = 22f;
+        [Tooltip("つかんで動かせる箱の数")]
         [SerializeField] private int _draggableCount = 4;
 
         private MultiMouseManager _manager;
+        // 1×1 の白い画像。色を変えて箱やカーソルを塗るのに使う（IMGUI には塗りつぶしの命令が無いため）
         private Texture2D _pixel;
         private Draggable[] _draggables;
-        private int[] _clickCounts;
+        private int[] _clickCounts;   // ポインタごとの左クリックの回数（表示用）
         private GUIStyle _labelStyle;
         private readonly StringBuilder _sb = new StringBuilder();
 
@@ -42,9 +46,11 @@ namespace ProjectEL4S.MultiMouse
             {
                 _draggables[i] = new Draggable
                 {
+                    // 状態表示の下（y=260）に、110px の箱を 150px 間隔で横に並べる
                     Rect = new Rect(140f + i * 150f, 260f, 110f, 110f),
                 };
             }
+            // ポインタの台数より多めに取っておく（台数は管理役の Awake で決まり、ここではまだ分からないため）
             _clickCounts = new int[8];
         }
 
@@ -98,6 +104,7 @@ namespace ProjectEL4S.MultiMouse
                     {
                         var d = _draggables[i];
                         if (d.Owner != p) continue;
+                        // 掴んでいる箱をマウスと一緒に動かす。GUI 座標は下が正なので Y は引く
                         d.Rect.x = Mathf.Clamp(d.Rect.x + pointer.Delta.x, 0f, Screen.width - d.Rect.width);
                         d.Rect.y = Mathf.Clamp(d.Rect.y - pointer.Delta.y, 0f, Screen.height - d.Rect.height);
                     }
@@ -145,6 +152,7 @@ namespace ProjectEL4S.MultiMouse
                 _sb.AppendLine($"     {Shorten(p.DeviceName)}");
             }
 
+            // 同じ文字を黒で 1px ずらして先に描き、影にして読みやすくする
             GUI.color = Color.black;
             GUI.Label(new Rect(13f, 11f, 900f, 240f), _sb.ToString(), _labelStyle);
             GUI.color = Color.white;
@@ -188,11 +196,13 @@ namespace ProjectEL4S.MultiMouse
             GUI.color = Color.white;
         }
 
+        /// <summary>Screen 座標（左下原点）→ GUI 座標（左上原点）。Y を上下ひっくり返すだけ。</summary>
         private static Vector2 ToGui(Vector2 screenPosition)
         {
             return new Vector2(screenPosition.x, Screen.height - screenPosition.y);
         }
 
+        /// <summary>デバイスパスは 100 文字を超えることがあるので、画面に収まるよう 70 文字で切る。</summary>
         private static string Shorten(string deviceName)
         {
             if (string.IsNullOrEmpty(deviceName)) return "(unknown)";

@@ -45,7 +45,10 @@ public class FishingNetPocket : NetworkBehaviour
     /// <summary>このゴールを持っているチーム。共通ゴールなら <see cref="FishingTeams.NeutralTeam"/>。</summary>
     public int OwnerTeam { get; private set; } = FishingTeams.NeutralTeam;
 
+    /// <summary>持ち主のチームの色。光り終わったらこの色に戻す。</summary>
     private Color teamColor = Color.white;
+
+    /// <summary>この時刻まで光らせる。-999 は「まだ一度も光っていない」の意味。</summary>
     private float flashUntil = -999f;
 
     private void Awake()
@@ -106,6 +109,7 @@ public class FishingNetPocket : NetworkBehaviour
             return;
         }
 
+        // 毎フレーム塗り直しているので、光る時間が過ぎれば自動でチームの色に戻る
         bool lit = Time.time < flashUntil;
         padRenderer.material.color = lit ? flashColor : teamColor;
     }
@@ -120,6 +124,7 @@ public class FishingNetPocket : NetworkBehaviour
 
         HookableObject supply = other.GetComponentInParent<HookableObject>();
 
+        // 引っ張っている最中・消えている最中・点数 0 の物（爆発物など）は数えない
         if (supply == null || supply.IsHooked || supply.IsVanished || supply.ScoreValue <= 0)
         {
             return;
@@ -135,6 +140,8 @@ public class FishingNetPocket : NetworkBehaviour
 
         int scoringTeam = DecideScoringTeam(netSupply);
 
+        // 点が入らない場合（共通ゴールに、誰が投げたか分からない物資が入った）でも、
+        // 物資を消して光らせるところまでは同じように行う
         if (scoringTeam >= 0 && FishingMatch.Current != null)
         {
             FishingMatch.Current.AddTeamScore(
@@ -143,6 +150,7 @@ public class FishingNetPocket : NetworkBehaviour
 
         netSupply?.ClearLastThrower();
 
+        // ホストから全員（ホスト自身も含む）へ「光らせて」と送る
         FlashClientRpc();
         supply.Vanish();
     }
@@ -153,6 +161,7 @@ public class FishingNetPocket : NetworkBehaviour
     /// ・チームのゴール … **そのゴールを持つチーム**
     /// ・共通ゴール … **投げ入れた人のチーム**（分からなければ点を入れない）
     /// </summary>
+    /// <returns>点を入れるチームの番号。点を入れないときは -1。</returns>
     private int DecideScoringTeam(FishingNetSupply netSupply)
     {
         if (OwnerTeam != FishingTeams.NeutralTeam)
@@ -160,6 +169,7 @@ public class FishingNetPocket : NetworkBehaviour
             return OwnerTeam;
         }
 
+        // 共通ゴール。投げた人が記録されていなければ（1人用の物資・スポナーから落ちて転がり込んだ など）点は入れない
         if (netSupply == null || netSupply.LastThrownByPlayerIndex < 0)
         {
             return -1;

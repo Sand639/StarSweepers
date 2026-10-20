@@ -34,7 +34,10 @@ public class ScorePocket : MonoBehaviour
     [Tooltip("光っている秒数")]
     [SerializeField] private float flashSeconds = 0.4f;
 
+    /// <summary>光らせる前の床の色。光り終わったらこの色に戻す。</summary>
     private Color originalColor = Color.white;
+
+    /// <summary>この時刻まで光らせる。-999 は「まだ一度も光っていない」の意味。</summary>
     private float flashUntil = -999f;
 
     private void Awake()
@@ -45,6 +48,7 @@ public class ScorePocket : MonoBehaviour
             originalColor = padRenderer.sharedMaterial.color;
         }
 
+        // 物資は中を通り抜ける（押し返さない）。入った瞬間だけ OnTriggerEnter で拾う
         GetComponent<Collider>().isTrigger = true;
     }
 
@@ -52,6 +56,7 @@ public class ScorePocket : MonoBehaviour
     {
         HookableObject supply = other.GetComponentInParent<HookableObject>();
 
+        // 引っ張っている最中（IsHooked）・消えている最中・点数 0 の物（爆発物など）は数えない
         if (supply == null || supply.IsHooked || supply.IsVanished || supply.ScoreValue <= 0)
         {
             return;
@@ -73,6 +78,8 @@ public class ScorePocket : MonoBehaviour
             return;
         }
 
+        // 毎フレーム塗り直しているので、光る時間が過ぎれば自動で元の色に戻る。
+        // sharedMaterial ではなく material（この床専用の複製）に塗るので、同じ素材を使う他の床の色は変わらない
         bool lit = Time.time < flashUntil;
         padRenderer.material.color = lit ? flashColor : originalColor;
     }

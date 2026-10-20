@@ -99,6 +99,11 @@ public class PlayerAimController : MonoBehaviour
         aimCamera = camera;
     }
 
+    /// <summary>
+    /// 毎フレームの流れ。
+    /// コントローラー操作がタイプB（左スティックで向きを決める）なら、カーソルは使わず向きだけ決める。
+    /// それ以外は「どのカーソルを使うか → カーソルの先の地面を狙点にする → 照準マークを出す」の順。
+    /// </summary>
     private void Update()
     {
         Gamepad pad = input.Gamepad;
@@ -133,6 +138,8 @@ public class PlayerAimController : MonoBehaviour
         }
 
         Vector3 direction = new Vector3(stick.x, 0f, stick.y);
+
+        // スティックの「上」が画面の「上」になるよう、カメラの水平の向き（Y軸の回転）だけを借りて回す
         Camera view = aimCamera != null ? aimCamera : Camera.main;
         if (view != null)
         {
@@ -143,6 +150,7 @@ public class PlayerAimController : MonoBehaviour
         if (direction.sqrMagnitude > 0.0001f)
         {
             AimDirection = direction.normalized;
+            // タイプBには「指している場所」が無いので、1 m 先を仮の狙点にしておく（狙点を読む側が困らないように）
             AimPoint = transform.position + AimDirection;
             HasAim = true;
         }
@@ -180,7 +188,7 @@ public class PlayerAimController : MonoBehaviour
     {
         Mouse mouse = Mouse.current;
 
-        // マウスを動かした／クリックした → マウスに戻す
+        // マウスを動かした（1ピクセル以上）／クリックした → マウスに戻す
         if (mouse != null && UsingStickCursor &&
             (mouse.delta.ReadValue().sqrMagnitude > 1f ||
              mouse.leftButton.wasPressedThisFrame || mouse.rightButton.wasPressedThisFrame))
@@ -209,6 +217,7 @@ public class PlayerAimController : MonoBehaviour
             stickCursor = StartPosition();
         }
 
+        // 速さは「画面の高さに対する割合／秒」。ゲームの速さ（timeScale）に関係なく同じ速さで動かす。画面の外へは出さない
         stickCursor += stick * (stickCursorSpeed * Screen.height * Time.unscaledDeltaTime);
         stickCursor.x = Mathf.Clamp(stickCursor.x, 0f, Screen.width);
         stickCursor.y = Mathf.Clamp(stickCursor.y, 0f, Screen.height);
@@ -229,6 +238,11 @@ public class PlayerAimController : MonoBehaviour
         return new Vector2(Screen.width * 0.5f, Screen.height * 0.5f);
     }
 
+    /// <summary>
+    /// **カーソルの画面位置から、狙点と前方向を出す。**
+    /// カメラからカーソルへ線を伸ばし、実際の床（<see cref="groundMask"/>）に当たればそこ、
+    /// 当たらなければ高さ <see cref="groundHeight"/> の仮の水平な面との交点を狙点にする。
+    /// </summary>
     private void UpdateAim()
     {
         HasAim = false;
@@ -316,16 +330,19 @@ public class PlayerAimController : MonoBehaviour
         reticle.enabled = true;
         reticle.color = reticleColor;
 
-        // 地面すれすれに寝かせる。画面の上下と絵の上下がそろうよう、カメラの水平の向きに合わせる
+        // 地面すれすれに寝かせる（地面とちらつかないよう 5 cm 浮かせる）。
+        // 画面の上下と絵の上下がそろうよう、カメラの水平の向きに合わせる
         float yaw = aimCamera != null ? aimCamera.transform.eulerAngles.y : 0f;
         reticle.transform.SetPositionAndRotation(
             AimPoint + Vector3.up * 0.05f,
             Quaternion.Euler(90f, yaw, 0f));
 
+        // 絵の幅がちょうど reticleSize（m）になる拡大率にする（0.0001 は 0 で割らないための下限）
         float spriteWidth = Mathf.Max(0.0001f, reticleSprite.bounds.size.x);
         reticle.transform.localScale = Vector3.one * (reticleSize / spriteWidth);
     }
 
+    /// <summary>照準マークの部品を作る（最初に出すときに1回だけ）。地面の飾りなので影は付けない。</summary>
     private SpriteRenderer CreateReticle()
     {
         GameObject created = new GameObject($"{name} の照準マーク");

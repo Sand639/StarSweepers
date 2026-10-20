@@ -38,6 +38,10 @@ public class TopDownCameraFollow : MonoBehaviour
         }
     }
 
+    /// <summary>
+    /// プレイヤーの移動（Update）が終わったあとに追いかける。
+    /// Update で追うと、同じフレームの移動前の位置を見てしまい、カメラがガタつく。
+    /// </summary>
     private void LateUpdate()
     {
         if (target == null)
@@ -46,7 +50,10 @@ public class TopDownCameraFollow : MonoBehaviour
         }
 
         Vector3 goal = target.position + offset;
-        float t = 1f - Mathf.Exp(-followSharpness * Time.deltaTime);
-        transform.position = Vector3.Lerp(transform.position, goal, t);
+
+        // 「1フレームで残りの距離の何割を詰めるか」を deltaTime から求める。
+        // 単に Lerp(…, followSharpness * deltaTime) とするより、フレームレートが変わっても同じ速さで寄っていく
+        float blend = 1f - Mathf.Exp(-followSharpness * Time.deltaTime);
+        transform.position = Vector3.Lerp(transform.position, goal, blend);
     }
 }

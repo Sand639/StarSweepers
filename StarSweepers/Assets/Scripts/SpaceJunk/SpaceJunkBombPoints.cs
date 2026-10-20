@@ -55,13 +55,22 @@ public class SpaceJunkBombPoints : MonoBehaviour
     /// <summary>1か所分の状態。</summary>
     private class Point
     {
+        /// <summary>物を置く場所（子オブジェクト）。One Random Point のときは出すたびに選び直す。</summary>
         public Transform place;
-        public HookableObject bomb;
+
+        /// <summary>いま置いてある物（爆弾または特殊デブリ）。動かされて追いかけるのをやめたら null。</summary>
+        public HookableObject spawnedItem;
+
         public float waitTimer = -1f; // 0以上なら、出し直しを待っている
     }
 
+    /// <summary>場所ごとの状態。One Random Point のときは1つだけ。</summary>
     private Point[] points;
+
+    /// <summary>始まってからの秒数（Start Delay Seconds を待つため）。</summary>
     private float startTimer;
+
+    /// <summary>最初の物を出し終えたか。</summary>
     private bool started;
 
     private void Awake()
@@ -109,6 +118,7 @@ public class SpaceJunkBombPoints : MonoBehaviour
         }
     }
 
+    /// <summary>1か所ぶんを進める。出し直し待ちなら時間を数え、置いてあるなら「無くなったか」を見張る。</summary>
     private void UpdatePoint(Point point)
     {
         if (point.waitTimer >= 0f)
@@ -124,7 +134,7 @@ public class SpaceJunkBombPoints : MonoBehaviour
         if (HasLeft(point))
         {
             // この爆弾はもう追いかけない。動かされた爆弾はそのまま残る
-            point.bomb = null;
+            point.spawnedItem = null;
             point.waitTimer = 0f;
         }
     }
@@ -132,7 +142,7 @@ public class SpaceJunkBombPoints : MonoBehaviour
     /// <summary>置いた物が、消えたか・場所から動かされたか（Respawn When Moved が OFF なら、消えたかだけ）。</summary>
     private bool HasLeft(Point point)
     {
-        if (point.bomb == null || point.bomb.IsVanished)
+        if (point.spawnedItem == null || point.spawnedItem.IsVanished)
         {
             return true;
         }
@@ -142,7 +152,8 @@ public class SpaceJunkBombPoints : MonoBehaviour
             return false;
         }
 
-        Vector3 offset = point.bomb.transform.position - point.place.position;
+        // 高さは見ない（落ちてきて少し跳ねただけで「動かされた」にしないため）
+        Vector3 offset = point.spawnedItem.transform.position - point.place.position;
         offset.y = 0f;
         return offset.sqrMagnitude > moveThreshold * moveThreshold;
     }
@@ -153,6 +164,7 @@ public class SpaceJunkBombPoints : MonoBehaviour
         return transform.childCount > 0 ? transform.GetChild(Random.Range(0, transform.childCount)) : null;
     }
 
+    /// <summary>その場所に物を1つ出す。通信中なら全員の画面に出し、「重いデブリにする」ならラウンドに登録する。</summary>
     private void SpawnAt(Point point)
     {
         point.waitTimer = -1f;
@@ -176,9 +188,9 @@ public class SpaceJunkBombPoints : MonoBehaviour
         }
 
         GameObject spawned = Instantiate(prefab, point.place.position, point.place.rotation);
-        point.bomb = spawned.GetComponent<HookableObject>();
+        point.spawnedItem = spawned.GetComponent<HookableObject>();
 
-        if (point.bomb == null)
+        if (point.spawnedItem == null)
         {
             Debug.LogWarning($"[JUNK] {prefab.name} に HookableObject が無いため、動かされたか分かりません。" +
                              "爆弾のプレハブを入れてください。");

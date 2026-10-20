@@ -35,6 +35,18 @@ using UnityEngine.InputSystem;
 /// **ロープを狙っているとき・つかまっているときはロープが優先**され、
 /// それ以外のときは <see cref="RobotGrabber"/> が受け取る。
 /// （ただし、すでに物を持っているときは、物を離すほうが優先）
+///
+/// ## 流れ（毎フレーム）
+///
+/// 1. つかまっていなければ、**狙えるロープを探して色を変える**（<see cref="UpdateAim"/>）
+/// 2. つかまっていれば、**入力に合わせて上り下りし、体をロープの位置へ寄せる**（<see cref="UpdateAttached"/>）
+/// 3. F が押されたら、**つかまる／手を離す**（<see cref="ToggleHold"/>）
+///
+/// 体が切り替わったとき（Q で切り離す・合体する・Tab で操作を移す）は、
+/// <see cref="HandleSplit"/> と <see cref="HandleControlSwitched"/> が、
+/// **つかまっている体を引き継ぐか、手を離すか**を決める。
+///
+/// 使っているシーン：ロボット分離の検証シーン（`RobotSplitTest`）など、`RobotRig` を置いたシーン。
 /// </summary>
 [RequireComponent(typeof(RobotController))]
 public class RobotRopeClimber : MonoBehaviour
@@ -92,11 +104,21 @@ public class RobotRopeClimber : MonoBehaviour
     [Range(0f, 1f)]
     [SerializeField] private float highlightStrength = 0.6f;
 
+    /// <summary>
+    /// ロープを調べるときの点の間隔（メートル）。
+    /// ロープは長い1本の線なので、この間隔で点を取り、手との距離と狙いを調べる。
+    /// </summary>
+    private const float SampleSpacing = 0.25f;
+
+    /// <summary>1本のロープを何区間まで分けて調べるか。とても長いロープでも重くならないよう、ここで止める。</summary>
+    private const int MaxSampleSteps = 64;
+
     private RobotController controller;
 
     /// <summary>物を持つ側。F キーをどちらが受け取るか決めるために見ている（無くてもよい）。</summary>
     private RobotGrabber grabber;
 
+    /// <summary>狙えているロープの色を変える道具。物を持つ・鍵を使う側と同じ仕組みを使っている。</summary>
     private readonly InteractHighlight highlight = new InteractHighlight();
 
     /// <summary>いまつかまっているロープ。つかまっていなければ null。</summary>
@@ -175,6 +197,7 @@ public class RobotRopeClimber : MonoBehaviour
 
     private void Update()
     {
+        // つかまっているかどうかで、毎フレームの仕事が変わる
         if (IsAttached)
         {
             UpdateAttached();
@@ -184,6 +207,7 @@ public class RobotRopeClimber : MonoBehaviour
             UpdateAim();
         }
 
+        // F の処理は最後。先に狙い（AimedRope）を新しくしてから、その結果でつかまる
         if (WasGrabKeyPressed())
         {
             ToggleHold();
@@ -284,8 +308,9 @@ public class RobotRopeClimber : MonoBehaviour
         float span = rope.MaxHold - min;
 
         // だいたい25cmおきに調べる。長いロープでも数十回で済む
-        int steps = Mathf.Clamp(Mathf.CeilToInt(span / 0.25f), 1, 64);
+        int steps = SampleSteps(span);
 
+        // 区間の数より1つ多い点を調べる（`<=` なので、両端とも含まれる）
         for (int i = 0; i <= steps; i++)
         {
             Vector3 point = rope.PointAt(min + span * i / steps);
@@ -299,6 +324,17 @@ public class RobotRopeClimber : MonoBehaviour
         }
 
         return aimed && distance <= reach;
+    }
+
+    /// <summary>
+    /// 長さ `span`（メートル）のロープを、**何区間に分けて調べるか**。
+    /// だいたい <see cref="SampleSpacing"/> おきになるようにし、1〜<see cref="MaxSampleSteps"/> の間に収める。
+    /// 狙いの判定（<see cref="TryFindHold"/>）と、つかめなかった理由の表示（<see cref="LogWhyNotGrabbed"/>）で
+    /// **同じ分け方にそろえる**ために、ここにまとめてある。
+    /// </summary>
+    private static int SampleSteps(float span)
+    {
+        return Mathf.Clamp(Mathf.CeilToInt(span / SampleSpacing), 1, MaxSampleSteps);
     }
 
     /// <summary>
@@ -376,9 +412,10 @@ public class RobotRopeClimber : MonoBehaviour
             float nearestHand = float.MaxValue;
             float nearestAngle = float.MaxValue;
 
+            // 調べ方は TryFindHold と同じ（同じ点で測らないと、表示した数字と判定が食い違う）
             float min = rope.MinHold;
             float span = rope.MaxHold - min;
-            int steps = Mathf.Clamp(Mathf.CeilToInt(span / 0.25f), 1, 64);
+            int steps = SampleSteps(span);
 
             for (int i = 0; i <= steps; i++)
             {
@@ -406,24 +443,11 @@ public class RobotRopeClimber : MonoBehaviour
         AttachedRope = rope;
         attachedBody = body;
 
+        // いまの足元の高さでつかまる（つかまれる範囲の外なら、端に寄せる）
         holdHeight = Mathf.Clamp(rope.HeightOf(body.transform.position), rope.MinHold, rope.MaxHold);
 
-        if (rope.IsHorizontal)
-        {
-            // 横のロープは**真下にぶら下がる**ので、どちら側かを覚える必要がない
-            hangSide = Vector3.down;
-        }
-        else
-        {
-            // **近づいた側にぶら下がる。** 反対側へ勝手に回り込むと、
-            // 足場から落ちたように見えてしまうため
-            Vector3 side = body.transform.position - rope.PointAt(holdHeight);
-            side -= Vector3.Project(side, rope.Direction);
-
-            hangSide = side.sqrMagnitude > 0.0001f
-                ? side.normalized
-                : -Flat(body.transform.forward);
-        }
+        // holdHeight を決めたあとに呼ぶ（その高さのロープの点から測るため）
+        hangSide = DecideHangSide(rope, body);
 
         highlight.Clear();
         AimedRope = null;
@@ -434,6 +458,32 @@ public class RobotRopeClimber : MonoBehaviour
         controller.SuspendedBody = body;
 
         Debug.Log($"[ROBOT] {body.name} が {rope.name} につかまりました");
+    }
+
+    /// <summary>
+    /// つかまった瞬間に、**ロープのどちら側にぶら下がるか**（水平の向き）を決める。
+    /// <see cref="holdHeight"/> を先に決めてから呼ぶこと。
+    /// </summary>
+    private Vector3 DecideHangSide(RobotRope rope, RobotBody body)
+    {
+        if (rope.IsHorizontal)
+        {
+            // 横のロープは**真下にぶら下がる**ので、どちら側かを覚える必要がない
+            return Vector3.down;
+        }
+
+        // **近づいた側にぶら下がる。** 反対側へ勝手に回り込むと、
+        // 足場から落ちたように見えてしまうため
+        Vector3 side = body.transform.position - rope.PointAt(holdHeight);
+
+        // ロープに沿った成分を取り除き、「ロープから見てどちらの横にいるか」だけを残す
+        side -= Vector3.Project(side, rope.Direction);
+
+        // ロープとほぼ重なっていて（1cm未満）横の向きが決まらないときは、
+        // 体の正面の反対側にぶら下がる（＝ロープを正面に見る位置になる）
+        return side.sqrMagnitude > 0.0001f
+            ? side.normalized
+            : -Flat(body.transform.forward);
     }
 
     /// <summary>手を離す。そのまま落ちる。</summary>
@@ -481,6 +531,10 @@ public class RobotRopeClimber : MonoBehaviour
     // つかまっている間
     // ------------------------------------------------------------
 
+    /// <summary>
+    /// つかまっている間の1フレーム分。
+    /// **飛び降り → 上り下りの入力 → 一番下での自動の手離し → 体をロープへ寄せる**、の順に見る。
+    /// </summary>
     private void UpdateAttached()
     {
         RobotRope rope = AttachedRope;
@@ -506,11 +560,13 @@ public class RobotRopeClimber : MonoBehaviour
 
         float input = controlling ? ReadMoveInput(rope) : 0f;
 
+        // 入力の向き（＋で上・先端へ、−で下・根元へ）に、1秒あたり climbSpeed メートル進む
         holdHeight = Mathf.Clamp(
             holdHeight + input * climbSpeed * Time.deltaTime, rope.MinHold, rope.MaxHold);
 
         // **縦のロープだけ**、一番下まで下りたら自動で手を離して立たせる。
         // 横のロープでは端に着いても落ちない（伝っている途中で落ちると事故になる）
+        // （`+ 0.01f` は 1cm ぶんの余裕。下へ押しているときだけ離す）
         if (releaseAtBottom && !rope.IsHorizontal
             && input < 0f && holdHeight <= rope.MinHold + 0.01f)
         {
@@ -518,6 +574,18 @@ public class RobotRopeClimber : MonoBehaviour
             return;
         }
 
+        PullBodyToHold(rope, body);
+    }
+
+    /// <summary>
+    /// 体を、いまの <see cref="holdHeight"/> に合った場所（<see cref="TargetPosition"/>）へ寄せる。
+    ///
+    /// **1フレームに動ける距離に上限がある**（`snapSpeed` × 経過時間）。
+    /// 離れていれば少しずつ引き寄せられ、近ければぴったり合う。
+    /// 動かしたあとは、**実際にたどり着いた位置から高さを測り直す。**
+    /// </summary>
+    private void PullBodyToHold(RobotRope rope, RobotBody body)
+    {
         Vector3 target = TargetPosition(rope, body);
         Vector3 delta = target - body.transform.position;
 
@@ -525,6 +593,7 @@ public class RobotRopeClimber : MonoBehaviour
         // つかまった瞬間の引き寄せも、上り下りも、この1本で足りる
         float step = snapSpeed * Time.deltaTime;
 
+        // 長さの2乗どうしで比べている（平方根を取らずに「step より遠いか」が分かる）
         if (delta.sqrMagnitude > step * step)
         {
             delta = delta.normalized * step;
@@ -718,7 +787,10 @@ public class RobotRopeClimber : MonoBehaviour
     // 補助
     // ------------------------------------------------------------
 
-    /// <summary>上下の成分を落として、水平の向きにする。</summary>
+    /// <summary>
+    /// 上下の成分を落として、水平の向きにする。
+    /// ほぼ真上・真下を向いていて水平の成分が残らない（長さ0.01未満）ときは、ワールドの前（Z+）を返す。
+    /// </summary>
     private static Vector3 Flat(Vector3 direction)
     {
         direction.y = 0f;
@@ -726,6 +798,7 @@ public class RobotRopeClimber : MonoBehaviour
         return direction.sqrMagnitude > 0.0001f ? direction.normalized : Vector3.forward;
     }
 
+    /// <summary>このフレームに、つかまる／手を離すキー（`grabKey`）が押されたか。</summary>
     private bool WasGrabKeyPressed()
     {
         Keyboard keyboard = Keyboard.current;

@@ -90,7 +90,7 @@ public static class RobotRopeSetup
         // 筒は「高さ2・中心が原点」なので、半分ずらして立てる
         visual.transform.localPosition = new Vector3(0f, height * 0.5f, 0f);
         visual.transform.localScale = new Vector3(RopeThickness, height * 0.5f, RopeThickness);
-        visual.GetComponent<MeshRenderer>().sharedMaterial = CreateRopeMaterial();
+        visual.GetComponent<MeshRenderer>().sharedMaterial = GetOrCreateRopeMaterial();
 
         Object.DestroyImmediate(visual.GetComponent<Collider>());
 
@@ -104,6 +104,10 @@ public static class RobotRopeSetup
         return rope;
     }
 
+    /// <summary>
+    /// `RobotRig` プレハブに、ロープにつかまる機能（<see cref="RobotRopeClimber"/>）を足す。
+    /// **すでに付いていれば何もしない**ので、何度実行してもよい。
+    /// </summary>
     [MenuItem("Tools/StarSweepers/アーカイブ/ロボットステージ/ロボットにロープ機能を足す")]
     public static void AddClimberToPrefab()
     {
@@ -118,6 +122,8 @@ public static class RobotRopeSetup
         // プレハブは開いてから触る。直接いじると保存されない
         GameObject contents = PrefabUtility.LoadPrefabContents(PrefabPath);
 
+        // 途中で return しても、開いたプレハブは finally で必ず閉じる
+        // （閉じないと、見えない所にプレハブの中身が読み込まれたまま残る）
         try
         {
             if (contents.GetComponent<RobotRopeClimber>() != null)
@@ -158,6 +164,7 @@ public static class RobotRopeSetup
             ? SceneView.lastActiveSceneView.pivot
             : Vector3.zero;
 
+        // 見ている場所の 50メートル上から、真下へ 200メートルまで床を探す
         if (Physics.Raycast(pivot + Vector3.up * 50f, Vector3.down, out RaycastHit hit, 200f))
         {
             return hit.point;
@@ -166,7 +173,11 @@ public static class RobotRopeSetup
         return pivot;
     }
 
-    private static Material CreateRopeMaterial()
+    /// <summary>
+    /// ロープの茶色いマテリアルを用意する。**すでにあれば、そのまま使う**（調整した色を消さないため）。
+    /// 保存先のフォルダが無いときは、保存せずにその場限りのマテリアルを返す。
+    /// </summary>
+    private static Material GetOrCreateRopeMaterial()
     {
         Material existing = AssetDatabase.LoadAssetAtPath<Material>(RopeMaterialPath);
 

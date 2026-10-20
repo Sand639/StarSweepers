@@ -39,9 +39,13 @@ namespace ProjectEL4S.InputControl
     [Serializable]
     public sealed class InputSeatButtonBinding
     {
+        [Tooltip("ゲームの操作の名前")]
         public InputSeatButton button;
+        [Tooltip("この操作にするキー（どれか 1 つで効く）")]
         public Key[] keys = Array.Empty<Key>();
+        [Tooltip("この操作にするマウスのボタン（どれか 1 つで効く）")]
         public MultiMouseButton[] mouseButtons = Array.Empty<MultiMouseButton>();
+        [Tooltip("この操作にするコントローラのボタン（どれか 1 つで効く）")]
         public GamepadButton[] gamepadButtons = Array.Empty<GamepadButton>();
 
         public InputSeatButtonBinding() { }
@@ -90,6 +94,7 @@ namespace ProjectEL4S.InputControl
 
         /// <summary>席の番号（0 から）。キーボード・マウスは同じ番号のものがこの席に入る。</summary>
         public int Index { get; }
+        /// <summary>席の色（画面に P1・P2 を描き分けるため。<see cref="InputSeatManager"/> の Seat Colors から来る）。</summary>
         public Color Color { get; internal set; }
 
         /// <summary>この席のキーボード。管理役が無い・台数が足りないときは null。つながっているかは <see cref="HasKeyboard"/>。</summary>
@@ -123,6 +128,7 @@ namespace ProjectEL4S.InputControl
         /// </summary>
         public Vector2 Cursor { get; internal set; }
 
+        // Cursor に最初の位置（マウスの位置か画面の中央）を入れたか。最初のフレームで 1 回だけ入れる
         internal bool CursorInitialized;
         // コントローラが席に入った瞬間のボタンを「押した」と数えないよう、一度全部離されるまで待つ
         internal bool GamepadArmed;
@@ -143,12 +149,15 @@ namespace ProjectEL4S.InputControl
         internal void SetButton(int index, bool pressed, bool anyDownThisFrame)
         {
             bool prev = _pressed[index];
+            // 前のフレームは離していて、今は押している（または押して離すのが 1 フレームに収まった）なら「押した」
             bool down = !prev && (pressed || anyDownThisFrame);
             _down[index] = down;
+            // 今は離していて、前のフレームは押していた（または上の 1 フレーム内の押し離し）なら「離した」
             _up[index] = !pressed && (prev || down);
             _pressed[index] = pressed;
         }
 
+        /// <summary>この席の入力を全部 0 にする（固定登録の最中など、登録の操作でゲームが動かないように）。</summary>
         internal void ClearInput()
         {
             Move = Vector2.zero;

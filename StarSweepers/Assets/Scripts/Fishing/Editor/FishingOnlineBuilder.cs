@@ -1,3 +1,4 @@
+using System.Collections.Generic;
 using System.IO;
 using UnityEditor;
 using UnityEditor.Build.Reporting;
@@ -36,10 +37,15 @@ public static class FishingOnlineBuilder
     /// </summary>
     private static readonly string[] ScenePaths =
     {
+        // ※ FishingOnlineSetup・FishingMapSetup が作る／持っている場所と同じ。どちらかを変えたらそろえる
         FishingSceneBuilder.SceneFolder + "/FishingLobby.unity",
         FishingSceneBuilder.SceneFolder + "/FishingOnline.unity",
     };
 
+    /// <summary>
+    /// ビルドの出力先。**プロジェクトのフォルダ（`StarSweepers/`）から見た場所**
+    /// （エディタの「今いるフォルダ」がプロジェクトのフォルダなので、`Assets/…` と同じ書き方で通じる）。
+    /// </summary>
     private const string OutputFolder = "Build/FishingOnlineTest";
     private const string ExeName = "FishingOnlineTest.exe";
 
@@ -52,6 +58,10 @@ public static class FishingOnlineBuilder
     /// </summary>
     private const string WindowArgs = "-screen-fullscreen 0 -screen-width 960 -screen-height 540";
 
+    /// <summary>
+    /// ロビー・最初の会場・すべてのマップを入れて Windows 用にビルドし、成功したら起動用の `.bat` を隣に置く。
+    /// **Build Settings のシーン一覧は使わず、ここで決めたシーンだけを入れる**（一覧の中身に左右されない）。
+    /// </summary>
     [MenuItem("Tools/StarSweepers/釣りのオンライン検証用のビルドを作る")]
     public static void BuildFromMenu()
     {
@@ -62,7 +72,7 @@ public static class FishingOnlineBuilder
 
         // `釣りの新しいマップを作る` で作ったマップ（FishingMap01 など）も一緒に入れる。
         // 入れないと、ロビーでマップを選んでも読み込めない
-        var scenes = new System.Collections.Generic.List<string>(ScenePaths);
+        List<string> scenes = new List<string>(ScenePaths);
         scenes.AddRange(FishingMapSetup.FindMapScenePaths());
 
         BuildPlayerOptions options = new BuildPlayerOptions
@@ -103,6 +113,7 @@ public static class FishingOnlineBuilder
     /// </summary>
     private static bool CheckScenesExist()
     {
+        // マップ（FishingMap〜）は実際にあるシーンを探して足すので、ここでは確かめなくてよい
         foreach (string path in ScenePaths)
         {
             if (!File.Exists(path))
@@ -133,6 +144,7 @@ public static class FishingOnlineBuilder
         //
         //    ホストを先に立ち上げ、少し待ってから参加者を3つ起動する。
         //    待たないと、ホストの準備が終わる前に参加者がつなぎに行って失敗する
+        //    （`timeout /t 4` が4秒待つ、という意味。遅いPCでつながらないときは、この数字を大きくする）
         string autoConnect4 =
             "@echo off\r\n" +
             "rem Start 4 players on one PC and connect them (1 HOST + 3 CLIENTS).\r\n" +

@@ -24,8 +24,10 @@ namespace ProjectEL4S.MultiKeyboard
         // 2 台で同じキーを押して片方だけ離しても、押したままと扱うため
         private readonly Dictionary<IntPtr, bool[]> _pressedByDevice = new Dictionary<IntPtr, bool[]>();
         private readonly int[] _pressCount = new int[s_keyCount];
+        // 前回 Flush してから何か変わったか（変わっていなければ書き込みを省く）
         private bool _dirty;
 
+        /// <summary>キー 1 つの押した／離したを受け取る。どのデバイスかはハンドルで見分ける。</summary>
         public void OnKey(IntPtr device, Key key, bool isUp)
         {
             int k = (int)key;
@@ -74,6 +76,7 @@ namespace ProjectEL4S.MultiKeyboard
             if (!_dirty && IsInSync(keyboard)) return;
             _dirty = false;
 
+            // 「今押されているキーの全体」を 1 つの状態として丸ごと渡す（差分ではない）。渡した状態は次の更新で Keyboard.current に反映される
             var state = new KeyboardState();
             for (int k = 1; k < s_keyCount; k++)
             {
@@ -82,6 +85,7 @@ namespace ProjectEL4S.MultiKeyboard
             InputSystem.QueueStateEvent(keyboard, state);
         }
 
+        /// <summary>Unity 側の「押されているか」が、こちらの数え方と全キーで一致しているか。</summary>
         private bool IsInSync(Keyboard keyboard)
         {
             var keys = keyboard.allKeys;
@@ -95,6 +99,7 @@ namespace ProjectEL4S.MultiKeyboard
             return true;
         }
 
+        /// <summary>配列の大きさ。Key の番号は飛び飛びなので「いちばん大きい番号 + 1」（MultiKeyboardDevice と同じ）。</summary>
         private static int ComputeKeyCount()
         {
             int max = 0;

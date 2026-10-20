@@ -28,8 +28,13 @@ public class ThrowPassThrough : MonoBehaviour
     /// <summary>「離れた」とみなす余白（メートル）。</summary>
     private const float SeparationMargin = 0.2f;
 
+    /// <summary>この物資の当たり判定（子も含む）。投げた本人の体との当たりを一時的に切る相手。</summary>
     private Collider[] itemColliders;
+
+    /// <summary>投げた（または持っている）本人の体の当たり判定。null なら何も無視していない。</summary>
     private Collider thrower;
+
+    /// <summary>手を離してからの経過秒数。持っている間は数えない。</summary>
     private float elapsed;
 
     /// <summary>
@@ -66,6 +71,7 @@ public class ThrowPassThrough : MonoBehaviour
         }
     }
 
+    /// <summary>物資にこの部品を付け（すでに付いていればそれを使い）、相手と時間を付け直す。</summary>
     private static ThrowPassThrough Attach(GameObject item, Collider collider)
     {
         if (item == null || collider == null)
@@ -82,6 +88,7 @@ public class ThrowPassThrough : MonoBehaviour
         return passThrough;
     }
 
+    /// <summary>この本人の体と当たらないようにし始める。何度呼んでもよい。</summary>
     private void Begin(Collider throwerCollider)
     {
         hookable = GetComponent<HookableObject>();
@@ -102,6 +109,7 @@ public class ThrowPassThrough : MonoBehaviour
 
     private void Update()
     {
+        // 本人の体がいなくなった（退出した・消えた）ら、もう無視し続ける意味が無い
         if (thrower == null)
         {
             End();
@@ -136,9 +144,12 @@ public class ThrowPassThrough : MonoBehaviour
     /// <summary>物資の当たり判定が、投げた本人の体から離れたか。</summary>
     private bool IsSeparated()
     {
+        // 体の箱を余白ぶん広げてから重なりを見る。
+        // Expand は箱の全体の幅を増やす（片側ずつではない）ので、両側に余白を付けるには 2 倍にする
         Bounds body = thrower.bounds;
         body.Expand(SeparationMargin * 2f);
 
+        // すり抜け判定（トリガー）はそもそも当たらないので、実体のある当たり判定だけ見る
         foreach (Collider itemCollider in itemColliders)
         {
             if (itemCollider != null && !itemCollider.isTrigger && itemCollider.bounds.Intersects(body))
@@ -150,6 +161,7 @@ public class ThrowPassThrough : MonoBehaviour
         return true;
     }
 
+    /// <summary>当たりを元に戻し、この部品を休ませる（物資からは外さず、次に投げたときにまた使う）。</summary>
     private void End()
     {
         SetIgnored(false);
@@ -158,11 +170,13 @@ public class ThrowPassThrough : MonoBehaviour
         enabled = false;
     }
 
+    /// <summary>物資が消えるとき（ポケットに入った・爆発した）に、無視の設定を残さない。</summary>
     private void OnDestroy()
     {
         SetIgnored(false);
     }
 
+    /// <summary>物資の実体のある当たり判定すべてと、本人の体との当たりを切る／戻す。</summary>
     private void SetIgnored(bool ignore)
     {
         if (thrower == null || itemColliders == null)

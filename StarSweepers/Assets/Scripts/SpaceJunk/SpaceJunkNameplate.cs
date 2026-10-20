@@ -40,9 +40,19 @@ public class SpaceJunkNameplate : MonoBehaviour
     [Tooltip("自分の頭の上にも出すか")]
     [SerializeField] private bool showOwnName = true;
 
+    /// <summary>名前を出す相手のプレイヤー。いなくなったら、このタグも消す。</summary>
     private FishingNetPlayer owner;
+
+    /// <summary>名前の文字（チームの色）。</summary>
     private TextMesh text;
+
+    /// <summary>文字の影（同じ文字を黒くして、少しずらして後ろに置いたもの）。</summary>
     private TextMesh shadow;
+
+    /// <summary>
+    /// 文字と影をまとめた子。出す・隠すはこれの ON/OFF で行う
+    /// （この部品自身を OFF にすると LateUpdate が止まり、また出すときに気づけなくなるため）。
+    /// </summary>
     private GameObject visual;
 
     /// <summary>どのプレイヤーの名前を出すかを決める。</summary>
@@ -58,12 +68,14 @@ public class SpaceJunkNameplate : MonoBehaviour
         visual = new GameObject("Visual");
         visual.transform.SetParent(transform, false);
 
+        // 影は右下へずらし、0.01m だけ奥（カメラから遠い側）に置いて、文字の後ろに見えるようにする
         shadow = CreateText("Shadow", font, shadowColor);
         shadow.transform.localPosition = new Vector3(shadowOffset, -shadowOffset, 0.01f);
 
         text = CreateText("Text", font, fixedColor);
     }
 
+    /// <summary>文字を1つ作り、<see cref="visual"/> の子にする。下の真ん中を基準に置く（頭の真上に文字が乗るように）。</summary>
     private TextMesh CreateText(string name, Font font, Color color)
     {
         GameObject textObject = new GameObject(name, typeof(TextMesh));
@@ -77,6 +89,8 @@ public class SpaceJunkNameplate : MonoBehaviour
         mesh.alignment = TextAlignment.Center;
         mesh.color = color;
 
+        // 文字の絵はフォントの素材に入っているので、それを使う（借りられなかったときは元のまま）。
+        // 名前のタグが床に影を落とさないよう、影は落とさず受けもしない
         MeshRenderer meshRenderer = textObject.GetComponent<MeshRenderer>();
         if (font != null)
         {
@@ -90,6 +104,7 @@ public class SpaceJunkNameplate : MonoBehaviour
 
     private void LateUpdate()
     {
+        // 相手のプレイヤーが抜けた（消えた）ら、タグも片付ける
         if (owner == null)
         {
             Destroy(gameObject);
@@ -127,6 +142,7 @@ public class SpaceJunkNameplate : MonoBehaviour
             shadow.text = label;
         }
 
+        // チームはロビーで変わることがあるので、色は毎フレーム合わせる（影の色は変えない）
         text.color = useTeamColor ? SpaceJunkTeams.TeamColor(session.TeamOf(owner.PlayerKey)) : fixedColor;
     }
 }

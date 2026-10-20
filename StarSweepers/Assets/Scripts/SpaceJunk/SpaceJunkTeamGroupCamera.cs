@@ -117,16 +117,36 @@ public class SpaceJunkTeamGroupCamera : SpaceJunkCameraMode
     /// <summary>いまの、見る点からカメラまでの距離。</summary>
     public float Distance => distance;
 
+    // 下の3つは毎フレーム中身を入れ直す入れ物。毎回 new しないよう、使い回している
+
+    /// <summary>同じチームの味方（映すかどうかを決める前の、全員）。</summary>
     private readonly List<Transform> teammates = new List<Transform>();
+
+    /// <summary>このフレームに映す人の位置（先頭が自分。遠すぎる・落ちた味方は入らない）。</summary>
     private readonly List<Vector3> members = new List<Vector3>();
+
+    /// <summary>画面に入れたい点（映す人1人につき5点）。ズームの距離を決めるのに使う。</summary>
     private readonly List<Vector3> fitPoints = new List<Vector3>();
 
+    /// <summary>いまカメラが実際に見ている点。遊びがあるので、<see cref="desired"/> にすぐには追いつかない。</summary>
     private Vector3 focus;
+
+    /// <summary>本当は見たい点（チームの真ん中と自分の間）。ギズモの水色の玉。</summary>
     private Vector3 desired;
+
+    /// <summary>いまの、見る点からカメラまでの距離（メートル）。</summary>
     private float distance;
+
+    /// <summary>「寄れる」状態が続いている秒数。<see cref="zoomInDelay"/> を超えたら寄り始める。</summary>
     private float zoomInTimer;
+
+    /// <summary>寄っている最中か。寄り始めたら、ズームしない差の中に入っても、必要な距離まで寄りきる。</summary>
     private bool zoomingIn;
 
+    /// <summary>
+    /// 毎フレーム、①向き → ②見る点 → ③遊び → ④ズーム の順にカメラの置き場所を決める
+    /// （それぞれの意味はクラスの説明を参照）。自分のプレイヤーがまだいなければ false。
+    /// </summary>
     public override bool TryGetPose(float deltaTime, out Vector3 position, out Quaternion rotation)
     {
         position = transform.position;
@@ -140,14 +160,16 @@ public class SpaceJunkTeamGroupCamera : SpaceJunkCameraMode
 
         CollectMembers(self);
 
-        // ① 向き
+        // ① 向き（切り替えた直後などの SnapNext のときは、なめらかにせずその向きへ飛ぶ）
         float goalYaw = faceOwnSide ? OwnSideYaw() : 0f;
         Yaw = SnapNext ? goalYaw : Mathf.LerpAngle(Yaw, goalYaw, Smooth(turnSharpness, deltaTime));
         rotation = Quaternion.Euler(pitch, Yaw, 0f);
 
-        Quaternion flat = Quaternion.Euler(0f, Yaw, 0f);
-        Vector3 right = flat * Vector3.right;
-        Vector3 forward = flat * Vector3.forward;
+        // 画面の横（right）と奥（forward）の向きを、地面と平行に取る（見下ろす角度は入れない）。
+        // 遊び・チームの真ん中は、この2つの向きで測る（画面で見た「横にずれた」「奥にずれた」と一致させるため）
+        Quaternion yawOnly = Quaternion.Euler(0f, Yaw, 0f);
+        Vector3 right = yawOnly * Vector3.right;
+        Vector3 forward = yawOnly * Vector3.forward;
 
         // ② 見る点：チームの真ん中（画面の向きで見た範囲の真ん中）と自分の間
         desired = Vector3.Lerp(TeamCenter(right, forward), self.position, selfWeight);
@@ -159,23 +181,29 @@ public class SpaceJunkTeamGroupCamera : SpaceJunkCameraMode
         }
         else
         {
+            // 見たい点のズレを、画面の横・奥に分けて測り、遊び（幅・奥行きの半分）から出た分だけを取り出す
             Vector3 gap = desired - focus;
-            float side = Excess(Vector3.Dot(gap, right), deadZoneWidth * 0.5f);
-            float depth = Excess(Vector3.Dot(gap, forward), deadZoneDepth * 0.5f);
-            Vector3 goal = focus + right * side + forward * depth;
+            float sideOver = Excess(Vector3.Dot(gap, right), deadZoneWidth * 0.5f);
+            float depthOver = Excess(Vector3.Dot(gap, forward), deadZoneDepth * 0.5f);
+            Vector3 followGoal = focus + right * sideOver + forward * depthOver;
 
-            float follow = Smooth(followSharpness, deltaTime);
-            focus.x = Mathf.Lerp(focus.x, goal.x, follow);
-            focus.z = Mathf.Lerp(focus.z, goal.z, follow);
+            // 横（x・z）は遊びの縁までを追う。高さ（y）には遊びを付けず、見たい点の高さを別のなめらかさでゆっくり追う
+            // （ジャンプや段差で画面が上下に揺れないように）
+            float followRate = Smooth(followSharpness, deltaTime);
+            focus.x = Mathf.Lerp(focus.x, followGoal.x, followRate);
+            focus.z = Mathf.Lerp(focus.z, followGoal.z, followRate);
             focus.y = Mathf.Lerp(focus.y, desired.y, Smooth(heightSharpness, deltaTime));
         }
 
         // ④ ズーム：全員が入るいちばん近い距離
+        // （Max は、インスペクターで「いちばん遠い」を「いちばん近い」より小さくしてしまったときの保険）
         BuildFitPoints(right, forward);
-        float need = FitDistance(focus, rotation, fitPoints, screenMargin, minDistance, Mathf.Max(minDistance, maxDistance));
-        UpdateDistance(need, deltaTime);
+        float needDistance = FitDistance(focus, rotation, fitPoints, screenMargin, minDistance, Mathf.Max(minDistance, maxDistance));
+        UpdateDistance(needDistance, deltaTime);
 
         SnapNext = false;
+
+        // 見る点から、カメラの向きの真後ろへ distance メートル下がった所に置く
         position = focus + rotation * Vector3.back * distance;
         return true;
     }
@@ -206,6 +234,7 @@ public class SpaceJunkTeamGroupCamera : SpaceJunkCameraMode
                 continue;
             }
 
+            // 離れ具合は水平の距離だけで見る（上下の差は数えない）
             Vector3 apart = p - self.position;
             apart.y = 0f;
             if (apart.magnitude > teammateMaxDistance)
@@ -217,12 +246,18 @@ public class SpaceJunkTeamGroupCamera : SpaceJunkCameraMode
         }
     }
 
-    /// <summary>映す人全員を囲む範囲（画面の横・奥行きの向きで測る）の真ん中。高さは平均。</summary>
+    /// <summary>
+    /// 映す人全員を囲む範囲（画面の横・奥行きの向きで測る）の真ん中。高さは平均。
+    ///
+    /// 平均ではなく「囲む範囲の真ん中」にしているのは、何人かが固まっていても
+    /// 画面の両端の人まで同じだけ余裕ができるようにするため（平均だと固まっている側に寄る）。
+    /// </summary>
     private Vector3 TeamCenter(Vector3 right, Vector3 forward)
     {
+        // x … 画面の横の向きで測った位置、z … 画面の奥の向きで測った位置（世界の x・z ではない）
         float minX = float.MaxValue, maxX = float.MinValue;
         float minZ = float.MaxValue, maxZ = float.MinValue;
-        float height = 0f;
+        float heightSum = 0f;
 
         foreach (Vector3 p in members)
         {
@@ -232,15 +267,21 @@ public class SpaceJunkTeamGroupCamera : SpaceJunkCameraMode
             maxX = Mathf.Max(maxX, x);
             minZ = Mathf.Min(minZ, z);
             maxZ = Mathf.Max(maxZ, z);
-            height += p.y;
+            heightSum += p.y;
         }
 
+        // 横・奥それぞれの真ん中を、世界の位置へ組み立て直す（members には必ず自分が入っているので、割る数は 1 以上）
         Vector3 center = right * ((minX + maxX) * 0.5f) + forward * ((minZ + maxZ) * 0.5f);
-        center.y = height / members.Count;
+        center.y = heightSum / members.Count;
         return center;
     }
 
-    /// <summary>画面に入れたい点（人の足元と頭のまわり）。</summary>
+    /// <summary>
+    /// 画面に入れたい点（人の足元と頭のまわり）。1人につき5点。
+    ///
+    /// 足元は前後左右に余白の分だけ広げた4点。頭は**奥側の1点だけ**にしている
+    /// （上から見下ろしているので、頭と奥側が画面の上の端からはみ出しやすいため）。
+    /// </summary>
     private void BuildFitPoints(Vector3 right, Vector3 forward)
     {
         fitPoints.Clear();
@@ -256,7 +297,15 @@ public class SpaceJunkTeamGroupCamera : SpaceJunkCameraMode
         }
     }
 
-    /// <summary>距離を必要な距離へ寄せる。引くのは早く、寄るのはゆっくり・少し待ってから。</summary>
+    /// <summary>
+    /// 距離を必要な距離へ寄せる。引くのは早く、寄るのはゆっくり・少し待ってから。
+    ///
+    /// | 状況 | すること |
+    /// | --- | --- |
+    /// | 必要な距離のほうが遠い | すぐ引く（待ち時間を 0 に戻す） |
+    /// | ズームしない差より近くに寄れる（または寄っている最中） | 待ち時間を数え、<see cref="zoomInDelay"/> を過ぎたらゆっくり寄る |
+    /// | 差が小さい | 何もしない（待ち時間を 0 に戻す） |
+    /// </summary>
     private void UpdateDistance(float need, float deltaTime)
     {
         if (SnapNext)
@@ -283,6 +332,7 @@ public class SpaceJunkTeamGroupCamera : SpaceJunkCameraMode
                 zoomingIn = true;
                 distance = Mathf.Lerp(distance, need, Smooth(zoomInSharpness, deltaTime));
 
+                // 0.05f … 残りがこれ（メートル）より小さくなったら、寄りきったとみなす
                 if (distance - need < 0.05f)
                 {
                     zoomingIn = false;
@@ -321,16 +371,18 @@ public class SpaceJunkTeamGroupCamera : SpaceJunkCameraMode
             return;
         }
 
-        Quaternion flat = Quaternion.Euler(0f, Yaw, 0f);
-        Vector3 right = flat * Vector3.right * (deadZoneWidth * 0.5f);
-        Vector3 forward = flat * Vector3.forward * (deadZoneDepth * 0.5f);
+        // 遊びの幅・奥行きの「半分」の長さを持った、画面の横・奥の向き
+        Quaternion yawOnly = Quaternion.Euler(0f, Yaw, 0f);
+        Vector3 halfSide = yawOnly * Vector3.right * (deadZoneWidth * 0.5f);
+        Vector3 halfDepth = yawOnly * Vector3.forward * (deadZoneDepth * 0.5f);
 
         // 遊びの範囲（黄色の四角）。見る点の目標（水色）がこの外に出ると、カメラが動く
+        // a〜d は四角の角（手前左 → 手前右 → 奥右 → 奥左）
         Gizmos.color = Color.yellow;
-        Vector3 a = focus - right - forward;
-        Vector3 b = focus + right - forward;
-        Vector3 c = focus + right + forward;
-        Vector3 d = focus - right + forward;
+        Vector3 a = focus - halfSide - halfDepth;
+        Vector3 b = focus + halfSide - halfDepth;
+        Vector3 c = focus + halfSide + halfDepth;
+        Vector3 d = focus - halfSide + halfDepth;
         Gizmos.DrawLine(a, b);
         Gizmos.DrawLine(b, c);
         Gizmos.DrawLine(c, d);

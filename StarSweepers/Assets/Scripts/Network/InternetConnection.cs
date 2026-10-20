@@ -205,6 +205,10 @@ public class InternetConnection : MonoBehaviour
     public bool IsBusy =>
         State == Phase.Preparing || State == Phase.Creating || State == Phase.Joining;
 
+    /// <summary>
+    /// いま入っている部屋（Unity の Session）。入っていなければ null。
+    /// 部屋の名前・人数・合言葉はここから読む。抜けるとき（<see cref="LeaveGameAsync"/>）に null に戻す。
+    /// </summary>
     private ISession session;
 
     /// <summary>
@@ -217,7 +221,17 @@ public class InternetConnection : MonoBehaviour
     /// <summary>自動で決まったプロファイル名。1番目は null（初期のまま）。</summary>
     private static string autoProfile;
 
+    /// <summary>
+    /// プロファイルを決める処理（<see cref="ResolveInstanceSlot"/>）を、もう済ませたか。
+    /// static なので、シーンを行き来して InternetConnection が作り直されても**一度しか決めない**。
+    /// </summary>
     private static bool profileResolved;
+
+    /// <summary>
+    /// 同じPCで同時に起動できる数の上限。
+    /// 起動のたびに `instance0.lock` 〜 `instance7.lock` を順に掴んでいき、全部ふさがっていたらあきらめる。
+    /// </summary>
+    private const int MaxInstancesPerPc = 8;
 
     private void Awake()
     {
@@ -241,8 +255,7 @@ public class InternetConnection : MonoBehaviour
         string passwordProblem = PasswordProblem(password);
         if (passwordProblem != null)
         {
-            State = Phase.Failed;
-            Message = passwordProblem;
+            FailBeforeStart(passwordProblem);
             return;
         }
 
@@ -294,17 +307,16 @@ public class InternetConnection : MonoBehaviour
             return;
         }
 
-        if (PasswordProblem(joinPassword) != null)
+        string passwordProblem = PasswordProblem(joinPassword);
+        if (passwordProblem != null)
         {
-            State = Phase.Failed;
-            Message = PasswordProblem(joinPassword);
+            FailBeforeStart(passwordProblem);
             return;
         }
 
         if (string.IsNullOrWhiteSpace(code))
         {
-            State = Phase.Failed;
-            Message = "合言葉が入力されていません。";
+            FailBeforeStart("合言葉が入力されていません。");
             return;
         }
 
@@ -407,10 +419,10 @@ public class InternetConnection : MonoBehaviour
             return;
         }
 
-        if (PasswordProblem(joinPassword) != null)
+        string passwordProblem = PasswordProblem(joinPassword);
+        if (passwordProblem != null)
         {
-            State = Phase.Failed;
-            Message = PasswordProblem(joinPassword);
+            FailBeforeStart(passwordProblem);
             return;
         }
 
@@ -509,7 +521,7 @@ public class InternetConnection : MonoBehaviour
         }
 
         // 抜けると一覧から消えるので、先に写しておく
-        var stale = new System.Collections.Generic.List<ISession>(MultiplayerService.Instance.Sessions.Values);
+        List<ISession> stale = new List<ISession>(MultiplayerService.Instance.Sessions.Values);
 
         foreach (ISession leftover in stale)
         {
@@ -543,12 +555,11 @@ public class InternetConnection : MonoBehaviour
         //   Unity Cloud への登録が済んでいないと、その先へ進めない
         if (string.IsNullOrEmpty(Application.cloudProjectId))
         {
-            State = Phase.Failed;
-            Message =
+            FailBeforeStart(
                 "Unity Cloud への登録が済んでいません。\n" +
                 "Unityの Project Settings → Services から\n" +
                 "プロジェクトを登録し、Relay を有効にしてください。\n" +
-                "（手順：Documents/機能ドキュメント/インターネットでの複数人プレイ.md）";
+                "（手順：Documents/機能ドキュメント/インターネットでの複数人プレイ.md）");
 
             Debug.LogError("[NET] Unity Cloud への登録が済んでいません。");
             return false;
@@ -622,12 +633,13 @@ public class InternetConnection : MonoBehaviour
 
         // 指定が無ければ、空いている番号を先着順で取る。
         // 鍵ファイルを掴んだままにするので、他のインスタンスは同じ番号を取れない
-        for (int slot = 0; slot < 8; slot++)
+        for (int slot = 0; slot < MaxInstancesPerPc; slot++)
         {
             string path = Path.Combine(Application.persistentDataPath, $"instance{slot}.lock");
 
             try
             {
+                // FileShare.None ＝ 他のプロセスはこのファイルを開けない。開けた＝この番号は空いていた
                 instanceLock = new FileStream(path, FileMode.Create, FileAccess.Write, FileShare.None);
 
                 // 1番目はそのまま（本番はここしか通らない）
@@ -681,8 +693,16 @@ public class InternetConnection : MonoBehaviour
         Debug.Log($"[NET] プロファイルを「{autoProfile}」に切り替えました（別人として扱われます）");
     }
 
-    /// <summary>失敗したときの後始末。理由を画面とログの両方に残す。</summary>
-    /// <summary>部屋に入れなかったエラーが、パスワード違いらしいか（<see cref="LastJoinFailedByPassword"/>）。</summary>
+    /// <summary>
+    /// 部屋に入れなかったエラーが、パスワード違いらしいか（<see cref="LastJoinFailedByPassword"/>）。
+    ///
+    /// 中継サーバーは「パスワードが違う」とはっきり教えてくれないので、
+    /// **エラーの種類と文面から推測する。** 次のどれかなら「パスワード違い」とみなす。
+    ///
+    /// 1. 中継サーバーが「断られた（Forbidden）」「許されていない（NotAuthorized）」と返した
+    /// 2. エラーの文面に password の文字が入っている
+    /// 3. パスワードを入れて入ろうとしたのに、満員でも・部屋が無いのでもない理由で断られた
+    /// </summary>
     private static bool LooksLikeWrongPassword(Exception error, string joinPassword)
     {
         if (error is SessionException sessionError &&
@@ -698,11 +718,25 @@ public class InternetConnection : MonoBehaviour
         }
 
         // パスワードを入れて入ろうとして、満員・見つからない以外で断られたときも、パスワード違いとみなす
-        return !string.IsNullOrEmpty(joinPassword) &&
-               text.IndexOf("full", StringComparison.OrdinalIgnoreCase) < 0 &&
-               !(error is SessionException notFound && notFound.Error == SessionError.SessionNotFound);
+        bool triedWithPassword = !string.IsNullOrEmpty(joinPassword);
+        bool roomIsFull = text.IndexOf("full", StringComparison.OrdinalIgnoreCase) >= 0;
+        bool roomNotFound = error is SessionException notFound && notFound.Error == SessionError.SessionNotFound;
+
+        return triedWithPassword && !roomIsFull && !roomNotFound;
     }
 
+    /// <summary>
+    /// **始める前の確認で引っかかったとき**の後始末（パスワードが長すぎる・合言葉が空 など）。
+    /// 画面に理由を出して、何もしていない状態（ボタンを押せる状態）に戻す。
+    /// 通信のエラーで失敗したときは、ログも残す <see cref="Fail"/> のほうを使う。
+    /// </summary>
+    private void FailBeforeStart(string message)
+    {
+        State = Phase.Failed;
+        Message = message;
+    }
+
+    /// <summary>失敗したときの後始末。理由を画面とログの両方に残す。</summary>
     private void Fail(string reason, Exception error)
     {
         State = Phase.Failed;

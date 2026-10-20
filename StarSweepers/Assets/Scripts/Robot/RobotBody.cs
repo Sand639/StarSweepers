@@ -9,6 +9,15 @@ using UnityEngine;
 ///
 /// 物理演算（Rigidbody）ではなく **CharacterController** で動かしている。
 /// 揺れたり弾かれたりせず、指示したとおりに動くため。
+///
+/// ## 1フレームの動き（`Tick`）
+///
+/// 1. **上下の速さ**を決める（地面にいれば軽く押し付ける・ジャンプする・空中なら重力で速くなる）
+/// 2. **自分で歩く速さ**を決める（地上はすぐ入力どおり、空中は少しずつしか変わらない）
+/// 3. 切り離し・爆弾などで**外から与えられた勢い**を足す（だんだん弱まる）
+/// 4. まとめて CharacterController で動かし、**体の向き**を変える
+///
+/// ロープにつかまっている間だけは、`Tick` ではなく <see cref="MoveWithoutGravity"/> で動かされる。
 /// </summary>
 [RequireComponent(typeof(CharacterController))]
 public class RobotBody : MonoBehaviour, ILaunchable
@@ -72,6 +81,8 @@ public class RobotBody : MonoBehaviour, ILaunchable
     [SerializeField] private float launchDamping = 3f;
 
     private CharacterController characterController;
+
+    /// <summary>上下の速さ（1秒あたりのメートル。上がプラス）。ジャンプで上向きになり、重力で下向きに変わっていく。</summary>
     private float verticalVelocity;
 
     /// <summary>
@@ -88,6 +99,7 @@ public class RobotBody : MonoBehaviour, ILaunchable
     private Vector3 moveVelocity;
 
     // Air Control が1のとき、止まった状態から全速になるまでの秒数（0.3なら約0.33秒）
+    // （Air Control を a にすると、FullControlSeconds ÷ a 秒かかる。0.1 ÷ 0.3 ≒ 0.33）
     private const float FullControlSeconds = 0.1f;
 
     /// <summary>この体の進む速さ。</summary>
@@ -120,6 +132,8 @@ public class RobotBody : MonoBehaviour, ILaunchable
     {
         get
         {
+            // 体が一度も出ていない（Awake がまだ呼ばれていない）うちに聞かれることがあるので、
+            // ここでも取りに行く。切り離しの直前、隠れたままの上半身の高さを測るときがそう
             if (characterController == null)
             {
                 characterController = GetComponent<CharacterController>();
@@ -194,11 +208,37 @@ public class RobotBody : MonoBehaviour, ILaunchable
             return;
         }
 
+        // 地面に付いているかは「前のフレームに動かした結果」で決まる。
+        // このフレームの計算は、すべてこの1つの値を見る
         bool grounded = characterController.isGrounded;
 
+        UpdateVerticalVelocity(grounded, jumpRequested);
+        UpdateMoveVelocity(direction, faceDirection, grounded);
+
+        Vector3 velocity = moveVelocity;
+
+        // 切り離しなどで与えられた勢いを足す。時間とともに弱まる
+        // （`1 - Exp(-強さ × 経過時間)` の形にすると、フレームの速さが違っても同じ速さで弱まる）
+        velocity += launchVelocity;
+        launchVelocity = Vector3.Lerp(
+            launchVelocity, Vector3.zero, 1f - Mathf.Exp(-launchDamping * Time.deltaTime));
+
+        velocity.y = verticalVelocity;
+        characterController.Move(velocity * Time.deltaTime);
+
+        ApplyRotation(direction, faceDirection);
+    }
+
+    /// <summary>
+    /// **上下の速さ**（1秒あたりのメートル。上がプラス）を決める。
+    /// 地面にいれば軽く押し付け、ジャンプを頼まれていれば跳び、空中なら重力で落ちる速さを増やす。
+    /// </summary>
+    private void UpdateVerticalVelocity(bool grounded, bool jumpRequested)
+    {
         if (grounded && verticalVelocity <= 0f)
         {
             // 地面に押し付けておかないと、坂で浮いてガタつく
+            // （1秒あたり2mで下へ押す。地面に当たって止まるので、実際に沈むことはない）
             verticalVelocity = -2f;
         }
 
@@ -207,6 +247,7 @@ public class RobotBody : MonoBehaviour, ILaunchable
             // 「この高さまで上がる」速さを逆算して入れる。
             // **踏み切りの強さは、重力が変わっても変えない。**
             // だから重力が弱いと、そのぶん高く跳ぶ（月面のような跳び方になる）
+            // （高さ h まで上がる速さ ＝ √(2 × 重力の強さ × h)。gravity はマイナスの値なので -2 を掛けてプラスにしている）
             verticalVelocity = Mathf.Sqrt(jumpHeight * -2f * gravity);
         }
         else if (!grounded)
@@ -214,7 +255,14 @@ public class RobotBody : MonoBehaviour, ILaunchable
             // 落ちる速さだけが、いまの重力に合わせて変わる（<see cref="WorldGravity"/>）
             verticalVelocity += gravity * WorldGravity.Scale * Time.deltaTime;
         }
+    }
 
+    /// <summary>
+    /// **自分で歩く速さ**（水平方向）を決める。
+    /// 地上ではすぐ入力どおりに、空中では <see cref="airControl"/> に合わせて少しずつ変える。
+    /// </summary>
+    private void UpdateMoveVelocity(Vector3 direction, Vector3? faceDirection, bool grounded)
+    {
         Vector3 wantedVelocity = direction * (moveSpeed * GetSpeedRate(direction, faceDirection));
         wantedVelocity.y = 0f;
 
@@ -230,18 +278,6 @@ public class RobotBody : MonoBehaviour, ILaunchable
             float maxChange = moveSpeed / FullControlSeconds * airControl * Time.deltaTime;
             moveVelocity = Vector3.MoveTowards(moveVelocity, wantedVelocity, maxChange);
         }
-
-        Vector3 velocity = moveVelocity;
-
-        // 切り離しなどで与えられた勢いを足す。時間とともに弱まる
-        velocity += launchVelocity;
-        launchVelocity = Vector3.Lerp(
-            launchVelocity, Vector3.zero, 1f - Mathf.Exp(-launchDamping * Time.deltaTime));
-
-        velocity.y = verticalVelocity;
-        characterController.Move(velocity * Time.deltaTime);
-
-        ApplyRotation(direction, faceDirection);
     }
 
     /// <summary>
@@ -249,6 +285,9 @@ public class RobotBody : MonoBehaviour, ILaunchable
     ///
     /// 水平方向の勢いはだんだん弱まる。
     /// 上向きの成分は、ジャンプと同じ扱いになる（重力で落ちてくる）。
+    ///
+    /// 爆弾などからも <see cref="ILaunchable"/> として呼ばれる。
+    /// 水平の勢いは**足さずに置き換える**。下向きの成分は使わない（上向きのときだけ上下の速さを書き換える）。
     /// </summary>
     public void Launch(Vector3 velocity)
     {
@@ -277,13 +316,23 @@ public class RobotBody : MonoBehaviour, ILaunchable
             return;
         }
 
-        verticalVelocity = 0f;
-        launchVelocity = Vector3.zero;
-        moveVelocity = Vector3.zero;
+        ResetVelocities();
 
         characterController.Move(delta);
 
         ApplyRotation(Vector3.zero, faceDirection);
+    }
+
+    /// <summary>
+    /// 溜まっている勢い（落ちる速さ・外から与えられた勢い・自分で歩く速さ）を、すべてゼロに戻す。
+    /// ロープにつかまっている間（<see cref="MoveWithoutGravity"/>）と、
+    /// 別の場所へ移したとき（<see cref="Teleport"/>）に使う。
+    /// </summary>
+    private void ResetVelocities()
+    {
+        verticalVelocity = 0f;
+        launchVelocity = Vector3.zero;
+        moveVelocity = Vector3.zero;
     }
 
     /// <summary>
@@ -302,6 +351,7 @@ public class RobotBody : MonoBehaviour, ILaunchable
     /// </summary>
     private float GetSpeedRate(Vector3 direction, Vector3? faceDirection)
     {
+        // 向きが固定されていない・ほとんど動いていない（長さ0.01未満）なら、差をつけない
         if (!faceDirection.HasValue || direction.sqrMagnitude < 0.0001f)
         {
             return 1f;
@@ -322,6 +372,7 @@ public class RobotBody : MonoBehaviour, ILaunchable
         move.Normalize();
 
         // 前後の成分と、左右の成分に分ける
+        // （forwardAmount は前が＋・後ろが−。Cross(上, 前) は体の右向きで、左右はどちらでも同じ扱いなので絶対値を取る）
         float forwardAmount = Vector3.Dot(move, forward);
         float sideAmount = Mathf.Abs(Vector3.Dot(move, Vector3.Cross(Vector3.up, forward)));
 
@@ -360,6 +411,7 @@ public class RobotBody : MonoBehaviour, ILaunchable
             return;
         }
 
+        // ほとんど動いていない（長さ0.1以下）ときは向きを変えない。止まるたびに向きがぶれるのを防ぐ
         if (direction.sqrMagnitude > 0.01f)
         {
             Quaternion target = Quaternion.LookRotation(direction, Vector3.up);
@@ -375,6 +427,8 @@ public class RobotBody : MonoBehaviour, ILaunchable
     /// </summary>
     public void Teleport(Vector3 position, Quaternion rotation)
     {
+        // Height と同じく、Awake より先に呼ばれることがあるため
+        // （レースのやり直しで、一度も出ていない体まで3つまとめて移すときなど）
         if (characterController == null)
         {
             characterController = GetComponent<CharacterController>();
@@ -386,8 +440,8 @@ public class RobotBody : MonoBehaviour, ILaunchable
         transform.SetPositionAndRotation(position, rotation);
 
         characterController.enabled = wasEnabled;
-        verticalVelocity = 0f;
-        launchVelocity = Vector3.zero;
-        moveVelocity = Vector3.zero;
+
+        // 移す前の勢いが残っていると、移した直後に飛んで行ってしまう
+        ResetVelocities();
     }
 }

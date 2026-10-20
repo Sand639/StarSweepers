@@ -43,6 +43,7 @@ public class SpaceJunkHighValueMark : MonoBehaviour
 
         if (glow == null)
         {
+            // デブリの中心に点光源を1つ足す。光が届く範囲は 3m、影は作らない（軽くするため）
             var lightObject = new GameObject("HighValueGlow");
             lightObject.transform.SetParent(transform, false);
             glow = lightObject.AddComponent<Light>();
@@ -92,6 +93,7 @@ public class SpaceJunkHighValueMark : MonoBehaviour
         }
 
         // ゆっくり明滅させて、ふつうのデブリと見分けやすくする
+        // （明るさは 0.6〜1.0 の間を、およそ1秒に1往復。6 は1秒あたりの角度（ラジアン））
         float pulse = 0.8f + 0.2f * Mathf.Sin(Time.time * 6f);
         Color tinted = new Color(color.r * pulse, color.g * pulse, color.b * pulse, 1f);
 
@@ -110,6 +112,7 @@ public class SpaceJunkHighValueMark : MonoBehaviour
 
         if (glow != null)
         {
+            // 光の強さも同じリズムで 2.1〜2.5 の間を往復させる
             glow.intensity = 1.5f + pulse;
         }
     }

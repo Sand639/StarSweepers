@@ -19,6 +19,20 @@ using UnityEngine.InputSystem;
 /// **合体しているときは1体、分けたときは2体**という作りにしている。
 /// 2つを物理的に繋いで動かすとガタつくため、繋ぐのをやめて
 /// **「合体した姿の体」と「上半身」「下半身」を入れ替える**方式にした。
+///
+/// ## 流れ（毎フレーム）
+///
+/// 1. Q / Tab / E を見て、**切り離す・操作を移す・合体する**（<see cref="ReadStateInput"/>）
+/// 2. いまの状態に合わせて、**出ている体を動かす**（<see cref="MoveBodies"/>）。
+///    操作していない体も、重力だけは効かせる
+/// 3. **カメラが追いかける体**を決める（<see cref="UpdateCameraTarget"/>）
+///
+/// 状態が変わると、`Split`・`Combined`・`ControlSwitched` のイベントで周りの部品に知らせる。
+/// 物を持つ（<see cref="RobotGrabber"/>）・ロープ（<see cref="RobotRopeClimber"/>）・視点（<see cref="RobotViewSwitcher"/>）は、
+/// これを受けて「持っている物・つかまっている体・隠す体」を新しい体へ移す。
+///
+/// 使っているシーン：ロボット分離の検証シーン（`RobotSplitTest`）や、ロボットで走るレースなど、
+/// `RobotRig` プレハブを置いたシーン。
 /// </summary>
 public class RobotController : MonoBehaviour
 {
@@ -273,6 +287,7 @@ public class RobotController : MonoBehaviour
         moveAction = playerMap.FindAction("Move", true);
         jumpAction = playerMap.FindAction("Jump", true);
 
+        // 最初は合体した姿から始める（上半身・下半身は隠しておく）
         ApplyState(RobotState.Combined);
     }
 
@@ -305,6 +320,10 @@ public class RobotController : MonoBehaviour
     // 入力
     // ------------------------------------------------------------
 
+    /// <summary>
+    /// 切り離す（Q）・操作を移す（Tab）・合体する（E）のキーを見る。
+    /// それぞれ、**その状態のときだけ**効く（合体中に Tab や E を押しても何も起きない）。
+    /// </summary>
     private void ReadStateInput()
     {
         // レース中など、外から止められている間は何も受け付けない
@@ -347,6 +366,8 @@ public class RobotController : MonoBehaviour
         // **押しているキーの方向へ飛ばす。**
         // W なら前、S なら後ろ。何も押していなければ、横には動かず真上へ飛ぶ
         Vector3 launchDirection = GetSplitDirection();
+
+        // GetSplitDirection は「長さ1の向き」か「ゼロ」しか返さないので、ゼロでないかを見ているだけ
         bool hasInput = launchDirection.sqrMagnitude > 0.0001f;
 
         // 合体した体を隠してから、2つを置く
@@ -367,6 +388,9 @@ public class RobotController : MonoBehaviour
         ApplyState(RobotState.SplitUpper);
 
         // 拡張ポイント：ここで切り離しのエフェクトや音を鳴らせる
+        // **Split → ControlSwitched の順番を変えないこと。**
+        // ロープ側（RobotRopeClimber）は、Split で上半身へ引き継いでから ControlSwitched を受け取る前提で作られている。
+        // 逆にすると、ロープにつかまったまま切り離したときに手を離してしまう
         Split?.Invoke();
         ControlSwitched?.Invoke(State);
     }
@@ -382,10 +406,11 @@ public class RobotController : MonoBehaviour
     /// </summary>
     private Vector3 GetSplitDirection()
     {
-        Vector3 input = GetMoveDirection();
-        input.y = 0f;
+        Vector3 flatDirection = GetMoveDirection();
+        flatDirection.y = 0f;
 
-        return input.sqrMagnitude > 0.01f ? input.normalized : Vector3.zero;
+        // スティックをほんの少し（長さ0.1未満）倒しただけなら、押していない扱いにする
+        return flatDirection.sqrMagnitude > 0.01f ? flatDirection.normalized : Vector3.zero;
     }
 
     /// <summary>
@@ -510,6 +535,10 @@ public class RobotController : MonoBehaviour
     /// </summary>
     public bool FaceLookDirection { get; set; }
 
+    /// <summary>
+    /// 出ている体を、1フレーム分動かす。
+    /// 操作している体には入力を渡し、**操作していない体には「止まっている」を渡して重力だけ効かせる。**
+    /// </summary>
     private void MoveBodies()
     {
         // 止められている間は、動かない（重力だけは下で効く）
@@ -570,6 +599,8 @@ public class RobotController : MonoBehaviour
         Vector2 input = moveAction.ReadValue<Vector2>();
         Vector3 direction = cameraLook.FlatForward * input.y + cameraLook.FlatRight * input.x;
 
+        // 長さが1を超えたときだけ1に縮める（W と D を同時に押した斜めで、速くなりすぎないように）。
+        // スティックを半分だけ倒したときの「ゆっくり歩き」は、縮めずにそのまま残す
         return direction.sqrMagnitude > 1f ? direction.normalized : direction;
     }
 
@@ -577,6 +608,7 @@ public class RobotController : MonoBehaviour
     // カメラ
     // ------------------------------------------------------------
 
+    /// <summary>カメラが追いかける体を、いまの状態に合わせて決める。</summary>
     private void UpdateCameraTarget()
     {
         if (cameraLook == null)

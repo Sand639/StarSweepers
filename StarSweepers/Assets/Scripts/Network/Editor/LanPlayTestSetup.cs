@@ -15,12 +15,15 @@ using UnityEngine.InputSystem;
 /// </summary>
 public static class LanPlayTestSetup
 {
+    // 作る場所。**すでに同じ名前のものがあれば上書きする**ので、手で直したプレハブやシーンは消える
     private const string PrefabFolder = "Assets/Prefabs/Common";
     private const string SceneFolder = "Assets/Scenes/Test";
     private const string MaterialFolder = "Assets/Art/Materials";
 
     private const string PrefabPath = PrefabFolder + "/NetworkPlayer.prefab";
     private const string ScenePath = SceneFolder + "/LanPlayTest.unity";
+
+    /// <summary>プレイヤーの操作に使う入力の設定。プレハブに差し込む。</summary>
     private const string InputActionsPath = "Assets/InputSystem_Actions.inputactions";
 
     // ------------------------------------------------------------
@@ -43,9 +46,14 @@ public static class LanPlayTestSetup
     /// <summary>箱をなめらかに見せるための待ち時間（秒）。物理なので少し長めにする</summary>
     private const float BoxInterpolationTime = 0.075f;
 
+    /// <summary>
+    /// メニューの入口。フォルダ → マテリアル → プレイヤーのプレハブ → シーンの順に作る
+    /// （シーンがプレハブを参照するので、プレハブが先）。
+    /// </summary>
     [MenuItem("Tools/StarSweepers/アーカイブ/通信の土台/LAN通信の検証シーンを作り直す")]
     public static void CreateAll()
     {
+        // 親フォルダから順に作る（EnsureFolder は親があることを前提にしている）
         EnsureFolder("Assets/Art");
         EnsureFolder(MaterialFolder);
         EnsureFolder(PrefabFolder);
@@ -69,6 +77,10 @@ public static class LanPlayTestSetup
     // プレイヤーのプレハブ
     // ------------------------------------------------------------
 
+    /// <summary>
+    /// 通信用プレイヤーのプレハブを作って保存する。
+    /// シーンに置かず、`NetworkManager` の「Player Prefab」に登録して、つながったときに自動で生まれる形で使う。
+    /// </summary>
     private static GameObject CreatePlayerPrefab(Material bodyMaterial)
     {
         GameObject root = new GameObject("NetworkPlayer");
@@ -131,11 +143,14 @@ public static class LanPlayTestSetup
             Debug.LogWarning(InputActionsPath + " が見つかりません。入力の設定は手で入れてください。");
         }
 
+        // NetworkPlayer の private な [SerializeField] に、Inspector で入れるのと同じ方法で差し込む。
+        // **フィールド名の文字列で探している**ので、NetworkPlayer 側で名前を変えると見つからなくなる（null のまま保存される）
         SerializedObject serialized = new SerializedObject(player);
         serialized.FindProperty("inputActions").objectReferenceValue = inputActions;
         serialized.FindProperty("bodyRenderer").objectReferenceValue = bodyRenderer;
         serialized.ApplyModifiedPropertiesWithoutUndo();
 
+        // プレハブとして保存したら、シーン上の作業用の物は消す（残すと開いているシーンに置かれてしまう）
         GameObject saved = PrefabUtility.SaveAsPrefabAsset(root, PrefabPath);
         Object.DestroyImmediate(root);
 
@@ -146,17 +161,36 @@ public static class LanPlayTestSetup
     // 検証用シーン
     // ------------------------------------------------------------
 
+    /// <summary>
+    /// 検証用シーンを**まっさらから作り直して**保存する。
+    /// 置いた順番が、そのままヒエラルキーの並び順になる。
+    /// </summary>
     private static void CreateTestScene(GameObject prefab, Material groundMaterial, Material markerMaterial)
     {
         var scene = EditorSceneManager.NewScene(NewSceneSetup.EmptyScene, NewSceneMode.Single);
 
+        CreateLight();
+        CreateGroundAndMarkers(groundMaterial, markerMaterial);
+        CreateCamera();
+        CreateNetworkManager(prefab);
+        CreateSyncCheckObjects();
+
+        EditorSceneManager.SaveScene(scene, ScenePath);
+    }
+
+    private static void CreateLight()
+    {
         GameObject lightObject = new GameObject("Directional Light");
         Light light = lightObject.AddComponent<Light>();
         light.type = LightType.Directional;
         light.intensity = 1f;
         light.shadows = LightShadows.Soft;
         lightObject.transform.rotation = Quaternion.Euler(50f, -30f, 0f);
+    }
 
+    /// <summary>床と、動いたことが分かるための目印（四方の箱と段差）。通信には関係しない。</summary>
+    private static void CreateGroundAndMarkers(Material groundMaterial, Material markerMaterial)
+    {
         GameObject ground = GameObject.CreatePrimitive(PrimitiveType.Plane);
         ground.name = "Ground";
         ground.transform.localScale = new Vector3(3f, 1f, 3f);
@@ -174,7 +208,11 @@ public static class LanPlayTestSetup
         step.transform.position = new Vector3(5f, 0.25f, 5f);
         step.transform.localScale = new Vector3(4f, 0.5f, 4f);
         step.GetComponent<MeshRenderer>().sharedMaterial = markerMaterial;
+    }
 
+    /// <summary>カメラ。自分のプレイヤーが出てきたら、<see cref="LocalPlayerCamera"/> がそれを追いかける。</summary>
+    private static void CreateCamera()
+    {
         // カメラ
         GameObject cameraObject = new GameObject("Main Camera");
         cameraObject.tag = "MainCamera";
@@ -184,11 +222,20 @@ public static class LanPlayTestSetup
         camera.nearClipPlane = 0.05f;
         cameraObject.AddComponent<AudioListener>();
         cameraObject.AddComponent<LocalPlayerCamera>();
+    }
 
+    /// <summary>
+    /// 通信のまとめ役（`NetworkManager`）と、同じ物に付ける確認用の部品
+    /// （接続画面・インターネット接続・起動引数での自動接続・ログ・通信の様子の表示）。
+    /// </summary>
+    private static void CreateNetworkManager(GameObject prefab)
+    {
         // 通信のまとめ役
         GameObject managerObject = new GameObject("NetworkManager");
         NetworkManager manager = managerObject.AddComponent<NetworkManager>();
         UnityTransport transport = managerObject.AddComponent<UnityTransport>();
+
+        // つなぎ先の初期値（同じPCで試す前提。他のPCへつなぐときは接続画面で打ち直す）。LanConnectionUi の初期値と同じ
         transport.SetConnectionData("127.0.0.1", 7777);
 
         manager.NetworkConfig.NetworkTransport = transport;
@@ -204,10 +251,16 @@ public static class LanPlayTestSetup
         managerObject.AddComponent<NetworkStatusHud>();
 
         EditorUtility.SetDirty(manager);
+    }
 
+    /// <summary>
+    /// 中身の同期を確かめるもの（点が入るアイテムと、押せる箱）。
+    /// 位置が合うだけでは「遊べるか」は分からないので、
+    /// 得点と物理も同期されることを確かめられるようにしておく。
+    /// </summary>
+    private static void CreateSyncCheckObjects()
+    {
         // ----- 中身の同期を確かめるもの -----
-        // 位置が合うだけでは「遊べるか」は分からないので、
-        // 得点と物理も同期されることを確かめられるようにしておく
         Material itemMaterial = CreateMaterial(MaterialFolder + "/NetworkItem.mat", new Color(0.95f, 0.85f, 0.25f));
         Material boxMaterial = CreateMaterial(MaterialFolder + "/NetworkPushBox.mat", new Color(0.80f, 0.55f, 0.35f));
 
@@ -218,8 +271,6 @@ public static class LanPlayTestSetup
 
         CreatePushableBox("PushBox_1", new Vector3(-2.5f, 0.5f, 2.5f), boxMaterial);
         CreatePushableBox("PushBox_2", new Vector3(2.5f, 0.5f, 2.5f), boxMaterial);
-
-        EditorSceneManager.SaveScene(scene, ScenePath);
     }
 
     /// <summary>
@@ -285,6 +336,7 @@ public static class LanPlayTestSetup
         box.AddComponent<PushableBox>();
     }
 
+    /// <summary>目印の箱を1つ置く。通信も物理も付けない、ただの見た目。</summary>
     private static void CreateBox(string name, Vector3 position, Material material)
     {
         GameObject box = GameObject.CreatePrimitive(PrimitiveType.Cube);
@@ -298,6 +350,10 @@ public static class LanPlayTestSetup
     // 補助
     // ------------------------------------------------------------
 
+    /// <summary>
+    /// 単色のマテリアルを用意する。
+    /// すでにあれば色だけ変えて使い回す（作り直さないので、参照している側はそのまま）。
+    /// </summary>
     private static Material CreateMaterial(string path, Color color)
     {
         Material existing = AssetDatabase.LoadAssetAtPath<Material>(path);
@@ -308,6 +364,7 @@ public static class LanPlayTestSetup
             return existing;
         }
 
+        // このプロジェクトは URP。万一 URP が無い環境でもピンク（シェーダー無し）にならないよう、予備を用意しておく
         Shader shader = Shader.Find("Universal Render Pipeline/Lit");
         if (shader == null)
         {
@@ -319,6 +376,10 @@ public static class LanPlayTestSetup
         return material;
     }
 
+    /// <summary>
+    /// フォルダが無ければ作る。
+    /// **親フォルダはあるものとして作る**（1段しか作らない）ので、深い場所は親から順に呼ぶこと。
+    /// </summary>
     private static void EnsureFolder(string path)
     {
         if (AssetDatabase.IsValidFolder(path))
@@ -326,6 +387,7 @@ public static class LanPlayTestSetup
             return;
         }
 
+        // "Assets/Scenes/Test" → 親 "Assets/Scenes" と 名前 "Test" に分ける（AssetDatabase.CreateFolder はこの2つで受け取る）
         int lastSlash = path.LastIndexOf('/');
         string parent = path.Substring(0, lastSlash);
         string folderName = path.Substring(lastSlash + 1);

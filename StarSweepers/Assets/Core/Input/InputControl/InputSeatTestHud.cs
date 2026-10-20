@@ -17,16 +17,19 @@ namespace ProjectEL4S.InputControl
     [RequireComponent(typeof(InputSeatManager))]
     public sealed class InputSeatTestHud : MonoBehaviour
     {
+        [Tooltip("席ごとに動かす四角の一辺（px）")]
         [SerializeField] private float _boxSize = 60f;
         [Tooltip("四角の移動速度（px/秒）")]
         [SerializeField] private float _moveSpeed = 400f;
 
+        // 全部のボタンを順に見るための一覧（enum の値を配列にしたもの）
         private static readonly InputSeatButton[] s_buttons = (InputSeatButton[])Enum.GetValues(typeof(InputSeatButton));
 
         private InputSeatManager _manager;
+        // 1×1 の白い画像。色を変えて四角やカーソルを塗るのに使う（IMGUI には塗りつぶしの命令が無いため）
         private Texture2D _pixel;
         private Vector2[] _boxPositions;   // GUI 座標（左上原点）の中心
-        private int[] _buttonDownCounts;
+        private int[] _buttonDownCounts;   // 席ごとの「押した」の回数（取りこぼし・二重カウントの確認用）
         private GUIStyle _labelStyle;
         private GUIStyle _promptStyle;
         private readonly StringBuilder _sb = new StringBuilder();
@@ -153,6 +156,7 @@ namespace ProjectEL4S.InputControl
                 _sb.AppendLine($"     コントローラ: {(seat.HasGamepad ? seat.Gamepad.displayName : "なし（ボタンを押すと入る）")}");
             }
 
+            // 同じ文字を黒で 1px ずらして先に描き、影にして読みやすくする
             const float width = 1100f, height = 520f;
             GUI.color = Color.black;
             GUI.Label(new Rect(13f, 11f, width, height), _sb.ToString(), _labelStyle);
@@ -216,6 +220,7 @@ namespace ProjectEL4S.InputControl
             GUI.color = Color.white;
         }
 
+        /// <summary>四角を画面の下寄りに、席の順で横一列に並べ直す（間隔は画面の幅の 15%）。</summary>
         private void ResetBoxes()
         {
             for (int i = 0; i < _boxPositions.Length; i++)
@@ -226,6 +231,7 @@ namespace ProjectEL4S.InputControl
             }
         }
 
+        /// <summary>デバイスパスは 100 文字を超えることがあるので、画面に収まるよう 70 文字で切る。</summary>
         private static string Shorten(string deviceName)
         {
             if (string.IsNullOrEmpty(deviceName)) return "(unknown)";

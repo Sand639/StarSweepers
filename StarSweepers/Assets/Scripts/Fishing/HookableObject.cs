@@ -55,6 +55,7 @@ public class HookableObject : MonoBehaviour
     /// <summary>糸とフックを結ぶワールド座標。</summary>
     public Vector3 AnchorPoint => transform.TransformPoint(hookAnchorOffset);
 
+    /// <summary>最初に置かれていた位置と向き。復活（Respawn Seconds が 0 より大きいとき）に戻す先。</summary>
     private Vector3 startPosition;
     private Quaternion startRotation;
 
@@ -123,8 +124,10 @@ public class HookableObject : MonoBehaviour
             return;
         }
 
+        // 消える物を誰かが引っ掛けたままにしない（フック側が「外れた」と気づけるように）
         SetHooked(false);
 
+        // ---- オンライン ----
         FishingNetSupply netSupply = GetComponent<FishingNetSupply>();
         if (netSupply != null && netSupply.IsSpawned)
         {
@@ -146,6 +149,7 @@ public class HookableObject : MonoBehaviour
             return;
         }
 
+        // ---- 1人用 ----
         if (respawnSeconds <= 0f)
         {
             IsVanished = true;
@@ -157,6 +161,7 @@ public class HookableObject : MonoBehaviour
         StartCoroutine(VanishRoutine());
     }
 
+    /// <summary>1人用：見た目を消して待ち、元の場所に戻して物理も動かし直す。</summary>
     private IEnumerator VanishRoutine()
     {
         HideParts();
@@ -164,6 +169,8 @@ public class HookableObject : MonoBehaviour
         yield return new WaitForSeconds(respawnSeconds);
 
         transform.SetPositionAndRotation(startPosition, startRotation);
+
+        // HideParts で止めていた物理を戻す。前の勢い（投げられた速度など）が残らないよう速度もゼロにする
         Body.isKinematic = false;
         Body.linearVelocity = Vector3.zero;
         Body.angularVelocity = Vector3.zero;
@@ -190,6 +197,7 @@ public class HookableObject : MonoBehaviour
     {
         SetPartsEnabled(false);
 
+        // キネマティックな Rigidbody に速度を入れると Unity が警告を出すので、動いているときだけ止める
         if (!Body.isKinematic)
         {
             Body.linearVelocity = Vector3.zero;

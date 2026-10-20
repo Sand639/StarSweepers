@@ -10,6 +10,7 @@ namespace ProjectEL4S.InputControl
     [RequireComponent(typeof(DualDeviceInput))]
     public sealed class DualDeviceInputTestHud : MonoBehaviour
     {
+        [Tooltip("左上の数値パネルとカーソルを表示する（切ると何も描かない）")]
         [SerializeField] private bool _showHud = true;
 
         [Tooltip("左手側 / 右手側 のカーソルを画面に描く")]
@@ -18,7 +19,9 @@ namespace ProjectEL4S.InputControl
         [Tooltip("Down / Up を光らせる時間（秒）")]
         [SerializeField] private float _flashDuration = 0.15f;
 
+        [Tooltip("左手側の表示色（パネルの見出しとカーソル）")]
         [SerializeField] private Color _leftColor = new Color(0.30f, 0.75f, 1f);
+        [Tooltip("右手側の表示色（パネルの見出しとカーソル）")]
         [SerializeField] private Color _rightColor = new Color(1f, 0.55f, 0.25f);
 
         private DualDeviceInput _input;
@@ -27,6 +30,7 @@ namespace ProjectEL4S.InputControl
         private GUIStyle _header;
 
         // Down / Up はそのフレームしか立たないので、光らせる用に時刻を保持する
+        // （[0] = 左手側、[1] = 右手側。-99 秒は「まだ一度も起きていない」の印で、最初から光らないよう十分昔にしてある）
         private readonly float[] _triggerDownAt = { -99f, -99f };
         private readonly float[] _triggerUpAt = { -99f, -99f };
         private readonly float[] _bumperDownAt = { -99f, -99f };
@@ -122,6 +126,7 @@ namespace ProjectEL4S.InputControl
                 $"{bumperCaption}  {EdgeTag(_bumperDownAt[index], _bumperUpAt[index])}", _label);
         }
 
+        /// <summary>押した瞬間・離した瞬間から _flashDuration 秒のあいだだけ "[DOWN]" / "[UP]" を返す（目で追えるようにする）。</summary>
         private string EdgeTag(float downAt, float upAt)
         {
             bool down = Time.unscaledTime - downAt <= _flashDuration;

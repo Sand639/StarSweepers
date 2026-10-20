@@ -33,9 +33,22 @@ public class FishingStatusUI : MonoBehaviour
     [Tooltip("操作の説明を出す")]
     [SerializeField] private bool showControls = true;
 
+    /// <summary>「◯◯に投入！」の文字の色（薄い緑）。</summary>
+    private static readonly Color EventColor = new Color(0.4f, 1f, 0.5f);
+
+    /// <summary>点数の行と行の間（px。縮める前の大きさ）。</summary>
+    private const float LineHeight = 18f;
+
     private GUIStyle labelStyle;
     private GUIStyle bigStyle;
 
+    /// <summary>今フレーム、実際に使っている縮小率（窓の大きさに合わせて変わる）。</summary>
+    private float activeScale = 1.6f;
+
+    /// <summary>
+    /// 毎フレームの描画。全体を <see cref="activeScale"/> で拡大してから、
+    /// 左上の点数 → 上の爆発カウントダウン → 中央のスタン表示 → 一番下の操作説明、の順に描く。
+    /// </summary>
     private void OnGUI()
     {
         if (!showHud)
@@ -60,9 +73,7 @@ public class FishingStatusUI : MonoBehaviour
         GUI.matrix = saved;
     }
 
-    /// <summary>今フレーム、実際に使っている縮小率（窓の大きさに合わせて変わる）。</summary>
-    private float activeScale = 1.6f;
-
+    /// <summary>文字のスタイルを初回だけ作る（`GUI.skin` は OnGUI の中でしか触れないため、Awake では作れない）。</summary>
     private void PrepareStyles()
     {
         if (labelStyle == null)
@@ -104,16 +115,10 @@ public class FishingStatusUI : MonoBehaviour
             GUI.color = Color.white;
             GUI.Label(new Rect(10f, y, 320f, 20f),
                 $"{scoreBoard.NameOf(i)}　スコア {scoreBoard.ScoreOf(i)}", labelStyle);
-            y += 18f;
+            y += LineHeight;
         }
 
-        if (!string.IsNullOrEmpty(scoreBoard.LastEvent)
-            && Time.time - scoreBoard.LastEventTime < eventMessageSeconds)
-        {
-            GUI.color = new Color(0.4f, 1f, 0.5f);
-            GUI.Label(new Rect(10f, y, 380f, 20f), scoreBoard.LastEvent, labelStyle);
-            GUI.color = Color.white;
-        }
+        DrawEventMessage(y, 380f, scoreBoard.LastEvent, scoreBoard.LastEventTime);
     }
 
     /// <summary>チームごとの点数を出す。自分のチームには印を付ける。</summary>
@@ -130,31 +135,48 @@ public class FishingStatusUI : MonoBehaviour
             GUI.Label(new Rect(10f, y, 340f, 20f),
                 $"{mark}{FishingTeams.TeamName(team)}　{match.ScoreOf(team)} 点", labelStyle);
 
-            y += 18f;
+            y += LineHeight;
         }
 
         GUI.color = Color.white;
 
-        if (!string.IsNullOrEmpty(match.LastEvent)
-            && Time.time - match.LastEventTime < eventMessageSeconds)
-        {
-            GUI.color = new Color(0.4f, 1f, 0.5f);
-            GUI.Label(new Rect(10f, y, 420f, 20f), match.LastEvent, labelStyle);
-            GUI.color = Color.white;
-        }
+        DrawEventMessage(y, 420f, match.LastEvent, match.LastEventTime);
     }
 
-    /// <summary>自分が操作しているプレイヤーのチーム。見つからなければ -1。</summary>
-    private int FindMyTeam()
+    /// <summary>
+    /// 点数の下に、直前のできごと（「◯◯に投入！」など）を出す。
+    /// 起きてから <see cref="eventMessageSeconds"/> 秒の間だけ出し、そのあとは消える。
+    /// </summary>
+    private void DrawEventMessage(float y, float width, string message, float happenedAt)
+    {
+        if (string.IsNullOrEmpty(message) || Time.time - happenedAt >= eventMessageSeconds)
+        {
+            return;
+        }
+
+        GUI.color = EventColor;
+        GUI.Label(new Rect(10f, y, width, 20f), message, labelStyle);
+        GUI.color = Color.white;
+    }
+
+    /// <summary>このPCで自分が操作しているオンラインのプレイヤー。オンラインでない・まだいないときは null。</summary>
+    private static FishingNetPlayer FindMyPlayer()
     {
         foreach (FishingNetPlayer player in FishingNetPlayer.All)
         {
             if (player != null && player.IsOwner)
             {
-                return player.TeamIndex;
+                return player;
             }
         }
-        return -1;
+        return null;
+    }
+
+    /// <summary>自分が操作しているプレイヤーのチーム。見つからなければ -1。</summary>
+    private int FindMyTeam()
+    {
+        FishingNetPlayer me = FindMyPlayer();
+        return me != null ? me.TeamIndex : -1;
     }
 
     /// <summary>オンラインでは、自分のプレイヤーから PlayerStun を拾う。</summary>
@@ -165,29 +187,23 @@ public class FishingStatusUI : MonoBehaviour
             return playerStun;
         }
 
-        foreach (FishingNetPlayer player in FishingNetPlayer.All)
-        {
-            if (player != null && player.IsOwner)
-            {
-                return player.GetComponent<PlayerStun>();
-            }
-        }
-        return null;
+        FishingNetPlayer me = FindMyPlayer();
+        return me != null ? me.GetComponent<PlayerStun>() : null;
     }
 
     /// <summary>火のついた爆発物があれば、画面上部に残り秒数を大きく出す。</summary>
     private void DrawBombTimer(float width)
     {
-        ExplosiveObject nearest = FindMostUrgentBomb();
-        if (nearest == null)
+        ExplosiveObject mostUrgent = FindMostUrgentBomb();
+        if (mostUrgent == null)
         {
             return;
         }
 
-        float remaining = Mathf.Max(0f, nearest.FuseRemaining);
+        float remaining = Mathf.Max(0f, mostUrgent.FuseRemaining);
 
-        // 残りが少ないほど赤くする
-        float danger = 1f - Mathf.Clamp01(remaining / Mathf.Max(0.01f, nearest.FuseSeconds));
+        // 残りが少ないほど、黄色から赤へ近づける（0.01 は 0 で割らないための下限）
+        float danger = 1f - Mathf.Clamp01(remaining / Mathf.Max(0.01f, mostUrgent.FuseSeconds));
         GUI.color = Color.Lerp(new Color(1f, 0.85f, 0.2f), new Color(1f, 0.2f, 0.15f), danger);
 
         // 一番上は残り時間（FishingMatchUI）が使っているので、その下に出す
@@ -209,12 +225,14 @@ public class FishingStatusUI : MonoBehaviour
 
         float height = Screen.height / activeScale;
 
+        // 画面の真ん中より少し上（高さの 42% の位置）に、赤い大きな文字で出す
         GUI.color = new Color(1f, 0.3f, 0.25f);
         GUI.Label(new Rect(0f, height * 0.42f, width, 30f),
             $"スタン中！　動けない（あと {stun.Remaining:0.0} 秒）", bigStyle);
         GUI.color = Color.white;
     }
 
+    /// <summary>画面の一番下に、操作の説明を薄い白で1行出す（<see cref="HookAimAssist"/> の表示はこの行の上に乗る）。</summary>
     private void DrawControls(float width)
     {
         if (!showControls)

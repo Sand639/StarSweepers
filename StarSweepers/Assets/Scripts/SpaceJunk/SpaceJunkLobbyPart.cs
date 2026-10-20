@@ -66,6 +66,7 @@ public class SpaceJunkLobbyPart : MonoBehaviour
     [Tooltip("この部品の役目。コードはこれで部品を見つける")]
     [SerializeField] private SpaceJunkLobbyPartRole role;
 
+    /// <summary>この部品の役目。</summary>
     public SpaceJunkLobbyPartRole Role => role;
 
 #if UNITY_EDITOR

@@ -30,9 +30,13 @@ public static class FishingSpawnerSetup
     public const string OnlineSupplyPrefabPath = FishingSceneBuilder.FishOnlineGimmickFolder + "/FishingOnlineSupply.prefab";
     public const string OnlineBombPrefabPath = FishingSceneBuilder.FishOnlineGimmickFolder + "/FishingOnlineBomb.prefab";
 
+    // ※ FishingSceneBuilder が爆発のプレハブを作る場所と同じ（あちらは private なので、ここにも書いてある）
     private const string ExplosionPrefabPath = FishingSceneBuilder.FishPrefabFolder + "/FishingExplosion.prefab";
+
+    /// <summary>オンラインで出せるプレハブの一覧。ロビーの NetworkManager がこれを使う。</summary>
     private const string NetworkPrefabsListPath = "Assets/DefaultNetworkPrefabs.asset";
 
+    // ※ 手を入れる2つのシーン。FishingArenaTestSetup・FishingOnlineSetup が作る場所と同じ
     private const string ArenaScenePath = FishingSceneBuilder.SceneFolder + "/FishingArenaTest.unity";
     private const string OnlineScenePath = FishingSceneBuilder.SceneFolder + "/FishingOnline.unity";
 
@@ -41,6 +45,7 @@ public static class FishingSpawnerSetup
     [MenuItem("Tools/StarSweepers/釣りのスポナーを作る（ステージ検証＋オンライン会場）")]
     public static void SetupAll()
     {
+        // 開いているシーンに保存していない変更があれば、保存するか尋ねる（「キャンセル」なら何もしない）
         if (!EditorSceneManager.SaveCurrentModifiedScenesIfUserWantsTo())
         {
             return;
@@ -77,6 +82,7 @@ public static class FishingSpawnerSetup
     // プレハブ
     // ------------------------------------------------------------
 
+    /// <summary>爆発の見た目のプレハブを読み込む。**まだ無いときだけ作る**（あるものは作り直さない）。</summary>
     private static ExplosionEffect LoadOrCreateExplosionPrefab()
     {
         ExplosionEffect existing = AssetDatabase.LoadAssetAtPath<ExplosionEffect>(ExplosionPrefabPath);
@@ -103,6 +109,7 @@ public static class FishingSpawnerSetup
     /// <summary>物資と爆発物のプレハブを作って保存する。戻り値は物資、<paramref name="bombPrefab"/> に爆発物。</summary>
     private static GameObject CreatePrefabs(bool online, ExplosionEffect explosion, out GameObject bombPrefab)
     {
+        // 今開いているシーンに作業用の物を原点に一時的に置き、プレハブとして保存したらすぐ消す
         GameObject supplyObject;
         GameObject bombObject;
 
@@ -171,7 +178,12 @@ public static class FishingSpawnerSetup
         EditorSceneManager.SaveScene(scene);
     }
 
-    /// <summary>最初から置いてあった物資・爆発物と、前に置いたスポナーを消す。</summary>
+    /// <summary>
+    /// 最初から置いてあった物資・爆発物と、前に置いたスポナーを消す。
+    ///
+    /// 見分け方は「**シーンの一番上にあり**、HookableObject（引っ掛けられる物）か FishingObjectSpawner が付いている物」。
+    /// 何かの子にした物は消さない。逆に、物資でなくても HookableObject が付いた物（アンカーなど）を一番上に置いていると、それも消える。
+    /// </summary>
     private static void RemovePlacedObjects(Scene scene)
     {
         List<GameObject> toRemove = new List<GameObject>();
@@ -196,9 +208,11 @@ public static class FishingSpawnerSetup
     /// </summary>
     public static FishingObjectSpawner CreateSpawner(GameObject supplyPrefab, GameObject bombPrefab)
     {
+        // スポナーの位置が、物資が降る範囲の中心になる（範囲の広さは Area Half Size。初期値のまま）
         GameObject spawnerObject = new GameObject(SpawnerName);
         spawnerObject.transform.position = Vector3.zero;
 
+        // ⚠ "supplyPrefab"・"bombPrefab" は FishingObjectSpawner のフィールド名（向こうを改名すると静かに壊れる）
         FishingObjectSpawner spawner = spawnerObject.AddComponent<FishingObjectSpawner>();
         FishingSceneBuilder.SetRef(spawner, "supplyPrefab", supplyPrefab);
         FishingSceneBuilder.SetRef(spawner, "bombPrefab", bombPrefab);

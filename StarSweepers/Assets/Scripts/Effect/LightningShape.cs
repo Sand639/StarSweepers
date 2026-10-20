@@ -25,6 +25,7 @@ public static class LightningShape
         int samples = Mathf.Max(1, samplesPerSegment);
         int index = 0;
 
+        // 各区間は始点を含み、終点は含めない（次の区間の始点と同じ点になるため）
         for (int s = 0; s < segments; s++)
         {
             Vector3 p0 = controlPoints[s];
@@ -52,12 +53,16 @@ public static class LightningShape
     {
         for (int i = 1; i < count - 1; i++)
         {
+            // envelope は両端で 0、真ん中で 1 の山形。sin だけだと端の近くが細すぎるので、平方根で山をなだらかにしている
             float t = i / (float)(count - 1);
             float envelope = Mathf.Sqrt(Mathf.Sin(t * Mathf.PI));
 
+            // 前後の点を結んだ向きを「進む向き」とし、それと直角な面の中でランダムにずらす
+            // （進む向きにずらしても線の形はほとんど変わらないため）
             Vector3 forward = (points[i + 1] - points[i - 1]).normalized;
             Vector3 offset = Vector3.ProjectOnPlane(Random.insideUnitSphere, forward);
 
+            // insideUnitSphere の長さは 0〜1 なので、ずれは最大で jitter の 2 倍、平均するとおよそ jitter
             points[i] += offset * (jitter * 2f * envelope);
         }
     }

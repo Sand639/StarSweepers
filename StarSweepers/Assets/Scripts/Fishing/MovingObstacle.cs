@@ -69,19 +69,38 @@ public class MovingObstacle : MonoBehaviour
         public double Duration;
     }
 
+    /// <summary>道すじを「止まる→動く」の区間に分けたもの。1周ぶん並んでいる。</summary>
     private readonly List<Leg> legs = new List<Leg>();
+
+    /// <summary>押し出す相手を探すときの入れ物。一度に拾えるのは 16 個まで（プレイヤー＋近くの物資）。</summary>
     private readonly Collider[] overlapHits = new Collider[16];
 
     private Rigidbody body;
     private BoxCollider box;
+
+    /// <summary>置いたときの位置と向き。<see cref="points"/> はここからのずれで書かれている。</summary>
     private Vector3 basePosition;
     private Quaternion baseRotation;
+
+    /// <summary>1周にかかる秒数（止まる時間も含む）。0 なら動かない。</summary>
     private double cycleSeconds;
 
     // ---- 時計 ----
+
+    /// <summary>1人用のとき、動き始めた時刻（このPCの時計）。ここを 0 秒として数える。</summary>
     private double localStartTime;
+
+    /// <summary>「全員で共有している時計 − このPCの時計」の差（秒）。オンラインのときだけ使う。</summary>
     private double serverClockOffset;
+
+    /// <summary>いま共有の時計で動いているか（オンラインでつながっているか）。</summary>
     private bool useServerClock;
+
+    /// <summary>共有の時計とのずれがこれ（秒）より大きければ、少しずつ寄せずに一気に合わせる。</summary>
+    private const double ClockSnapThresholdSeconds = 0.5d;
+
+    /// <summary>ふだんの時計合わせで、1フレームにずれの何割を寄せるか（0〜1。小さいほど滑らか）。</summary>
+    private const double ClockBlendRate = 0.1d;
 
     private void Awake()
     {
@@ -143,6 +162,7 @@ public class MovingObstacle : MonoBehaviour
         }
     }
 
+    /// <summary>区間を1つ足し、1周の長さにもその時間を加える。止まる秒数がマイナスなら 0 として扱う。</summary>
     private void AddLeg(Vector3 from, Vector3 to)
     {
         var leg = new Leg
@@ -157,11 +177,13 @@ public class MovingObstacle : MonoBehaviour
         cycleSeconds += leg.Wait + leg.Duration;
     }
 
+    /// <summary>時計合わせだけ Update で行う（共有の時計は画面の更新ごとにしか進まないため）。</summary>
     private void Update()
     {
         UpdateServerClockOffset();
     }
 
+    /// <summary>物理の更新に合わせて位置を決める（Rigidbody の MovePosition は FixedUpdate で呼ぶ決まり）。</summary>
     private void FixedUpdate()
     {
         if (cycleSeconds <= 0d)
@@ -203,13 +225,13 @@ public class MovingObstacle : MonoBehaviour
         double target = network.ServerTime.Time - Time.timeAsDouble;
 
         // つながった直後や大きくずれたときはそのまま合わせ、ふだんは少しずつ寄せる（ガタつき防止）
-        if (!useServerClock || System.Math.Abs(target - serverClockOffset) > 0.5d)
+        if (!useServerClock || System.Math.Abs(target - serverClockOffset) > ClockSnapThresholdSeconds)
         {
             serverClockOffset = target;
         }
         else
         {
-            serverClockOffset += (target - serverClockOffset) * 0.1d;
+            serverClockOffset += (target - serverClockOffset) * ClockBlendRate;
         }
 
         useServerClock = true;
@@ -230,12 +252,15 @@ public class MovingObstacle : MonoBehaviour
     /// <summary>時刻 <paramref name="time"/> に、置いた位置からどれだけずれた場所にいるか。</summary>
     private Vector3 EvaluateOffset(double time)
     {
+        // 1周の中のどこか（0〜cycleSeconds）に直す。
+        // 先へずらす秒数（startOffsetSeconds）がマイナスだと余りもマイナスになるので、1周ぶん足して戻す
         double t = time % cycleSeconds;
         if (t < 0d)
         {
             t += cycleSeconds;
         }
 
+        // 区間を頭から順にたどり、t がどの区間の「止まっている間」か「動いている間」かを探す
         foreach (Leg leg in legs)
         {
             if (t < leg.Wait)
@@ -256,6 +281,7 @@ public class MovingObstacle : MonoBehaviour
             t -= leg.Duration;
         }
 
+        // 小数の誤差でどの区間にも入らなかったときの保険（1周の終わり ＝ 最後の区間の終点）
         return legs[legs.Count - 1].To;
     }
 
@@ -270,7 +296,7 @@ public class MovingObstacle : MonoBehaviour
         Vector3 halfSize = Vector3.Scale(box.size, scale) * 0.5f;
         Vector3 center = position + baseRotation * Vector3.Scale(box.center, scale);
 
-        // 少し広めに探して、触れかけのプレイヤーも拾う
+        // 少し広めに探して、触れかけのプレイヤーも拾う（横に 1 m・上下に 0.2 m 広げる）
         Vector3 searchHalf = halfSize + new Vector3(1f, 0.2f, 1f);
         int count = Physics.OverlapBoxNonAlloc(center, searchHalf, overlapHits, baseRotation,
             ~0, QueryTriggerInteraction.Ignore);
@@ -304,12 +330,15 @@ public class MovingObstacle : MonoBehaviour
             return;
         }
 
+        // 真上から見たプレイヤーの円の半径（拡大率と、CharacterController の皮の厚み skinWidth を含める）
         float radius = character.radius * Mathf.Max(characterScale.x, characterScale.z)
                      + character.skinWidth;
 
         // 障害物の向きに合わせた座標で考える（こうすると長方形の辺が軸に揃う）
         Vector3 local = Quaternion.Inverse(baseRotation) * (characterCenter - center);
 
+        // 長方形の中で、プレイヤーの中心に一番近い点を求め、そこからプレイヤーの中心へ向かうベクトル（away）を出す。
+        // 中心が長方形の中にあれば away は 0 になる
         float closestX = Mathf.Clamp(local.x, -halfSize.x, halfSize.x);
         float closestZ = Mathf.Clamp(local.z, -halfSize.z, halfSize.z);
         Vector2 away = new Vector2(local.x - closestX, local.z - closestZ);

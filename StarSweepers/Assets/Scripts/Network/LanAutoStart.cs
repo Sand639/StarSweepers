@@ -30,12 +30,17 @@ public class LanAutoStart : MonoBehaviour
     /// <summary>引数で自動的に始めたか。画面表示の切り替えに使える。</summary>
     public bool StartedFromCommandLine { get; private set; }
 
+    /// <summary>
+    /// 起動時の引数を読んで、LAN かインターネットかを決めて始める。
+    /// `-nethost` / `-netjoin` は見つけた時点で始めて終わる（LAN の引数と混ざっていても、インターネット側を優先）。
+    /// LAN の引数（`-host` `-client` `-port`）は全部読んでから始める（`-port` が後ろに書かれていてもよいように）。
+    /// </summary>
     private void Start()
     {
         string[] args = System.Environment.GetCommandLineArgs();
 
         string address = null;
-        ushort port = 0;
+        ushort port = 0; // 0 ＝ 指定なし（Inspector の値を使う）
         bool wantHost = false;
         bool wantClient = false;
 
@@ -49,6 +54,7 @@ public class LanAutoStart : MonoBehaviour
 
                 case "-client":
                     wantClient = true;
+                    // 次の引数がホストのIP（無ければ Inspector の値）
                     if (i + 1 < args.Length)
                     {
                         address = args[i + 1];
@@ -82,6 +88,7 @@ public class LanAutoStart : MonoBehaviour
             return;
         }
 
+        // -host と -client の両方が書かれていたら、ホストにする
         StartAs(wantHost, address, port);
     }
 
@@ -113,6 +120,10 @@ public class LanAutoStart : MonoBehaviour
         }
     }
 
+    /// <summary>
+    /// LAN でホストまたは参加を始める。
+    /// IP・ポートが指定されていなければ（null・0）、Inspector の UnityTransport に入っている値をそのまま使う。
+    /// </summary>
     private void StartAs(bool asHost, string address, ushort port)
     {
         NetworkManager manager = GetComponent<NetworkManager>();
@@ -130,6 +141,7 @@ public class LanAutoStart : MonoBehaviour
 
         ushort usePort = port == 0 ? transport.ConnectionData.Port : port;
 
+        // ホストは "0.0.0.0" で待ち受ける（どのネットワークからの参加も受け付ける）。参加者は待ち受けないので null でよい
         transport.SetConnectionData(useAddress, usePort, asHost ? "0.0.0.0" : null);
 
         bool started = asHost ? manager.StartHost() : manager.StartClient();

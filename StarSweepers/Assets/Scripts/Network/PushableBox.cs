@@ -53,13 +53,21 @@ public class PushableBox : NetworkBehaviour
     /// </summary>
     private readonly Dictionary<ulong, PushRequest> pushes = new Dictionary<ulong, PushRequest>();
 
+    /// <summary>
+    /// 期限切れを消すための一時置き場。
+    /// Dictionary は foreach の途中で消せないので、いったん集めてから消す（毎回 new しないよう使い回す）。
+    /// </summary>
     private readonly List<ulong> expiredKeys = new List<ulong>();
 
     private Rigidbody body;
 
+    /// <summary>1人ぶんの「押している」。向きと、いつまで押しているとみなすか。</summary>
     private struct PushRequest
     {
+        /// <summary>押している向き（長さ1）。</summary>
         public Vector3 Direction;
+
+        /// <summary>この時刻（`Time.time`）を過ぎたら「押すのをやめた」とみなす。</summary>
         public float ExpireTime;
     }
 
@@ -85,6 +93,7 @@ public class PushableBox : NetworkBehaviour
 
         Vector3 total = CollectPushDirections();
 
+        // 誰も押していない、または向かい合って押して打ち消し合っているときは、力を加えない
         if (total.sqrMagnitude > 0.0001f)
         {
             // 質量に関係なく同じ加速になるので、箱の重さを変えても押し心地が変わらない
@@ -147,6 +156,7 @@ public class PushableBox : NetworkBehaviour
     [ServerRpc(RequireOwnership = false)]
     public void PushServerRpc(Vector3 direction, ServerRpcParams rpcParams = default)
     {
+        // 物理を回していない（＝ホストではない）ときは何もしない。ServerRpc なのでふつうはホストで動くが、念のため
         if (body == null || body.isKinematic)
         {
             return;
@@ -157,6 +167,7 @@ public class PushableBox : NetworkBehaviour
             direction.y = 0f;
         }
 
+        // 水平にしたら向きが無くなった（真上・真下から当たった）ときは、押していないとみなす
         if (direction.sqrMagnitude < 0.0001f)
         {
             return;

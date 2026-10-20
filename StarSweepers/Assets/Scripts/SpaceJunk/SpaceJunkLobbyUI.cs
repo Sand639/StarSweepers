@@ -68,7 +68,13 @@ public class SpaceJunkLobbyUI : MonoBehaviour
     [Tooltip("小窓の大きさ（1920×1080 のときの倍率）")]
     [SerializeField] private float localPlayersUiScale = 1f;
 
+    /// <summary>
+    /// 「このPCで遊ぶ人数」の小窓（つかんで動かせる枠）。
+    /// 最初は画面の右端から 12 内側・上から 260 の所に、幅 340 で出す（1920×1080 のときの大きさ）。
+    /// </summary>
     private readonly DraggableGuiPanel localPlayersPanel = new DraggableGuiPanel("このPCで遊ぶ人数", 1f, -12f, 260f, 340f);
+
+    /// <summary>小窓の文字の見た目。GUI.skin は OnGUI の中でしか使えないので、最初の OnGUI で作る。</summary>
     private GUIStyle labelStyle;
 
     private void Awake()
@@ -104,6 +110,7 @@ public class SpaceJunkLobbyUI : MonoBehaviour
             connectionUi.enabled = false;
         }
 
+        // 通信の様子の窓は、ゲーム設定を開いている間だけ隠す（重なって読めないため）
         if (statusHud != null)
         {
             statusHud.enabled = !SpaceJunkLobbyScreen.IsSettingsOpen;
@@ -165,6 +172,7 @@ public class SpaceJunkLobbyUI : MonoBehaviour
             labelStyle = new GUIStyle(GUI.skin.label) { fontSize = 13, wordWrap = true };
         }
 
+        // 「_」は窓の番号（GUI.WindowFunction の引数）。ここでは使わない
         localPlayersPanel.Draw(localPlayersUiScale, _ => DrawLocalPlayers());
     }
 
@@ -192,12 +200,14 @@ public class SpaceJunkLobbyUI : MonoBehaviour
             return;
         }
 
+        // 席（P1・P2…）と機器の割り当ては InputSeatManager が持っている。ここは出すのとボタンだけ
         InputSeatManager seats = InputSeatManager.Instance;
         if (seats == null)
         {
             return;
         }
 
+        // 登録の最中は、案内と「やめる」だけを出す
         if (seats.IsRegistering)
         {
             GUILayout.Label(seats.RegistrationPrompt, labelStyle);
@@ -231,11 +241,13 @@ public class SpaceJunkLobbyUI : MonoBehaviour
         GUILayout.EndHorizontal();
     }
 
+    /// <summary>機器がつながっていれば「○」、無ければ「－」。</summary>
     private static string Mark(bool connected)
     {
         return connected ? "○" : "－";
     }
 
+    /// <summary>シーンが読み込まれるたびに呼ばれる（この部品はシーンをまたいで残るので、ロビーへ戻ったときにも確かめられる）。</summary>
     private void OnSceneLoaded(Scene scene, LoadSceneMode mode)
     {
         EnsureScreen(scene);
@@ -321,6 +333,8 @@ public class SpaceJunkLobbyUI : MonoBehaviour
             return maps;
         }
 
+        // ここから下は、マップの一覧が無いときの昔の拾い方（ビルドの一覧から、名前で拾う）。
+        // チーム数で遊べるかは調べられないので、hiddenForTeams は 0 のまま
         int count = SceneManager.sceneCountInBuildSettings;
 
         for (int i = 0; i < count; i++)

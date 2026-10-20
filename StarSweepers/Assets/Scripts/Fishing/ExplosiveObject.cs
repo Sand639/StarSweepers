@@ -76,6 +76,7 @@ public class ExplosiveObject : MonoBehaviour
         LitBombs.Remove(this);
     }
 
+    /// <summary>点滅で色を変える前に、元の色を控えておく。爆発したあと元の色に戻すため。</summary>
     private void CaptureColors()
     {
         if (blinkRenderers == null)
@@ -84,7 +85,8 @@ public class ExplosiveObject : MonoBehaviour
             return;
         }
 
-        // 色を変える前に元の色を控えておく（AIの申し送り参照）
+        // 色を変える前に元の色を控えておく（AIの申し送り参照）。
+        // 読むのは sharedMaterial（共有の素材）。material を読むとその時点で複製が作られてしまう
         originalColors = new Color[blinkRenderers.Length];
         for (int i = 0; i < blinkRenderers.Length; i++)
         {
@@ -132,23 +134,37 @@ public class ExplosiveObject : MonoBehaviour
     /// <summary>残り時間が減るほど、点滅を速く・脈動を大きくする。</summary>
     private void UpdateWarningLook()
     {
+        // progress … 0（火がついた直後）〜 1（爆発直前）。0.01 は 0 で割らないための下限
         float progress = 1f - Mathf.Clamp01(FuseRemaining / Mathf.Max(0.01f, fuseSeconds));
-        float hz = Mathf.Lerp(minBlinkPerSecond, maxBlinkPerSecond, progress);
-        bool on = Mathf.Repeat(Time.time * hz, 1f) < 0.5f;
+        float blinksPerSecond = Mathf.Lerp(minBlinkPerSecond, maxBlinkPerSecond, progress);
 
+        // 1回の点滅のうち、前半は危険色で膨らみ、後半は元の色・元の大きさ
+        bool showDanger = Mathf.Repeat(Time.time * blinksPerSecond, 1f) < 0.5f;
+
+        ApplyBlinkColors(showDanger);
+
+        float pulse = showDanger ? Mathf.Lerp(1f, maxPulseScale, progress) : 1f;
+        transform.localScale = baseScale * pulse;
+    }
+
+    /// <summary>点滅させる見た目をすべて、危険色か元の色に塗る。</summary>
+    private void ApplyBlinkColors(bool danger)
+    {
         for (int i = 0; i < blinkRenderers.Length; i++)
         {
             if (blinkRenderers[i] == null)
             {
                 continue;
             }
-            blinkRenderers[i].material.color = on ? dangerColor : originalColors[i];
+            blinkRenderers[i].material.color = danger ? dangerColor : originalColors[i];
         }
-
-        float pulse = on ? Mathf.Lerp(1f, maxPulseScale, progress) : 1f;
-        transform.localScale = baseScale * pulse;
     }
 
+    /// <summary>
+    /// 爆発する。見た目を出す → 範囲内に効果を与える → 火を消して見た目を戻す → 消える、の順。
+    /// オンラインでも**各PCが自分で導火線を数えて、自分の画面で爆発させる**
+    /// （<see cref="FishingNetBomb"/>。配っているのは「火がついた」ことだけ）。
+    /// </summary>
     private void Explode()
     {
         SpawnEffect();
@@ -172,6 +188,7 @@ public class ExplosiveObject : MonoBehaviour
         hookable.Vanish();
     }
 
+    /// <summary>爆発の見た目を、この物の場所に出す（見た目のプレハブが入っていなければ何も出さない）。</summary>
     private void SpawnEffect()
     {
         if (explosionEffectPrefab == null)
@@ -239,17 +256,10 @@ public class ExplosiveObject : MonoBehaviour
         other.Vanish();
     }
 
+    /// <summary>点滅と脈動をやめて、元の色と大きさに戻す。復活したときに燃えたままの見た目にならないように。</summary>
     private void RestoreLook()
     {
         transform.localScale = baseScale;
-
-        for (int i = 0; i < blinkRenderers.Length; i++)
-        {
-            if (blinkRenderers[i] == null)
-            {
-                continue;
-            }
-            blinkRenderers[i].material.color = originalColors[i];
-        }
+        ApplyBlinkColors(false);
     }
 }

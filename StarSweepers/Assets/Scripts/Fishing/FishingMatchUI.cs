@@ -51,13 +51,19 @@ public class FishingMatchUI : MonoBehaviour
         // 4つ並べて起動すると1つの窓が小さくなり、
         // そのままだと結果画面の「ロビーへ戻る」が画面の外へ出てしまう
         // （他の表示と同じ割合で縮むよう、DraggableGuiPanel.FitScale にそろえている）
+        //
+        // 520×330 は、結果画面（勝敗＋チーム4行＋ボタン）が等倍で収まる窓の大きさの目安（ピクセル）。
+        // 窓がそれより小さいぶんだけ縮め、ただし 0.6 倍より小さくはしない（読めなくなるため）
         float scale = Mathf.Min(DraggableGuiPanel.FitScale(uiScale), Screen.width / 520f, Screen.height / 330f);
         scale = Mathf.Max(0.6f, scale);
 
-        Matrix4x4 saved = GUI.matrix;
+        // GUI 全体を scale 倍にして描く。描き終わったら元の行列に戻す（他の OnGUI に影響させない）
+        Matrix4x4 savedMatrix = GUI.matrix;
         GUI.matrix = Matrix4x4.Scale(new Vector3(scale, scale, 1f));
 
         activeScale = scale;
+
+        // 縮めたぶん、描ける幅は広くなる（scale 倍した座標系での画面の幅）
         float width = Screen.width / scale;
         FishingMatch match = FishingMatch.Current;
 
@@ -70,47 +76,56 @@ public class FishingMatchUI : MonoBehaviour
             DrawResult(match, width);
         }
 
-        GUI.matrix = saved;
+        GUI.matrix = savedMatrix;
     }
 
+    /// <summary>
+    /// 文字の見た目を最初の1回だけ作る。
+    /// `GUI.skin` は OnGUI の中でしか触れないので、Awake ではなくここで作っている。
+    /// </summary>
     private void PrepareStyles()
     {
         if (timerStyle == null)
         {
-            timerStyle = new GUIStyle(GUI.skin.label)
-            {
-                fontSize = 26,
-                fontStyle = FontStyle.Bold,
-                alignment = TextAnchor.MiddleCenter
-            };
+            timerStyle = MakeCenteredLabel(26, bold: true);
         }
 
         if (resultStyle == null)
         {
-            resultStyle = new GUIStyle(GUI.skin.label)
-            {
-                fontSize = 30,
-                fontStyle = FontStyle.Bold,
-                alignment = TextAnchor.MiddleCenter
-            };
+            resultStyle = MakeCenteredLabel(30, bold: true);
         }
 
         if (lineStyle == null)
         {
-            lineStyle = new GUIStyle(GUI.skin.label)
-            {
-                fontSize = 16,
-                alignment = TextAnchor.MiddleCenter
-            };
+            lineStyle = MakeCenteredLabel(16, bold: false);
         }
+    }
+
+    /// <summary>中央ぞろえのラベルの見た目を作る。</summary>
+    private static GUIStyle MakeCenteredLabel(int fontSize, bool bold)
+    {
+        GUIStyle style = new GUIStyle(GUI.skin.label)
+        {
+            fontSize = fontSize,
+            alignment = TextAnchor.MiddleCenter
+        };
+
+        if (bold)
+        {
+            style.fontStyle = FontStyle.Bold;
+        }
+
+        return style;
     }
 
     // ------------------------------------------------------------
     // 対戦中
     // ------------------------------------------------------------
 
+    /// <summary>画面の上端中央に、残り時間（または「◯点先取」）を出す。</summary>
     private void DrawTimer(FishingMatch match, float width)
     {
+        // 上端から 4px、高さ 32px の帯に、画面の幅いっぱいで中央ぞろえ
         if (match.EndRule == MatchEndRule.TargetScore)
         {
             GUI.color = Color.white;
@@ -122,11 +137,14 @@ public class FishingMatchUI : MonoBehaviour
         int minutes = Mathf.FloorToInt(remaining / 60f);
         int seconds = Mathf.FloorToInt(remaining % 60f);
 
+        // 残りわずかは赤
         GUI.color = remaining <= warnSeconds
             ? new Color(1f, 0.3f, 0.25f)
             : Color.white;
 
         GUI.Label(new Rect(0f, 4f, width, 32f), $"{minutes}:{seconds:00}", timerStyle);
+
+        // GUI.color は次の描画にも残るので、必ず白に戻す
         GUI.color = Color.white;
     }
 
@@ -134,10 +152,12 @@ public class FishingMatchUI : MonoBehaviour
     // 決着後
     // ------------------------------------------------------------
 
+    /// <summary>画面の中央あたりに、勝敗・チームごとの得点・「ロビーへ戻る」を上から順に並べる。</summary>
     private void DrawResult(FishingMatch match, float width)
     {
+        // y は「次に描く行の上端」。描くたびに行の高さぶん下へずらしていく
         float height = Screen.height / activeScale;
-        float y = height * 0.20f;
+        float y = height * 0.20f; // 画面の上から 2 割の位置から始める
 
         // 勝ったチーム（引き分けもある）
         if (match.WinnerTeam < 0)
@@ -152,9 +172,9 @@ public class FishingMatchUI : MonoBehaviour
                 $"{FishingTeams.TeamName(match.WinnerTeam)} の勝ち！", resultStyle);
         }
 
-        y += 46f;
+        y += 46f; // 勝敗の行（高さ 40）＋すき間
 
-        // チームごとの最終得点
+        // チームごとの最終得点（1チーム1行、行の高さ 22）
         for (int team = 0; team < match.TeamCount; team++)
         {
             GUI.color = FishingTeams.TeamColor(team);
@@ -164,7 +184,7 @@ public class FishingMatchUI : MonoBehaviour
         }
 
         GUI.color = Color.white;
-        y += 14f;
+        y += 14f; // 得点とボタンの間のすき間
 
         DrawReturnButton(width, y);
     }

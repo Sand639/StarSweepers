@@ -88,8 +88,13 @@ public partial class SpaceJunkRound : NetworkBehaviour
     [Min(0f)]
     [SerializeField] private float introCountdownSeconds = 3f;
 
+    /// <summary>マップをぐるっと見せる秒数（演出の部品 <see cref="SpaceJunkRoundIntro"/> が読む）。</summary>
     public float IntroFlyoverSeconds => introFlyoverSeconds;
+
+    /// <summary>自分のプレイヤーへカメラが寄る秒数。</summary>
     public float IntroZoomSeconds => introZoomSeconds;
+
+    /// <summary>3・2・1 のカウントダウンの秒数。</summary>
     public float IntroCountdownSeconds => introCountdownSeconds;
 
     /// <summary>
@@ -243,42 +248,18 @@ public partial class SpaceJunkRound : NetworkBehaviour
     // 出入り
     // ------------------------------------------------------------
 
+    /// <summary>
+    /// 全員のPCで、ラウンドの係が現れたとき（マップのシーンが読み込まれた直後）。
+    /// ホストはラウンドの中身を決めて配り（<see cref="ServerInitRound"/>）、
+    /// **全員のPCで操作の止め／戻し・始まりの演出の準備・ゴールの持ち主の割り当てをする。**
+    /// </summary>
     public override void OnNetworkSpawn()
     {
         Current = this;
 
         if (IsServer)
         {
-            collected.Clear();
-            scores.Clear();
-
-            for (int i = 0; i < SpaceJunkTeams.MaxTeams; i++)
-            {
-                collected.Add(0);
-                scores.Add(0);
-            }
-
-            rule.Value = SpaceJunkSession.Current != null
-                ? SpaceJunkSession.Current.WinRule
-                : SpaceJunkWinRule.Score;
-
-            phase.Value = SpaceJunkRoundPhase.Playing;
-            roundWinner.Value = -1;
-
-            float seconds = SpaceJunkSession.Current != null
-                ? SpaceJunkSession.Current.RoundSeconds
-                : fallbackSeconds;
-
-            // **始まりの演出のぶん、動き出す時刻を後ろにずらす。** 残り時間とイベントは、動き出してから数える
-            double now = NetworkManager.ServerTime.Time;
-            double playStart = playIntro
-                ? now + introLeadSeconds + introFlyoverSeconds + introZoomSeconds + introCountdownSeconds
-                : 0d;
-            playStartServerTime.Value = playStart;
-
-            endServerTime.Value = (playStart > 0d ? playStart : now) + seconds;
-
-            ServerInitEvents(seconds);
+            ServerInitRound();
         }
 
         phase.OnValueChanged += OnPhaseChanged;
@@ -300,6 +281,44 @@ public partial class SpaceJunkRound : NetworkBehaviour
         {
             CheckGoalsArePlayable();
         }
+    }
+
+    /// <summary>
+    /// **ホストがラウンドの中身を決めて配る。** 得点と集めた種類を 0 に戻し、勝ち方と最大時間は試合の係（ロビーの設定）から取る。
+    /// 動き出す時刻は始まりの演出のぶん後ろへずらし、終わる時刻とイベントの時刻はそこから数える。
+    /// </summary>
+    private void ServerInitRound()
+    {
+        collected.Clear();
+        scores.Clear();
+
+        for (int i = 0; i < SpaceJunkTeams.MaxTeams; i++)
+        {
+            collected.Add(0);
+            scores.Add(0);
+        }
+
+        rule.Value = SpaceJunkSession.Current != null
+            ? SpaceJunkSession.Current.WinRule
+            : SpaceJunkWinRule.Score;
+
+        phase.Value = SpaceJunkRoundPhase.Playing;
+        roundWinner.Value = -1;
+
+        float seconds = SpaceJunkSession.Current != null
+            ? SpaceJunkSession.Current.RoundSeconds
+            : fallbackSeconds;
+
+        // **始まりの演出のぶん、動き出す時刻を後ろにずらす。** 残り時間とイベントは、動き出してから数える
+        double now = NetworkManager.ServerTime.Time;
+        double playStart = playIntro
+            ? now + introLeadSeconds + introFlyoverSeconds + introZoomSeconds + introCountdownSeconds
+            : 0d;
+        playStartServerTime.Value = playStart;
+
+        endServerTime.Value = (playStart > 0d ? playStart : now) + seconds;
+
+        ServerInitEvents(seconds);
     }
 
     /// <summary>
@@ -342,6 +361,7 @@ public partial class SpaceJunkRound : NetworkBehaviour
         }
     }
 
+    /// <summary>係が消えるとき（次のマップやロビーへ移る）。</summary>
     public override void OnNetworkDespawn()
     {
         phase.OnValueChanged -= OnPhaseChanged;
@@ -352,12 +372,17 @@ public partial class SpaceJunkRound : NetworkBehaviour
         }
     }
 
+    /// <summary>段階が変わったとき（全員のPCで動く。ホストが変えた値が届いたタイミング）。</summary>
     private void OnPhaseChanged(SpaceJunkRoundPhase before, SpaceJunkRoundPhase after)
     {
         // 結果が出たら動けなくする（結果を見る時間になる）
         SetLocalPlayerControlEnabled(after == SpaceJunkRoundPhase.Playing);
     }
 
+    /// <summary>
+    /// 毎フレーム。全員のPCでは重いデブリの見た目と演出の終わりを見て、
+    /// **ホストだけが**イベントの進行と最大時間の決着を見る。
+    /// </summary>
     private void Update()
     {
         // 重いデブリの見た目は、全員のPCで付け外しする
@@ -428,6 +453,15 @@ public partial class SpaceJunkRound : NetworkBehaviour
             return true;
         }
 
+        return ServerCollectKind(team, kind);
+    }
+
+    /// <summary>
+    /// **3種類ルールの受け取り方。** 新しい種類なら印を付け、そのマップで出る種類が全部そろったらその場でラウンド勝利。
+    /// もう持っている種類なら何も起きない（false）。
+    /// </summary>
+    private bool ServerCollectKind(int team, SpaceJunkMaterialKind kind)
+    {
         int bit = KindBit(kind);
 
         if ((collected[team] & bit) != 0)
@@ -489,31 +523,7 @@ public partial class SpaceJunkRound : NetworkBehaviour
     /// </summary>
     private void FinishByScore()
     {
-        int bestTeam = -1;
-        int bestScore = -1;
-        bool tied = false;
-
-        int teams = SpaceJunkSession.Current != null
-            ? SpaceJunkSession.Current.TeamCount
-            : SpaceJunkTeams.MaxTeams;
-
-        for (int team = 0; team < teams; team++)
-        {
-            int score = ScoreOf(team);
-
-            if (score > bestScore)
-            {
-                bestScore = score;
-                bestTeam = team;
-                tied = false;
-            }
-            else if (score == bestScore)
-            {
-                tied = true;
-            }
-        }
-
-        FinishRound(tied || bestScore <= 0 ? -1 : bestTeam);
+        FinishRound(LeadingTeamOrTie(ScoreOf));
     }
 
     /// <summary>
@@ -522,8 +532,19 @@ public partial class SpaceJunkRound : NetworkBehaviour
     /// </summary>
     private void FinishByCount()
     {
+        // 1位が同数なら引き分け。**誰も集めていない（全員0種類）ときも引き分け**
+        FinishRound(LeadingTeamOrTie(KindCountOf));
+    }
+
+    /// <summary>
+    /// 遊んでいるチームのうち、<paramref name="valueOf"/>（得点、または集めた種類の数）が一番大きいチーム。
+    /// **1位が並んでいる、または1位の値が 0 以下なら -1（引き分け）。**
+    /// 得点制と3種類ルールで同じ比べ方をするので、ここにまとめてある。
+    /// </summary>
+    private int LeadingTeamOrTie(System.Func<int, int> valueOf)
+    {
         int bestTeam = -1;
-        int bestCount = -1;
+        int bestValue = -1;
         bool tied = false;
 
         int teams = SpaceJunkSession.Current != null
@@ -532,22 +553,21 @@ public partial class SpaceJunkRound : NetworkBehaviour
 
         for (int team = 0; team < teams; team++)
         {
-            int count = KindCountOf(team);
+            int value = valueOf(team);
 
-            if (count > bestCount)
+            if (value > bestValue)
             {
-                bestCount = count;
+                bestValue = value;
                 bestTeam = team;
                 tied = false;
             }
-            else if (count == bestCount)
+            else if (value == bestValue)
             {
                 tied = true;
             }
         }
 
-        // 1位が同数なら引き分け。**誰も集めていない（全員0種類）ときも引き分け**
-        FinishRound(tied || bestCount <= 0 ? -1 : bestTeam);
+        return tied || bestValue <= 0 ? -1 : bestTeam;
     }
 
     /// <summary>ラウンドを終わらせて、試合の係へ結果を渡す。</summary>

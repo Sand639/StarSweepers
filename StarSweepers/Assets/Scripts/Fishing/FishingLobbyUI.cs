@@ -47,6 +47,9 @@ public class FishingLobbyUI : MonoBehaviour
     /// <summary>パネルの幅（縮める前の基準）。</summary>
     private const float PanelWidth = 320f;
 
+    /// <summary>うまくいかない理由を出すときの文字の色（薄い赤）。</summary>
+    private static readonly Color WarningColor = new Color(1f, 0.5f, 0.4f);
+
     private GUIStyle labelStyle;
 
     /// <summary>「ゲーム開始」を押した結果。うまくいかなかった理由を画面に出すために持つ。</summary>
@@ -66,6 +69,7 @@ public class FishingLobbyUI : MonoBehaviour
         connectionUi = GetComponent<LanConnectionUi>();
     }
 
+    /// <summary>毎フレーム、つなぐ画面の出し入れと、（ホストなら）選んでいるマップの配り直しをする。</summary>
     private void Update()
     {
         // **試合が始まったら、つなぐ画面も隠す。**
@@ -95,6 +99,10 @@ public class FishingLobbyUI : MonoBehaviour
         }
     }
 
+    /// <summary>
+    /// ロビーの枠を描く。**つながっていて、まだ釣り会場へ移っていないときだけ**出す。
+    /// 中身は上から「ゲーム開始 → マップ → 入っている人 → ゴールの割り当て」。
+    /// </summary>
     private void OnGUI()
     {
         if (!showUi)
@@ -142,6 +150,7 @@ public class FishingLobbyUI : MonoBehaviour
         });
     }
 
+    /// <summary>文字のスタイルを初回だけ作る（`GUI.skin` は OnGUI の中でしか触れないため、Awake では作れない）。</summary>
     private void PrepareStyle()
     {
         if (labelStyle == null)
@@ -198,6 +207,8 @@ public class FishingLobbyUI : MonoBehaviour
     {
         List<string> maps = GetAvailableMaps();
 
+        // 選んでいたマップが候補から消えていたら選び直す。
+        // 優先順位：最初の会場 → 候補の先頭 → （候補が1つも無ければ）最初の会場の名前のまま
         if (!maps.Contains(selectedMap))
         {
             selectedMap = maps.Contains(gameSceneName) ? gameSceneName
@@ -216,13 +227,9 @@ public class FishingLobbyUI : MonoBehaviour
     private List<string> GetAvailableMaps()
     {
         List<string> maps = new List<string>();
-        int count = UnityEngine.SceneManagement.SceneManager.sceneCountInBuildSettings;
 
-        for (int i = 0; i < count; i++)
+        foreach (string name in SceneNamesInBuildList())
         {
-            string name = Path.GetFileNameWithoutExtension(
-                UnityEngine.SceneManagement.SceneUtility.GetScenePathByBuildIndex(i));
-
             bool isMap = name == gameSceneName
                       || (!string.IsNullOrEmpty(mapScenePrefix) && name.StartsWith(mapScenePrefix));
 
@@ -233,6 +240,21 @@ public class FishingLobbyUI : MonoBehaviour
         }
 
         return maps;
+    }
+
+    /// <summary>
+    /// ビルドのシーン一覧に入っているシーンの名前（拡張子無し）を、並んでいる順に返す。
+    /// エディタでは `File > Build Settings` の一覧がそのまま使われる。
+    /// </summary>
+    private static IEnumerable<string> SceneNamesInBuildList()
+    {
+        int count = UnityEngine.SceneManagement.SceneManager.sceneCountInBuildSettings;
+
+        for (int i = 0; i < count; i++)
+        {
+            yield return Path.GetFileNameWithoutExtension(
+                UnityEngine.SceneManagement.SceneUtility.GetScenePathByBuildIndex(i));
+        }
     }
 
     /// <summary>入っている人を並べる。参加者のPCでも見えるように、生まれた本体の一覧を使う。</summary>
@@ -312,7 +334,7 @@ public class FishingLobbyUI : MonoBehaviour
         // ビルドの一覧に入っていないシーンは、Netcodeでも読み込めない
         if (!IsSceneInBuildList(selectedMap))
         {
-            GUI.color = new Color(1f, 0.5f, 0.4f);
+            GUI.color = WarningColor;
             GUILayout.Label(
                 $"シーン「{selectedMap}」がビルドの一覧に入っていません。\n" +
                 "File > Build Profiles を開いて、\n" +
@@ -332,7 +354,7 @@ public class FishingLobbyUI : MonoBehaviour
         // （ビルドで動かしているときはConsoleが見られないため）
         if (!string.IsNullOrEmpty(startMessage))
         {
-            GUI.color = new Color(1f, 0.5f, 0.4f);
+            GUI.color = WarningColor;
             GUILayout.Space(4f);
             GUILayout.Label(startMessage, labelStyle);
             GUI.color = Color.white;
@@ -353,13 +375,9 @@ public class FishingLobbyUI : MonoBehaviour
             return false;
         }
 
-        int count = UnityEngine.SceneManagement.SceneManager.sceneCountInBuildSettings;
-
-        for (int i = 0; i < count; i++)
+        foreach (string name in SceneNamesInBuildList())
         {
-            string path = UnityEngine.SceneManagement.SceneUtility.GetScenePathByBuildIndex(i);
-
-            if (Path.GetFileNameWithoutExtension(path) == sceneName)
+            if (name == sceneName)
             {
                 return true;
             }

@@ -40,7 +40,10 @@ public class DoorKey : MonoBehaviour
     /// <summary>この鍵の種類。空なら、どの扉にも合う。</summary>
     public string KeyId => keyId;
 
+    /// <summary>持てる物の仕組み。持たれているかどうかを見るために使う。</summary>
     private Grabbable grabbable;
+
+    /// <summary>鍵の物理。戻すときに、落ちる勢いを消すために使う（無くても動く）。</summary>
     private Rigidbody body;
 
     // 置いてあった場所。戻す先に使う
@@ -56,6 +59,7 @@ public class DoorKey : MonoBehaviour
         homeRotation = transform.rotation;
     }
 
+    /// <summary>毎フレーム、決めた高さより下に落ちていないかを見張る。</summary>
     private void Update()
     {
         if (!returnWhenFallen || GamePause.IsPaused)

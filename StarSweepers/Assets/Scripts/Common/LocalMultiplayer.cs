@@ -22,8 +22,11 @@ public static class LocalMultiplayer
 
     /// <summary>何人目かを入れる桁（接続番号は小さい数なので、上の 8 ビットは使われていない）。</summary>
     private const int SeatShift = 56;
+
+    /// <summary>人ごとの番号から、接続番号の部分（下の 56 ビット）だけを取り出すためのマスク。</summary>
     private const ulong ClientMask = (1UL << SeatShift) - 1UL;
 
+    /// <summary>このPCで遊ぶ人数。読み書きは <see cref="PlayerCount"/> を通す（席の用意し直しが要るため）。</summary>
     private static int playerCount = 1;
 
     /// <summary>このPCで作った席の管理役（シーンに最初から置いてある物は消さないため、自分で作った物だけ覚える）。</summary>
@@ -94,6 +97,7 @@ public static class LocalMultiplayer
             return;
         }
 
+        // 自分で作った物が、すでに人数ぶんの席を持っていれば作り直さない
         if (current != null && current.SeatCount == playerCount)
         {
             return;
@@ -103,6 +107,7 @@ public static class LocalMultiplayer
         createdSeats = InputSeatManager.CreatePersistent(playerCount);
     }
 
+    /// <summary>自分で作った席の管理役を片付ける。シーンに置いてある物には触らない。</summary>
     private static void DestroyCreatedSeats()
     {
         if (createdSeats != null)

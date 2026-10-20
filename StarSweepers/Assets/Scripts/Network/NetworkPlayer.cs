@@ -50,9 +50,22 @@ public class NetworkPlayer : NetworkBehaviour
     [Tooltip("中心からどれだけ離れた場所に出てくるか（メートル）")]
     [SerializeField] private float spawnRadius = 3f;
 
+    /// <summary>
+    /// 地面に着いているときの、下向きの速さ（1秒あたりのメートル）。
+    /// ゼロにせず少し押し付けておくのは、坂や段差を下りるときに一瞬浮いて「地面に着いていない」扱いになるのを防ぐため
+    /// （`CharacterController` を使うときの定番）。
+    /// </summary>
+    private const float GroundedDownwardSpeed = -2f;
+
     private CharacterController characterController;
+
+    /// <summary>入力の設定のうち「Player」のまとまり。自分のプレイヤーだけが有効にする。</summary>
     private InputActionMap playerMap;
+
+    /// <summary>移動の入力（WASD・左スティック）。</summary>
     private InputAction moveAction;
+
+    /// <summary>上下の速さ。落ちている間は、マイナスが大きくなっていく。</summary>
     private float verticalVelocity;
 
     /// <summary>自分が操作しているプレイヤーか。UI表示などに使える。</summary>
@@ -87,6 +100,7 @@ public class NetworkPlayer : NetworkBehaviour
 
     public override void OnNetworkDespawn()
     {
+        // SetUpInput で有効にした自分の入力を止める
         if (IsOwner)
         {
             playerMap?.Disable();
@@ -117,6 +131,7 @@ public class NetworkPlayer : NetworkBehaviour
     // 入力
     // ------------------------------------------------------------
 
+    /// <summary>入力の設定から「Player」の「Move」を取り出して有効にする。第2引数の true は「無ければエラーにする」。</summary>
     private void SetUpInput()
     {
         if (inputActions == null)
@@ -148,25 +163,43 @@ public class NetworkPlayer : NetworkBehaviour
         // 他の入力を読むスクリプトと同じく `BlocksInput` を見る
         Vector3 direction = GamePause.BlocksInput ? Vector3.zero : GetMoveDirection();
 
-        if (characterController.isGrounded && verticalVelocity <= 0f)
-        {
-            verticalVelocity = -2f;
-        }
-        else
-        {
-            verticalVelocity += gravity * Time.deltaTime;
-        }
+        UpdateVerticalVelocity();
 
         Vector3 velocity = direction * moveSpeed;
         velocity.y = verticalVelocity;
         characterController.Move(velocity * Time.deltaTime);
 
-        if (direction.sqrMagnitude > 0.01f)
+        TurnToward(direction);
+    }
+
+    /// <summary>
+    /// 落ちる速さを更新する。
+    /// 地面に着いていれば <see cref="GroundedDownwardSpeed"/> に戻し、空中なら重力で速めていく。
+    /// </summary>
+    private void UpdateVerticalVelocity()
+    {
+        if (characterController.isGrounded && verticalVelocity <= 0f)
         {
-            Quaternion target = Quaternion.LookRotation(direction, Vector3.up);
-            transform.rotation = Quaternion.RotateTowards(
-                transform.rotation, target, turnSpeed * Time.deltaTime);
+            verticalVelocity = GroundedDownwardSpeed;
         }
+        else
+        {
+            verticalVelocity += gravity * Time.deltaTime;
+        }
+    }
+
+    /// <summary>進んでいる向きへ、<see cref="turnSpeed"/> の速さで向き直る。止まっているときは向きを変えない。</summary>
+    private void TurnToward(Vector3 direction)
+    {
+        // ごくわずかな入力（スティックの遊び）では向きを変えない
+        if (direction.sqrMagnitude <= 0.01f)
+        {
+            return;
+        }
+
+        Quaternion target = Quaternion.LookRotation(direction, Vector3.up);
+        transform.rotation = Quaternion.RotateTowards(
+            transform.rotation, target, turnSpeed * Time.deltaTime);
     }
 
     /// <summary>カメラの向きを基準に、進みたい方向を求める。</summary>
@@ -179,6 +212,7 @@ public class NetworkPlayer : NetworkBehaviour
         Vector3 forward = view != null ? view.forward : Vector3.forward;
         Vector3 right = view != null ? view.right : Vector3.right;
 
+        // カメラが下を向いていても地面に沿って進むよう、上下の成分を捨ててから長さをそろえる
         forward.y = 0f;
         right.y = 0f;
         forward.Normalize();
@@ -186,6 +220,7 @@ public class NetworkPlayer : NetworkBehaviour
 
         Vector3 direction = forward * input.y + right * input.x;
 
+        // 斜め入力（例：W と D を同時）で速くならないように、長さ1までに抑える
         return direction.sqrMagnitude > 1f ? direction.normalized : direction;
     }
 
@@ -198,6 +233,7 @@ public class NetworkPlayer : NetworkBehaviour
     [Range(0.02f, 0.5f)]
     [SerializeField] private float pushSendInterval = 0.1f;
 
+    /// <summary>次に「押している」を送ってよい時刻（`Time.time`）。</summary>
     private float nextPushSendTime;
 
     /// <summary>
@@ -241,9 +277,11 @@ public class NetworkPlayer : NetworkBehaviour
     /// </summary>
     private void MoveToSpawnPoint()
     {
+        // 90度ずつずらす（4人で一周）。向きは +180度で、円の中心を向く
         float angle = OwnerClientId * 90f;
         Vector3 position = Quaternion.Euler(0f, angle, 0f) * (Vector3.forward * spawnRadius);
 
+        // CharacterController が有効なまま位置を書き換えると、元の位置へ押し戻されることがあるので、いったん切る
         characterController.enabled = false;
         transform.SetPositionAndRotation(position, Quaternion.Euler(0f, angle + 180f, 0f));
         characterController.enabled = true;
@@ -251,6 +289,7 @@ public class NetworkPlayer : NetworkBehaviour
         verticalVelocity = 0f;
     }
 
+    /// <summary>シーンのカメラに「自分を追いかけて」と伝える。そのカメラが無いシーンでも、エラーにはしない。</summary>
     private void FollowWithCamera()
     {
         LocalPlayerCamera camera = FindFirstObjectByType<LocalPlayerCamera>();

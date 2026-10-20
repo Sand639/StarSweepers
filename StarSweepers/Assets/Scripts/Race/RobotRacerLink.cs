@@ -81,6 +81,7 @@ public class RobotRacerLink : MonoBehaviour
         return lowest < float.MaxValue ? lowest : racer.TrackedPosition.y;
     }
 
+    /// <summary>その体が出ていれば（隠れていなければ）、いちばん低い高さの候補に入れる。</summary>
     private static void ConsiderBody(RobotBody body, ref float lowest)
     {
         if (body != null && body.gameObject.activeInHierarchy)
@@ -89,6 +90,7 @@ public class RobotRacerLink : MonoBehaviour
         }
     }
 
+    /// <summary>毎フレーム、位置を見る先を合わせ直し、操作してよいかをロボットに伝える。</summary>
     private void Update()
     {
         UpdatePositionSource();
@@ -121,6 +123,7 @@ public class RobotRacerLink : MonoBehaviour
         Teleport(robot.UpperBodyPart, position + Vector3.up * upperResetHeight, rotation);
     }
 
+    /// <summary>体が繋がれていない（null）なら何もしない、安全な瞬間移動。</summary>
     private static void Teleport(RobotBody body, Vector3 position, Quaternion rotation)
     {
         if (body != null)

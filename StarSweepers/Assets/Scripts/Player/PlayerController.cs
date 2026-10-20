@@ -2,11 +2,13 @@ using UnityEngine;
 using UnityEngine.InputSystem;
 
 /// <summary>
-/// カプセルのキャラクターを WASD で動かし、マウスで視点を回す。
-/// TPS / FPS の切り替えは PlayerViewSwitcher が担当する。
+/// **検証用のプレイヤー（PlayerRig）の移動と視点。** カプセルのキャラクターを WASD で動かし、マウスで視点を回す。
+/// TPS / FPS の切り替えは <see cref="PlayerViewSwitcher"/> が担当する。
 ///
-/// 使い方：Prefabs/PlayerRig をシーンに置くだけ。
+/// 使い方：`Prefabs/Common/PlayerRig` をシーンに置くだけ。
 /// 参照はすべてインスペクターから受け取るので、他のオブジェクトを名前で探しにいかない。
+///
+/// 本番のステージ（釣り・スペースジャンク）では、これの代わりに <c>FishingPlayerController</c> が同じ役目をしている。
 /// </summary>
 [RequireComponent(typeof(CharacterController))]
 public class PlayerController : MonoBehaviour
@@ -61,6 +63,7 @@ public class PlayerController : MonoBehaviour
     /// </summary>
     public bool LookSuspended { get; set; }
 
+    /// <summary>上下の速さ（1秒あたりのメートル）。マイナスで落ちている。ジャンプで一気にプラスになる。</summary>
     private float verticalVelocity;
 
     private void Awake()
@@ -146,7 +149,8 @@ public class PlayerController : MonoBehaviour
         // 左右は体ごと回す
         transform.Rotate(Vector3.up, look.x, Space.World);
 
-        // 上下はカメラの根元だけ回す（体は傾けない）
+        // 上下はカメラの根元だけ回す（体は傾けない）。
+        // マウスを上へ動かすと look.y がプラスになるので、引き算で角度をマイナス（＝上向き）にする
         Pitch = Mathf.Clamp(Pitch - look.y, -maxLookUp, maxLookDown);
         if (cameraPivot != null)
         {
@@ -209,6 +213,7 @@ public class PlayerController : MonoBehaviour
         }
     }
 
+    /// <summary>カーソルを画面の中央に固定して消す（true）か、出して自由に動かせるようにする（false）か。</summary>
     private void SetCursorLocked(bool locked)
     {
         Cursor.lockState = locked ? CursorLockMode.Locked : CursorLockMode.None;

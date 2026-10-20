@@ -8,6 +8,17 @@ using UnityEngine.InputSystem;
 /// 見た目がカクつく。代わりに、毎フレーム体の位置へ寄せていく形にしている。
 ///
 /// **体そのものは回さない。** カメラだけが回り、体は進みたい方向へ自分で向き直る。
+/// （「見ている方向を向く」設定（<see cref="RobotViewSwitcher"/>、初期値は ON）のときは、
+/// 体がこのカメラの水平の向きに自分で揃う。その場合も、回しているのは体の側）
+///
+/// ## 作り
+///
+/// - **左右の向き**… この部品が付いた物（CameraRig）ごと回す
+/// - **上下の向き**… その下の首（`pitchPivot`）だけを回す
+///
+/// こうしておくと、この部品の向きは**いつも水平**になり、移動の向き（<see cref="FlatForward"/>）がそのまま求まる。
+///
+/// 使っているシーン：`RobotRig` を置いたシーン（ロボット分離の検証シーンなど）。
 /// </summary>
 public class RobotCameraLook : MonoBehaviour
 {
@@ -45,7 +56,10 @@ public class RobotCameraLook : MonoBehaviour
 
     private InputActionMap playerMap;
     private InputAction lookAction;
+
+    /// <summary>上下の向き（度）。マイナスが上向き、プラスが下向き（Unity の X 軸の回転と同じ向き）。</summary>
     private float pitch;
+
     private Transform followTarget;
 
     /// <summary>
@@ -154,6 +168,8 @@ public class RobotCameraLook : MonoBehaviour
             return;
         }
 
+        // 毎フレーム、残りの距離の一定の割合だけ近づける。
+        // `1 - Exp(-速さ × 経過時間)` の形にすると、フレームの速さが違っても同じ速さで追いつく
         transform.position = Vector3.Lerp(
             transform.position, wanted, 1f - Mathf.Exp(-followSmooth * Time.deltaTime));
     }
@@ -176,6 +192,7 @@ public class RobotCameraLook : MonoBehaviour
         transform.Rotate(Vector3.up, look.x, Space.World);
 
         // 上下は首の部分だけ回す
+        // （マウスを上へ動かすと look.y がプラスになり、pitch が減って上を向く）
         pitch = Mathf.Clamp(pitch - look.y, -maxLookUp, maxLookDown);
         if (pitchPivot != null)
         {
@@ -207,6 +224,7 @@ public class RobotCameraLook : MonoBehaviour
         }
     }
 
+    /// <summary>カーソルを画面に固定して消す（true）か、自由に動かせるよう出す（false）。</summary>
     private static void SetCursorLocked(bool locked)
     {
         Cursor.lockState = locked ? CursorLockMode.Locked : CursorLockMode.None;

@@ -51,8 +51,14 @@ public class SpaceJunkRotatingFloor : MonoBehaviour
     [SerializeField] private float carryHeight = 1.5f;
 
     private Rigidbody body;
+
+    /// <summary>置いたときの向き（＝0回目の向き）。ここから回り始める。</summary>
     private Quaternion baseRotation;
+
+    /// <summary>いまの向き。Update で決め、FixedUpdate で物理に反映する。</summary>
     private Quaternion currentRotation;
+
+    /// <summary>乗っている人を探すときの、当たり判定の入れ物（一度に 32 個まで。足りなければ増やす）。毎回作らないため。</summary>
     private readonly Collider[] overlapBuffer = new Collider[32];
 
     private void Awake()
@@ -65,11 +71,14 @@ public class SpaceJunkRotatingFloor : MonoBehaviour
         currentRotation = baseRotation;
     }
 
+    /// <summary>時計から今の向きを決め、前のフレームからの差だけ乗っている人を回す。</summary>
     private void Update()
     {
         Quaternion target = TargetRotation();
+        // 「前の向き → 今の向き」の回転。乗っている人をこれだけ回す
         Quaternion delta = target * Quaternion.Inverse(currentRotation);
 
+        // ほとんど回っていない（0.0001度未満）フレームでは運ばない
         if (Quaternion.Angle(target, currentRotation) > 0.0001f)
         {
             CarryPlayers(delta);
@@ -156,7 +165,7 @@ public class SpaceJunkRotatingFloor : MonoBehaviour
         }
     }
 
-    /// <summary>直前に「運んだ」ログを出した時刻。</summary>
+    /// <summary>直前に「運んだ」ログを出した時刻。最初の1回がすぐ出るように、過去の時刻にしてある。</summary>
     private float lastCarryLogTime = -10f;
 
     /// <summary>

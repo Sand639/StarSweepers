@@ -19,6 +19,16 @@ using UnityEngine.InputSystem;
 ///
 /// あわせて、一人称のときは**自分の体の見た目を隠す**。
 /// 隠さないと、目の位置から自分の体の内側が見えてしまう。
+///
+/// ## 流れ（毎フレーム）
+///
+/// 1. V が押されたら、一人称と三人称を入れ替える（見た目の出し隠しもここで行う）
+/// 2. カメラを、いまの視点の位置へ少しずつ寄せる。壁に遮られていれば手前へ寄せる
+/// 3. カメラが追いかける高さ（<see cref="RobotCameraLook.TargetHeight"/>）を、いまの視点に合わせる
+///
+/// 操作する体が変わったとき（Q・Tab・E）は、隠す体も新しい体に移す。
+///
+/// 使っているシーン：ロボット分離の検証シーン（`RobotSplitTest`）など、`RobotRig` を置いたシーン。
 /// </summary>
 [RequireComponent(typeof(RobotController))]
 public class RobotViewSwitcher : MonoBehaviour
@@ -58,7 +68,12 @@ public class RobotViewSwitcher : MonoBehaviour
     [SerializeField] private bool faceLookDirection = true;
 
     private RobotController controller;
-    private RobotBody shownBody;
+
+    /// <summary>
+    /// 最後に見た目を切り替えた体（一人称なら隠している体）。
+    /// 操作する体が変わったときに、こちらの見た目を元に戻すために覚えておく。
+    /// </summary>
+    private RobotBody lastAppliedBody;
 
     /// <summary>
     /// 壁に遮られたときにカメラを寄せる部品。カメラに付いていれば自動で見つける。
@@ -98,7 +113,7 @@ public class RobotViewSwitcher : MonoBehaviour
 
     private void Start()
     {
-        ApplyBodyVisibility(true);
+        ApplyBodyVisibility();
         ApplyFacingMode();
     }
 
@@ -139,7 +154,7 @@ public class RobotViewSwitcher : MonoBehaviour
         }
 
         IsFirstPerson = firstPerson;
-        ApplyBodyVisibility(true);
+        ApplyBodyVisibility();
         ApplyFacingMode();
 
         Debug.Log(IsFirstPerson ? "[ROBOT] 一人称にしました" : "[ROBOT] 三人称にしました");
@@ -158,6 +173,8 @@ public class RobotViewSwitcher : MonoBehaviour
         // 目の高さは体ごとに違う。上半身だけのときは低くなる
         float eyeHeight = body != null ? body.EyeHeight : thirdPersonHeight;
 
+        // カメラの置き場所（首振りの中心＝追いかける高さ から見た位置）。
+        // 一人称は「その場から少し前」、三人称は「後ろ・上に引いた所」
         Vector3 wantedLocal = IsFirstPerson
             ? new Vector3(0f, 0f, firstPersonForward)
             : thirdPersonOffset;
@@ -170,6 +187,8 @@ public class RobotViewSwitcher : MonoBehaviour
         }
         else
         {
+            // 毎フレーム、残りの距離の一定の割合だけ近づける。
+            // `1 - Exp(-速さ × 経過時間)` の形にすると、フレームの速さが違っても同じ速さで移る
             cameraTransform.localPosition = Vector3.Lerp(
                 cameraTransform.localPosition,
                 wantedLocal,
@@ -195,32 +214,33 @@ public class RobotViewSwitcher : MonoBehaviour
     /// **操作していない体は隠さない。** 分離中に相手の体が見えないと、
     /// どこにいるか分からなくなるため。
     /// </summary>
-    private void ApplyBodyVisibility(bool showPrevious)
+    private void ApplyBodyVisibility()
     {
         RobotBody body = controller != null ? controller.ActiveBody : null;
 
         // 前に隠していた体があれば、先に戻す
-        if (showPrevious && shownBody != null && shownBody != body)
+        if (lastAppliedBody != null && lastAppliedBody != body)
         {
-            shownBody.SetVisualVisible(true);
+            lastAppliedBody.SetVisualVisible(true);
         }
 
         if (body == null)
         {
-            shownBody = null;
+            lastAppliedBody = null;
             return;
         }
 
         body.SetVisualVisible(!IsFirstPerson);
-        shownBody = body;
+        lastAppliedBody = body;
     }
 
     /// <summary>操作する体が変わったら、隠す相手も変える。</summary>
     private void HandleControlSwitched(RobotController.RobotState state)
     {
-        ApplyBodyVisibility(true);
+        ApplyBodyVisibility();
     }
 
+    /// <summary>このフレームに、視点を切り替えるキー（`switchKey`）が押されたか。</summary>
     private bool WasSwitchKeyPressed()
     {
         Keyboard keyboard = Keyboard.current;

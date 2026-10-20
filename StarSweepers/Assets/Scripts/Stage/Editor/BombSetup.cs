@@ -40,7 +40,7 @@ public static class BombSetup
 
         GameObject placed = (GameObject)PrefabUtility.InstantiatePrefab(prefab);
 
-        // 宙に浮いていると分かるよう、床から少し上に置く
+        // 宙に浮いていると分かるよう、床から少し上に置く（1.2メートル。だいたい腰の高さ）
         placed.transform.position = FindGroundPosition() + Vector3.up * 1.2f;
 
         Undo.RegisterCreatedObjectUndo(placed, "爆弾を置く");
@@ -51,6 +51,13 @@ public static class BombSetup
                   "重力が軽いほど遠くへ飛びます（Gravity Influence で効き方を変えられます）。", placed);
     }
 
+    /// <summary>
+    /// 爆弾を試すための専用シーン（<see cref="ScenePath"/>）を、**まっさらな状態から作り直す。**
+    /// 前に同じ場所にあったシーンは上書きされる。
+    ///
+    /// ロボットは原点に立ち、奥（+Z）に爆弾が並ぶ。爆弾に触れると手前（-Z）へ飛ばされるので、
+    /// 手前側の白線で、どれだけ飛んだかを読む。
+    /// </summary>
     [MenuItem("Tools/StarSweepers/アーカイブ/爆弾/爆弾の検証シーンを作り直す")]
     public static void CreateTestScene()
     {
@@ -61,19 +68,57 @@ public static class BombSetup
 
         var scene = EditorSceneManager.NewScene(NewSceneSetup.EmptyScene, NewSceneMode.Single);
 
-        GameObject lightObject = new GameObject("Directional Light");
-        Light light = lightObject.AddComponent<Light>();
-        light.type = LightType.Directional;
-        light.intensity = 1.1f;
-        light.shadows = LightShadows.Soft;
-        lightObject.transform.rotation = Quaternion.Euler(50f, -30f, 0f);
+        CreateLight();
 
+        // 地面。Plane は1倍で10メートル四方なので、10倍で 100メートル四方
         GameObject groundObject = GameObject.CreatePrimitive(PrimitiveType.Plane);
         groundObject.name = "Ground";
         groundObject.transform.localScale = new Vector3(10f, 1f, 10f);
         SetMaterial(groundObject, ground);
 
         // ----- 爆弾：地面すれすれ・腰の高さ・跳ばないと届かない高さ の3段 -----
+        CreateBombRows(bombPrefab);
+
+        // ----- 飛んだ距離が分かる目盛り（5mごとの白線。スタートの後ろ側） -----
+        CreateDistanceMarks(line);
+
+        // ----- 重力を変える係（月・地球・重い を行き来） -----
+        CreateGravityShifter();
+
+        // ----- 画面表示（重力が出る） -----
+        CreateHud();
+
+        // ----- ロボット -----
+        PlaceRobot(robotPrefab);
+
+        EditorSceneManager.SaveScene(scene, ScenePath);
+        AssetDatabase.SaveAssets();
+
+        Debug.Log($"爆弾の検証シーンを作りました：{ScenePath}");
+    }
+
+    // ------------------------------------------------------------
+    // 検証シーンの部品（CreateTestScene から、上から順に呼ぶ）
+    // ------------------------------------------------------------
+
+    /// <summary>明かり（斜め上から照らす太陽の光）を置く。影はやわらかく出す。</summary>
+    private static void CreateLight()
+    {
+        GameObject lightObject = new GameObject("Directional Light");
+        Light light = lightObject.AddComponent<Light>();
+        light.type = LightType.Directional;
+        light.intensity = 1.1f;
+        light.shadows = LightShadows.Soft;
+        lightObject.transform.rotation = Quaternion.Euler(50f, -30f, 0f);
+    }
+
+    /// <summary>
+    /// 爆弾を **3段 × 4列** に並べる。
+    /// 段は高さ 0.6・1.3・2.2 メートルで、奥（+Z）へ 3メートルおき（6・9・12 メートル）。
+    /// 列は横に 3メートルおき（X が -4.5・-1.5・1.5・4.5）。
+    /// </summary>
+    private static void CreateBombRows(GameObject bombPrefab)
+    {
         GameObject bombs = new GameObject("Bombs");
         float[] heights = { 0.6f, 1.3f, 2.2f };
 
@@ -92,8 +137,15 @@ public static class BombSetup
                 serialized.ApplyModifiedPropertiesWithoutUndo();
             }
         }
+    }
 
-        // ----- 飛んだ距離が分かる目盛り（5mごとの白線。スタートの後ろ側） -----
+    /// <summary>
+    /// 飛んだ距離が分かる白線を、**5メートルごとに7本**（0〜30メートル）並べる。
+    /// 一番手前の爆弾の列（Z = 6）を 0メートルとして、そこから手前（-Z）へ向かって引く。
+    /// 線は幅14メートル・太さ0.15メートルで、地面すれすれ（1センチ上）に置く。踏んでも引っかからないよう当たり判定は外す。
+    /// </summary>
+    private static void CreateDistanceMarks(Material line)
+    {
         GameObject marks = new GameObject("DistanceMarks");
 
         for (int i = 0; i <= 6; i++)
@@ -108,8 +160,14 @@ public static class BombSetup
             Collider collider = mark.GetComponent<Collider>();
             Object.DestroyImmediate(collider);
         }
+    }
 
-        // ----- 重力を変える係（月・地球・重い を行き来） -----
+    /// <summary>
+    /// 重力を変える係を置く。**月（1.6）・地球（9.81）・重い（14）** の3つを、7〜9秒ごとに行き来させる
+    /// （予告 1.5秒、変わりきるまで 1秒）。飛ぶ距離の違いを短い時間で試せるようにするため。
+    /// </summary>
+    private static void CreateGravityShifter()
+    {
         GameObject gravityObject = new GameObject("GravityShifter");
         GravityShifter shifter = gravityObject.AddComponent<GravityShifter>();
 
@@ -120,8 +178,11 @@ public static class BombSetup
         gravity.FindProperty("warningSeconds").floatValue = 1.5f;
         gravity.FindProperty("changeSeconds").floatValue = 1f;
         gravity.ApplyModifiedPropertiesWithoutUndo();
+    }
 
-        // ----- 画面表示（重力が出る） -----
+    /// <summary>画面表示（いまの重力と、遊び方のひとこと）を置く。</summary>
+    private static void CreateHud()
+    {
         GameObject hudObject = new GameObject("RaceHud");
         RaceHud hud = hudObject.AddComponent<RaceHud>();
 
@@ -129,8 +190,14 @@ public static class BombSetup
         hudSerialized.FindProperty("hintText").stringValue =
             "爆弾に触ると吹っ飛ぶ。重力が軽いほど遠くへ飛ぶ（白線は5mごと）";
         hudSerialized.ApplyModifiedPropertiesWithoutUndo();
+    }
 
-        // ----- ロボット -----
+    /// <summary>
+    /// 操作するロボットを、原点のすぐ上（0.1メートル）に置く。床にめり込んで始まらないよう、少し浮かせている。
+    /// プレハブが見つからなければ、コンソールで知らせるだけにする（シーン作りは止めない）。
+    /// </summary>
+    private static void PlaceRobot(GameObject robotPrefab)
+    {
         if (robotPrefab != null)
         {
             GameObject robot = (GameObject)PrefabUtility.InstantiatePrefab(robotPrefab);
@@ -140,11 +207,6 @@ public static class BombSetup
         {
             Debug.LogWarning($"{RobotPrefabPath} が見つかりません。操作するキャラクターを手で置いてください。");
         }
-
-        EditorSceneManager.SaveScene(scene, ScenePath);
-        AssetDatabase.SaveAssets();
-
-        Debug.Log($"爆弾の検証シーンを作りました：{ScenePath}");
     }
 
     // ------------------------------------------------------------
@@ -163,6 +225,8 @@ public static class BombSetup
             return existing;
         }
 
+        // 本体は黒に近い灰色（光で陰影が付く Lit）。
+        // 火花と爆発はオレンジ（光に左右されない Unlit。暗い所でも光って見える）
         Material body = GetOrCreateMaterial(BodyMaterialPath, "Universal Render Pipeline/Lit",
             new Color(0.12f, 0.12f, 0.14f));
         Material fuse = GetOrCreateMaterial(FuseMaterialPath, "Universal Render Pipeline/Unlit",
@@ -177,6 +241,7 @@ public static class BombSetup
             Vector3.zero, Vector3.one * BodyDiameter, Quaternion.identity, body);
 
         // 導火線と、その先の火花
+        // （本体のてっぺんから少し出る位置。導火線は 20度傾け、火花はその先端あたりに置く）
         CreatePart(root.transform, PrimitiveType.Cylinder, "Fuse",
             new Vector3(0f, BodyDiameter * 0.55f, 0f), new Vector3(0.08f, 0.12f, 0.08f),
             Quaternion.Euler(0f, 0f, 20f), body);
@@ -196,6 +261,7 @@ public static class BombSetup
         return saved;
     }
 
+    /// <summary>爆弾の見た目の部品を1つ、<paramref name="parent"/> の子として作る。位置・向き・大きさは親から見た値。</summary>
     private static void CreatePart(Transform parent, PrimitiveType type, string name,
         Vector3 position, Vector3 scale, Quaternion rotation, Material material)
     {
@@ -211,6 +277,10 @@ public static class BombSetup
         Object.DestroyImmediate(part.GetComponent<Collider>());
     }
 
+    /// <summary>
+    /// マテリアルを用意する。**すでにあれば、そのまま使う**（調整した色を消さないため）。
+    /// 指定のシェーダーが無いとき（URP を入れていないなど）は、Unity 標準の Standard で作る。
+    /// </summary>
     private static Material GetOrCreateMaterial(string path, string shaderName, Color color)
     {
         Material existing = AssetDatabase.LoadAssetAtPath<Material>(path);
@@ -227,6 +297,7 @@ public static class BombSetup
             shader = Shader.Find("Standard");
         }
 
+        // 色の欄の名前がシェーダーで違う（URP は _BaseColor、Standard は _Color ＝ material.color）ので、両方に入れる
         Material material = new Material(shader);
         material.SetColor("_BaseColor", color);
         material.color = color;
@@ -240,6 +311,7 @@ public static class BombSetup
     // 道具
     // ------------------------------------------------------------
 
+    /// <summary>マテリアルを付ける。見つからなかった（null の）ときは、元の見た目のままにする。</summary>
     private static void SetMaterial(GameObject target, Material material)
     {
         if (material != null)
@@ -248,6 +320,7 @@ public static class BombSetup
         }
     }
 
+    /// <summary>Inspector の数字のリスト（List&lt;float&gt;）の中身を、まるごと入れ替える。</summary>
     private static void SetFloatList(SerializedProperty property, List<float> values)
     {
         property.arraySize = values.Count;
@@ -265,6 +338,7 @@ public static class BombSetup
             ? SceneView.lastActiveSceneView.pivot
             : Vector3.zero;
 
+        // 見ている場所の 50メートル上から、真下へ 200メートルまで床を探す
         if (Physics.Raycast(pivot + Vector3.up * 50f, Vector3.down, out RaycastHit hit, 200f))
         {
             return hit.point;

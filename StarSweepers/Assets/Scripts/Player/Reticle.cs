@@ -28,7 +28,10 @@ public class Reticle : MonoBehaviour
     [Tooltip("大きさが変わるときの滑らかさ。0にすると一瞬で変わる")]
     [SerializeField] private float scaleSmooth = 14f;
 
+    /// <summary>いま塗っている色。同じ色を何度も塗り直さないために覚えておく。</summary>
     private Color currentColor;
+
+    /// <summary>目指している大きさの倍率（1 = ふだん、highlightScale = 狙っているとき）。</summary>
     private float targetScale = 1f;
 
     private void Awake()
@@ -45,6 +48,8 @@ public class Reticle : MonoBehaviour
             return;
         }
 
+        // 縦横は同じ倍率なので、いまの大きさは x だけ見ればよい。
+        // Exp を使うと、フレームレートが変わっても同じ速さで近づく
         float scale = Mathf.Lerp(
             transform.localScale.x,
             targetScale,
@@ -70,6 +75,7 @@ public class Reticle : MonoBehaviour
         targetScale = color.HasValue ? highlightScale : 1f;
     }
 
+    /// <summary>十字を作っている画像すべてを、同じ色に塗る。</summary>
     private void ApplyColor(Color color)
     {
         foreach (Graphic part in parts)

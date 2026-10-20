@@ -79,28 +79,59 @@ public class SpaceJunkLobbyScreen : MonoBehaviour
     /// </summary>
     public static bool BlocksEscape => IsSettingsOpen || closedByBackFrame == Time.frameCount;
 
+    /// <summary>
+    /// プレハブの中の部品を、役割（印 <see cref="SpaceJunkLobbyPart"/>）で引けるようにしたもの。
+    /// 同じ役割が2つあれば最初に見つかったほう。行の見本の中の部品は入れない。
+    /// </summary>
     private readonly Dictionary<SpaceJunkLobbyPartRole, SpaceJunkLobbyPart> parts =
         new Dictionary<SpaceJunkLobbyPartRole, SpaceJunkLobbyPart>();
 
+    /// <summary>ゲーム設定の数字の行（チーム数・何本先取・最大時間）。</summary>
     private readonly List<SpaceJunkLobbyValueRow> valueRows = new List<SpaceJunkLobbyValueRow>();
 
+    /// <summary>参加者1人ぶんの行の見本。非表示にしておき、複製して使う。</summary>
     private GameObject playerRowTemplate;
+
+    /// <summary>マップ1つぶんの行の見本。非表示にしておき、複製して使う。</summary>
     private GameObject mapRowTemplate;
+
+    /// <summary>いま出している参加者の行（見本の複製）。作り直すときに消す。</summary>
     private readonly List<GameObject> playerRows = new List<GameObject>();
+
+    /// <summary>いま出しているマップの行（見本の複製）。作り直すときに消す。</summary>
     private readonly List<MapRow> mapRows = new List<MapRow>();
+
+    /// <summary>
+    /// 前回、参加者の行を作ったときの中身をつないだ文字列。
+    /// 毎フレーム作り直すと重い（ボタンの押下も途切れる）ので、これが変わったときだけ作り直す。
+    /// </summary>
     private string playerRowsSignature = string.Empty;
+
+    /// <summary>前回、マップの行を作ったときの候補をつないだ文字列。変わったときだけ作り直す。</summary>
     private string mapRowsSignature = string.Empty;
 
+    /// <summary>左上の案内を次に書き直すまでの秒数（Hud Refresh Seconds から減らしていく）。</summary>
     private float hudTimer;
+
+    /// <summary>日本語が出せる文字（Use Os Japanese Font が ON のときだけ入る）。</summary>
     private Font font;
 
     /// <summary>マップの一覧の1行（複製したもの）。</summary>
     private sealed class MapRow
     {
+        /// <summary>このマップのシーンの名前。押したときにホストへ伝える値。</summary>
         public string SceneName;
+
+        /// <summary>行そのもの（消すときに使う）。</summary>
         public GameObject Root;
+
+        /// <summary>「いま選ばれている」の目印。固定のマップがこの行のときだけ出す。</summary>
         public GameObject Highlight;
+
+        /// <summary>右の四角のチェックあり（緑＝ランダムの候補に入れる）。</summary>
         public GameObject CheckOn;
+
+        /// <summary>右の四角のチェックなし（赤＝候補に入れない）。</summary>
         public GameObject CheckOff;
     }
 
@@ -108,10 +139,15 @@ public class SpaceJunkLobbyScreen : MonoBehaviour
     // 出し入れ
     // ------------------------------------------------------------
 
+    /// <summary>
+    /// 起動時：文字を日本語フォントに差し替え、プレハブの中の部品を集めてボタンをつなぐ。
+    /// 画面は両方とも閉じた状態から始める（出すかどうかは毎フレーム <see cref="Update"/> で決める）。
+    /// </summary>
     private void Awake()
     {
         if (useOsJapaneseFont)
         {
+            // 32 は文字の大きさの基準（この大きさで字を作る）
             font = UiFont.Find(32);
             foreach (Text text in GetComponentsInChildren<Text>(true))
             {
@@ -126,6 +162,7 @@ public class SpaceJunkLobbyScreen : MonoBehaviour
         SetActive(SpaceJunkLobbyPartRole.Hud, false);
     }
 
+    /// <summary>画面が消えるとき（シーンの切り替えなど）、static の「開いている」「打ち込み中」を残さない。</summary>
     private void OnDisable()
     {
         IsSettingsOpen = false;
@@ -133,6 +170,13 @@ public class SpaceJunkLobbyScreen : MonoBehaviour
         wasTyping = false;
     }
 
+    /// <summary>
+    /// 毎フレーム。流れ：
+    /// 1. ロビーにいるか（つながっていて、ラウンドが無い）を見て、左上の案内を出し入れする
+    /// 2. ホストが設定端末を開いていればゲーム設定を開く。Esc／B なら端末ごと閉じる
+    /// 3. 開いた瞬間に1回だけ準備（行を作り直させる・パスワード欄・コントローラーの選択）
+    /// 4. 開いている間はゲーム設定を毎フレーム、左上の案内は Hud Refresh Seconds ごとに書き直す
+    /// </summary>
     private void Update()
     {
         wasTyping = IsTyping;
@@ -147,6 +191,7 @@ public class SpaceJunkLobbyScreen : MonoBehaviour
         SpaceJunkSession session = SpaceJunkSession.Current;
         SpaceJunkLobbyTerminal terminal = SpaceJunkLobbyTerminal.Current;
 
+        // 開くかどうかは設定端末（SpaceJunkLobbyTerminal）が決める。この画面はそれに合わせるだけ
         bool open = inLobby && manager.IsServer && session != null && terminal != null && terminal.IsOpen;
 
         if (open && WasBackPressed())
@@ -164,6 +209,7 @@ public class SpaceJunkLobbyScreen : MonoBehaviour
             if (open)
             {
                 EnsureEventSystem();
+                // 前回開いたときの行が残っていても、必ず作り直す
                 playerRowsSignature = string.Empty;
                 mapRowsSignature = string.Empty;
                 ResetPasswordSection();
@@ -176,6 +222,7 @@ public class SpaceJunkLobbyScreen : MonoBehaviour
             RefreshSettings(session);
         }
 
+        // 左上の案内は毎フレーム書き直すほどのものではないので、間隔を空ける（ポーズ中も進むよう unscaled）
         hudTimer -= Time.unscaledDeltaTime;
         if (inLobby && !open && hudTimer <= 0f)
         {
@@ -201,6 +248,10 @@ public class SpaceJunkLobbyScreen : MonoBehaviour
     // 部品を見つけて、つなぐ
     // ------------------------------------------------------------
 
+    /// <summary>
+    /// プレハブの中から、印（<see cref="SpaceJunkLobbyPart"/>）の付いた部品を集める。
+    /// 行の見本は非表示にして取っておき、見本の中の印は <see cref="parts"/> に入れない（複製した行ごとに別のものになるため）。
+    /// </summary>
     private void CollectParts()
     {
         // 行の見本（複製して使う）を先に探し、その中の印は数えない
@@ -244,6 +295,7 @@ public class SpaceJunkLobbyScreen : MonoBehaviour
     // 数字の入力欄（めっちゃカメレオンと同じく、± のボタンのほかに打ち込める。2026/10/6）
     // ------------------------------------------------------------
 
+    /// <summary>数字の行に入力欄があれば、打ち込める形に整えて、確定したときの反映をつなぐ。</summary>
     private void WireInputs()
     {
         foreach (SpaceJunkLobbyValueRow row in valueRows)
@@ -254,10 +306,11 @@ public class SpaceJunkLobbyScreen : MonoBehaviour
                 continue;
             }
 
+            // ラムダに渡す行を、この回のぶんとして固定しておく
             SpaceJunkLobbyValueRow target = row;
             input.contentType = InputField.ContentType.Standard;
             input.lineType = InputField.LineType.SingleLine;
-            input.characterLimit = 3;
+            input.characterLimit = 3; // 3桁まで
 
             // **全角数字は半角に直し、数字以外は受け付けない**
             input.onValidateInput = (text, index, c) => ToHalfWidthDigit(c);
@@ -337,6 +390,7 @@ public class SpaceJunkLobbyScreen : MonoBehaviour
         }
     }
 
+    /// <summary>その行が表す、ホストの設定のいまの値（最大時間は秒を四捨五入した整数）。</summary>
     private static int ValueOf(SpaceJunkSession session, SpaceJunkLobbyValueKind kind)
     {
         switch (kind)
@@ -369,6 +423,7 @@ public class SpaceJunkLobbyScreen : MonoBehaviour
     // パスワード（パスワードありの部屋だけ。ホストが変える。2026/10/6）
     // ------------------------------------------------------------
 
+    /// <summary>インターネット経由の部屋の情報（参加コード・パスワード）。NetworkManager に付いている。LAN なら null。</summary>
     private static InternetConnection Internet()
     {
         NetworkManager manager = NetworkManager.Singleton;
@@ -412,6 +467,7 @@ public class SpaceJunkLobbyScreen : MonoBehaviour
 
         string problem = await internet.ChangePasswordAsync(newPassword);
 
+        // 待っている間に画面が消えていたら（シーンが変わった など）、触らない
         if (this == null)
         {
             return;
@@ -424,12 +480,14 @@ public class SpaceJunkLobbyScreen : MonoBehaviour
         }
     }
 
+    /// <summary>その部品が、行の見本（参加者・マップ）の中にあるか。</summary>
     private bool IsInsideTemplate(Transform target)
     {
         return (playerRowTemplate != null && target.IsChildOf(playerRowTemplate.transform)) ||
                (mapRowTemplate != null && target.IsChildOf(mapRowTemplate.transform));
     }
 
+    /// <summary>行の外にあるボタン（閉じる・始める・±・ランダム など）を、押したときの振り分け（<see cref="Do"/>）につなぐ。</summary>
     private void WireButtons()
     {
         foreach (SpaceJunkLobbyButton button in GetComponentsInChildren<SpaceJunkLobbyButton>(true))
@@ -440,11 +498,13 @@ public class SpaceJunkLobbyScreen : MonoBehaviour
                 continue;
             }
 
+            // ラムダに渡すボタンを、この回のぶんとして固定しておく
             SpaceJunkLobbyButton target = button;
             button.Button.onClick.AddListener(() => Do(target));
         }
     }
 
+    /// <summary>ボタンが押されたときの振り分け。**ホストのときだけ効く**（設定を変えられるのはホストだけ）。</summary>
     private void Do(SpaceJunkLobbyButton button)
     {
         SpaceJunkSession session = SpaceJunkSession.Current;
@@ -492,6 +552,7 @@ public class SpaceJunkLobbyScreen : MonoBehaviour
     // ゲーム設定
     // ------------------------------------------------------------
 
+    /// <summary>± のボタン：その行の値を <paramref name="amount"/> だけ動かす（範囲に収めるのは Session 側）。</summary>
     private static void Step(SpaceJunkSession session, SpaceJunkLobbyValueKind kind, int amount)
     {
         switch (kind)
@@ -508,6 +569,10 @@ public class SpaceJunkLobbyScreen : MonoBehaviour
         }
     }
 
+    /// <summary>
+    /// ゲーム設定の画面を、いまの設定に合わせて書き直す（開いている間、毎フレーム）。
+    /// 数字の行 → 参加者の行 → マップの一覧 → 「始める」ボタン → パスワード欄 → ルールの説明、の順。
+    /// </summary>
     private void RefreshSettings(SpaceJunkSession session)
     {
         foreach (SpaceJunkLobbyValueRow row in valueRows)
@@ -615,6 +680,7 @@ public class SpaceJunkLobbyScreen : MonoBehaviour
                 }
             }
 
+            // ＜ ＞ のボタン：その人のチームを1つ前・次に動かす
             foreach (SpaceJunkLobbyButton button in row.GetComponentsInChildren<SpaceJunkLobbyButton>(true))
             {
                 int delta = button.Action == SpaceJunkLobbyAction.TeamPrevious ? -1
@@ -624,12 +690,14 @@ public class SpaceJunkLobbyScreen : MonoBehaviour
                     continue;
                 }
 
+                // 見本から複製したボタンには見本のつなぎが残っているので、いったん外してから付け直す
                 button.Button.onClick.RemoveAllListeners();
                 button.Button.onClick.AddListener(() =>
                 {
                     SpaceJunkSession current = SpaceJunkSession.Current;
                     if (current != null && current.IsServer)
                     {
+                        // 端で折り返す（最初のチームの前は最後のチーム）
                         current.ServerSetTeamOf(clientId, (team + delta + teamCount) % teamCount);
                     }
                 });
@@ -698,6 +766,10 @@ public class SpaceJunkLobbyScreen : MonoBehaviour
         }
     }
 
+    /// <summary>
+    /// マップの行を全部消して、候補（シーン名 → 表示名）の数だけ見本から作り直す。
+    /// 行の中の部品（名前・選択の目印・チェック）を <see cref="MapRow"/> に控え、ボタンをホストへの指示につなぐ。
+    /// </summary>
     private void RebuildMapRows(Transform content, List<KeyValuePair<string, string>> maps)
     {
         foreach (MapRow row in mapRows)
@@ -774,6 +846,10 @@ public class SpaceJunkLobbyScreen : MonoBehaviour
     // ゲームを始める
     // ------------------------------------------------------------
 
+    /// <summary>
+    /// 「ゲームを始める」のボタンと、その下の一言。始められない理由があれば押せなくして理由を出し、
+    /// 始められるなら、誰もいないチームがあることだけ知らせる。
+    /// </summary>
     private void RefreshStart(SpaceJunkSession session)
     {
         string problem = StartProblem(session);
@@ -841,8 +917,10 @@ public class SpaceJunkLobbyScreen : MonoBehaviour
         return null;
     }
 
+    /// <summary>「ゲームを始める」を押したとき。設定端末を閉じてから、全員をマップへ移す（Session 側が行う）。</summary>
     private static void StartMatch(SpaceJunkSession session)
     {
+        // ボタンが押せない状態でも（コントローラーの決定 など）念のため確かめる
         if (StartProblem(session) != null)
         {
             return;
@@ -860,6 +938,10 @@ public class SpaceJunkLobbyScreen : MonoBehaviour
     // ふだん（左上）
     // ------------------------------------------------------------
 
+    /// <summary>
+    /// 左上の案内を書き直す（全員のPC）。次のマップ・人数・参加者・いまの設定・操作の案内・参加コードの順。
+    /// 試合の係（<see cref="SpaceJunkSession"/>）がまだ届いていなければ、その旨だけ出す。
+    /// </summary>
     private void RefreshHud(NetworkManager manager, SpaceJunkSession session, SpaceJunkLobbyTerminal terminal)
     {
         SpaceJunkLobbyUI lobby = SpaceJunkLobbyUI.Current;
@@ -980,17 +1062,20 @@ public class SpaceJunkLobbyScreen : MonoBehaviour
         }
     }
 
+    /// <summary>その役割の部品。プレハブに無ければ null（無くても落ちないように、呼ぶ側は null を許す）。</summary>
     private GameObject PartObject(SpaceJunkLobbyPartRole role)
     {
         return parts.TryGetValue(role, out SpaceJunkLobbyPart part) && part != null ? part.gameObject : null;
     }
 
+    /// <summary>その役割の部品に付いている <typeparamref name="T"/>（Text・Image・Button など）。無ければ null。</summary>
     private T PartComponent<T>(SpaceJunkLobbyPartRole role) where T : Component
     {
         GameObject target = PartObject(role);
         return target != null ? target.GetComponent<T>() : null;
     }
 
+    /// <summary>その役割の部品を出す／隠す。無ければ何もしない。</summary>
     private void SetActive(SpaceJunkLobbyPartRole role, bool active)
     {
         SetActive(PartObject(role), active);
@@ -1004,6 +1089,7 @@ public class SpaceJunkLobbyScreen : MonoBehaviour
         }
     }
 
+    /// <summary>その役割の文字を書き換える。無ければ何もしない。</summary>
     private void SetText(SpaceJunkLobbyPartRole role, string value)
     {
         SetText(PartComponent<Text>(role), value);

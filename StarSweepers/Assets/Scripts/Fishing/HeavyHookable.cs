@@ -21,8 +21,13 @@ public class HeavyHookable : MonoBehaviour
     /// <summary>重さ。1 が基準。引きずれる距離は「引っ張る強さ ÷ 重さ」で決まる（<see cref="ThrowController"/>）。</summary>
     public float Weight { get; private set; } = 1f;
 
+    /// <summary>重くする前の大きさ。<see cref="Remove"/> で戻すために、最初の <see cref="Apply"/> で控える。</summary>
     private Vector3 baseScale;
+
+    /// <summary>重くする前の物理の質量。Rigidbody が無ければ 1 として扱う。</summary>
     private float baseMass;
+
+    /// <summary>いま重い物になっているか（<see cref="Apply"/> 済みで、まだ <see cref="Remove"/> されていない）。</summary>
     private bool applied;
 
     /// <summary>その物資が、いま重い物として扱われているか。重さも返す。</summary>
@@ -30,6 +35,8 @@ public class HeavyHookable : MonoBehaviour
     {
         weight = 1f;
 
+        // Remove() のあとも部品自体は付いたまま残るので、「付いているか」だけでは判断しない。
+        // enabled と applied の両方が立っているときだけ「いま重い」とみなす
         if (item == null || !item.TryGetComponent(out HeavyHookable heavy) || !heavy.enabled || !heavy.applied)
         {
             return false;
@@ -45,6 +52,7 @@ public class HeavyHookable : MonoBehaviour
     /// </summary>
     public void Apply(float weight, float scale)
     {
+        // 2回目以降は控え直さない。控え直すと「すでに大きくした大きさ」を元の大きさだと思ってしまう
         if (!applied)
         {
             baseScale = transform.localScale;
@@ -53,6 +61,8 @@ public class HeavyHookable : MonoBehaviour
         }
 
         enabled = true;
+
+        // 0 や負の値が来ても、割り算（引っ張る強さ ÷ 重さ）や大きさが壊れないよう下限を 0.1 にする
         Weight = Mathf.Max(0.1f, weight);
         transform.localScale = baseScale * Mathf.Max(0.1f, scale);
 

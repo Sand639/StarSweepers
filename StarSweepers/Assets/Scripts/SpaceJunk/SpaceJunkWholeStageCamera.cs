@@ -32,19 +32,35 @@ public class SpaceJunkWholeStageCamera : SpaceJunkCameraMode
 
     protected override string DefaultName => "全体";
 
+    /// <summary>ステージを囲む箱の角8つ。これが全部画面に入る距離まで下がる。</summary>
     private readonly List<Vector3> corners = new List<Vector3>();
+
+    /// <summary>もう測ったか（測るのは1回だけ）。</summary>
     private bool measured;
+
+    /// <summary>ステージの大きさを測れたか。測れなければ、置いてある位置をそのまま使う。</summary>
     private bool hasStage;
+
+    /// <summary>ステージを囲む箱の真ん中。カメラはここを見る。</summary>
     private Vector3 center;
+
+    /// <summary>測れなかったときに使う、シーンに置いてあった位置と向き（測る前に控えておく）。</summary>
     private Vector3 fallbackPosition;
     private Quaternion fallbackRotation;
+
+    /// <summary>いまの水平の角度（度）。北向きが 0。</summary>
     private float yaw;
 
     private void Start()
     {
+        // シーンが始まったところで測っておく（TryGetPose が先に呼ばれたときは、そちらで測る。2回目からは何もしない）
         Measure();
     }
 
+    /// <summary>
+    /// ステージ全体が入る位置を求める。向きが自陣向きのときだけ毎フレーム変わり、距離はそのたびに測り直す。
+    /// 測れなかったときも、置いてある位置を返す（false にはしない）。
+    /// </summary>
     public override bool TryGetPose(float deltaTime, out Vector3 position, out Quaternion rotation)
     {
         Measure();
@@ -62,10 +78,13 @@ public class SpaceJunkWholeStageCamera : SpaceJunkCameraMode
         SnapNext = false;
 
         rotation = Quaternion.Euler(pitch, yaw, 0f);
+
+        // 箱の角が全部入る、いちばん近い距離（1〜500 メートルの間で探す）。真ん中からカメラの向きの真後ろへ下がる
         float distance = FitDistance(center, rotation, corners, screenMargin, 1f, 500f);
         position = center + rotation * Vector3.back * distance;
 
         // 遠くに置くので、奥が切れないよう描く距離を広げておく
+        // （目安：ステージの奥の端までは、真ん中までの距離の2倍あれば届く。50 は余裕のメートル数。狭めることはしない）
         float needFar = distance * 2f + 50f;
         if (View.farClipPlane < needFar)
         {
@@ -100,6 +119,8 @@ public class SpaceJunkWholeStageCamera : SpaceJunkCameraMode
         center = stage.center;
         Vector3 min = stage.min;
         Vector3 max = stage.max;
+
+        // 箱の角8つ（下の面の4つ → 上の面の4つ）
         corners.Clear();
         corners.Add(new Vector3(min.x, min.y, min.z));
         corners.Add(new Vector3(max.x, min.y, min.z));
@@ -119,12 +140,14 @@ public class SpaceJunkWholeStageCamera : SpaceJunkCameraMode
 
         foreach (Renderer renderer in FindObjectsByType<Renderer>(FindObjectsInactive.Exclude, FindObjectsSortMode.None))
         {
+            // このカメラと同じシーンの物だけ（シーンをまたいで残る物や、ほかに読み込まれているシーンの物は入れない）
             if (renderer == null || !renderer.enabled || !renderer.gameObject.scene.IsValid() ||
                 renderer.gameObject.scene != gameObject.scene)
             {
                 continue;
             }
 
+            // 測らない物：カメラ自身の子・画面の表示（Canvas）・物資（HookableObject）・プレイヤー・列車・カメラ検証用の人形
             if (renderer.transform.IsChildOf(transform) ||
                 renderer.GetComponentInParent<Canvas>() != null ||
                 renderer.GetComponentInParent<HookableObject>() != null ||
@@ -135,20 +158,22 @@ public class SpaceJunkWholeStageCamera : SpaceJunkCameraMode
                 continue;
             }
 
-            Bounds b = renderer.bounds;
-            if (b.size.x > ignoreLargerThan || b.size.z > ignoreLargerThan)
+            // 横か奥行きが大きすぎる物（遠くの背景など）は入れない（高さは見ない）
+            Bounds rendererBounds = renderer.bounds;
+            if (rendererBounds.size.x > ignoreLargerThan || rendererBounds.size.z > ignoreLargerThan)
             {
                 continue;
             }
 
+            // 1つ目はそのまま、2つ目からは今までの範囲を広げて包む
             if (!found)
             {
-                bounds = b;
+                bounds = rendererBounds;
                 found = true;
             }
             else
             {
-                bounds.Encapsulate(b);
+                bounds.Encapsulate(rendererBounds);
             }
         }
 

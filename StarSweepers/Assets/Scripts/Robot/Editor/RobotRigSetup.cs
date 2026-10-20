@@ -36,6 +36,7 @@ public static class RobotRigSetup
         EnsureFolder("Assets/Scenes");
         EnsureFolder(SceneFolder);
 
+        // 上半身は青、下半身はオレンジ、地面は灰色、段差・壁は緑
         Material upperMaterial = CreateMaterial(MaterialFolder + "/RobotUpper.mat", new Color(0.35f, 0.62f, 0.90f));
         Material lowerMaterial = CreateMaterial(MaterialFolder + "/RobotLower.mat", new Color(0.95f, 0.62f, 0.30f));
         Material groundMaterial = CreateMaterial(MaterialFolder + "/TestGround.mat", new Color(0.72f, 0.72f, 0.72f));
@@ -50,6 +51,22 @@ public static class RobotRigSetup
         Debug.Log($"ロボット分離の検証シーンを作り直しました。\nシーン: {ScenePath}");
     }
 
+    /// <summary>
+    /// ロボットのプレハブ（`RobotRig.prefab`）を作って保存する。
+    ///
+    /// 出来上がる形（上から作る順）：
+    ///
+    ///     RobotRig … まとめ役の部品が付く（RobotController・RobotGrabber・RobotRopeClimber・RobotKeyUser・RobotViewSwitcher）
+    ///     ├ CameraRig（RobotCameraLook）… 左右に回る
+    ///     │  └ CameraPivot … 上下に首を振る
+    ///     │     └ RobotCamera（Camera・AudioListener・CameraObstacleAvoid）
+    ///     ├ CombinedBody … 合体した姿。最初はこれだけが出ている
+    ///     ├ UpperBody … 上半身（最初は隠しておく）
+    ///     ├ LowerBody … 下半身（最初は隠しておく。手が無いので物を持てない）
+    ///     └ レティクル（ReticleFactory が作る）
+    ///
+    /// 部品どうしのつなぎ込み（Inspector の欄に入れる物）も、ここで全部済ませる。
+    /// </summary>
     private static GameObject CreateRobotPrefab(Material upperMaterial, Material lowerMaterial)
     {
         GameObject root = new GameObject("RobotRig");
@@ -63,9 +80,13 @@ public static class RobotRigSetup
 
         GameObject cameraObject = new GameObject("RobotCamera");
         cameraObject.transform.SetParent(pitchPivot.transform, false);
+
+        // 三人称のときの位置（0.8m 上・5.5m 後ろ）。RobotViewSwitcher の「三人称のとき」の初期値と同じにしてある
         cameraObject.transform.localPosition = new Vector3(0f, 0.8f, -5.5f);
         cameraObject.tag = "MainCamera";
         Camera camera = cameraObject.AddComponent<Camera>();
+
+        // 5cm 先から映す。一人称のとき、目の前の物が欠けて見えないように近くまで映している
         camera.nearClipPlane = 0.05f;
         cameraObject.AddComponent<AudioListener>();
 
@@ -87,6 +108,7 @@ public static class RobotRigSetup
 
         // ----- 合体した姿（上下がくっついた1体） -----
         // 足元を原点にして、上に下半身、その上に上半身を積んだ形
+        // （radius は当たり判定の太さ＝半径。メートル）
         GameObject combined = CreateBody(root.transform, "CombinedBody",
             height: LowerSize.y + UpperSize.y, radius: 0.4f);
         AddVisual(combined.transform, "LowerVisual", new Vector3(0f, LowerSize.y * 0.5f, 0f), LowerSize, lowerMaterial);
@@ -94,9 +116,11 @@ public static class RobotRigSetup
         AddFrontMark(combined.transform, new Vector3(0f, LowerSize.y + UpperSize.y * 0.5f, UpperSize.z * 0.6f), upperMaterial);
 
         // 持った物を置く場所。**手のある体にだけ付ける**
+        // （上半身の真ん中の高さで、体の中心から 0.9m 前）
         AddHoldPoint(combined, new Vector3(0f, LowerSize.y + UpperSize.y * 0.5f, 0.9f));
 
         // 一人称のときのカメラの高さ。体ごとに違う
+        // （どの体も「いちばん上の箱の、下から8割の高さ」を目の位置にしている）
         SetEyeHeight(combined, LowerSize.y + UpperSize.y * 0.8f);
 
         // ----- 上半身（分けたとき） -----
@@ -123,24 +147,15 @@ public static class RobotRigSetup
 
         // 物を持つ機能。手のある体を操作しているときだけ働く
         RobotGrabber grabber = root.AddComponent<RobotGrabber>();
-
-        SerializedObject grabberSerialized = new SerializedObject(grabber);
-        grabberSerialized.FindProperty("reticle").objectReferenceValue = reticle;
-        grabberSerialized.ApplyModifiedPropertiesWithoutUndo();
+        SetObjectReference(grabber, "reticle", reticle);
 
         // ロープにつかまる機能。こちらも手のある体だけ
         RobotRopeClimber climber = root.AddComponent<RobotRopeClimber>();
-
-        SerializedObject climberSerialized = new SerializedObject(climber);
-        climberSerialized.FindProperty("reticle").objectReferenceValue = reticle;
-        climberSerialized.ApplyModifiedPropertiesWithoutUndo();
+        SetObjectReference(climber, "reticle", reticle);
 
         // 持っている鍵を扉に使う機能
         RobotKeyUser keyUser = root.AddComponent<RobotKeyUser>();
-
-        SerializedObject keySerialized = new SerializedObject(keyUser);
-        keySerialized.FindProperty("reticle").objectReferenceValue = reticle;
-        keySerialized.ApplyModifiedPropertiesWithoutUndo();
+        SetObjectReference(keyUser, "reticle", reticle);
 
         // ----- 一人称・三人称の切り替え -----
         RobotViewSwitcher viewSwitcher = root.AddComponent<RobotViewSwitcher>();
@@ -150,6 +165,7 @@ public static class RobotRigSetup
         viewSerialized.FindProperty("cameraTransform").objectReferenceValue = cameraObject.transform;
         viewSerialized.ApplyModifiedPropertiesWithoutUndo();
 
+        // ----- まとめ役に、3つの体・カメラ・入力の設定をつなぐ -----
         SerializedObject serialized = new SerializedObject(controller);
         serialized.FindProperty("combinedBody").objectReferenceValue = combined.GetComponent<RobotBody>();
         serialized.FindProperty("upperBody").objectReferenceValue = upper.GetComponent<RobotBody>();
@@ -180,10 +196,19 @@ public static class RobotRigSetup
         hold.transform.SetParent(body.transform, false);
         hold.transform.localPosition = localPosition;
 
-        RobotBody robotBody = body.GetComponent<RobotBody>();
+        SetObjectReference(body.GetComponent<RobotBody>(), "holdPoint", hold.transform);
+    }
 
-        SerializedObject serialized = new SerializedObject(robotBody);
-        serialized.FindProperty("holdPoint").objectReferenceValue = hold.transform;
+    /// <summary>
+    /// 部品の設定項目（Inspector の欄）に、物を1つ入れる。
+    ///
+    /// 設定項目は外から触れない（private）ので、**欄の名前を文字で指定して**書き込んでいる。
+    /// この名前は部品側の**フィールド名そのもの**。部品側で名前を変えると、ここで入らなくなる。
+    /// </summary>
+    private static void SetObjectReference(Object target, string propertyName, Object value)
+    {
+        SerializedObject serialized = new SerializedObject(target);
+        serialized.FindProperty(propertyName).objectReferenceValue = value;
         serialized.ApplyModifiedPropertiesWithoutUndo();
     }
 
@@ -209,8 +234,15 @@ public static class RobotRigSetup
         CharacterController controller = body.AddComponent<CharacterController>();
         controller.height = height;
         controller.radius = radius;
+
+        // 当たり判定の中心を背丈の半分だけ上げて、**足元が原点**になるようにする
         controller.center = new Vector3(0f, height * 0.5f, 0f);
+
+        // 登れる坂の角度（度）
         controller.slopeLimit = 50f;
+
+        // そのまま乗り越えられる段差の高さ（メートル）。背丈の4割まで、ただし最大40cm
+        // （上半身だけの体は 0.9m × 0.4 ＝ 36cm、それより背の高い体は 40cm になる）
         controller.stepOffset = Mathf.Min(0.4f, height * 0.4f);
 
         body.AddComponent<RobotBody>();
@@ -230,15 +262,14 @@ public static class RobotRigSetup
         visual.GetComponent<MeshRenderer>().sharedMaterial = material;
     }
 
+    /// <summary>
+    /// **体の正面を示す目印**（22cm角の小さな箱）を足す。
+    /// 箱だけの体だとどちらが前か分からないので、前面から少し出っ張らせて付けている。
+    /// 作り方は <see cref="AddVisual"/> と同じ（名前と大きさが決まっているだけ）。
+    /// </summary>
     private static void AddFrontMark(Transform parent, Vector3 position, Material material)
     {
-        GameObject mark = GameObject.CreatePrimitive(PrimitiveType.Cube);
-        mark.name = "FrontMark";
-        mark.transform.SetParent(parent, false);
-        mark.transform.localPosition = position;
-        mark.transform.localScale = new Vector3(0.22f, 0.22f, 0.22f);
-        Object.DestroyImmediate(mark.GetComponent<Collider>());
-        mark.GetComponent<MeshRenderer>().sharedMaterial = material;
+        AddVisual(parent, "FrontMark", position, new Vector3(0.22f, 0.22f, 0.22f), material);
     }
 
     /// <summary>再生すればすぐ試せる検証用シーンを作る。</summary>
@@ -253,12 +284,14 @@ public static class RobotRigSetup
         light.shadows = LightShadows.Soft;
         lightObject.transform.rotation = Quaternion.Euler(50f, -30f, 0f);
 
+        // Unity の板（Plane）は10m四方なので、4倍して40m四方の地面にする
         GameObject ground = GameObject.CreatePrimitive(PrimitiveType.Plane);
         ground.name = "Ground";
         ground.transform.localScale = new Vector3(4f, 1f, 4f);
         ground.GetComponent<MeshRenderer>().sharedMaterial = groundMaterial;
 
         // 合体したままでは通れず、上半身だけなら通れる隙間
+        // （3つの箱の間に、幅2.4m・高さ2.0m の隙間ができる。合体した体の背丈はちょうど2.0m）
         CreateBox("LowGap_Left", new Vector3(-3.2f, 1.6f, 6f), new Vector3(4f, 3.2f, 1f), stepMaterial);
         CreateBox("LowGap_Right", new Vector3(3.2f, 1.6f, 6f), new Vector3(4f, 3.2f, 1f), stepMaterial);
         CreateBox("LowGap_Top", new Vector3(0f, 2.6f, 6f), new Vector3(2.4f, 1.2f, 1f), stepMaterial);
@@ -279,6 +312,7 @@ public static class RobotRigSetup
 
         // ----- ロープ（上下に移動できる紐） -----
         // 上の足場は高すぎてジャンプでは届かない。**ロープでしか上がれない**
+        // （足場の上面は高さ6.2m。ロープは長さ6.6mで、足場の端から0.6m離れた所に立てる）
         CreateBox("RopeTop", new Vector3(-8f, 6f, 6f), new Vector3(4f, 0.4f, 4f), stepMaterial);
         RobotRopeSetup.CreateRopeAt("Rope", new Vector3(-5.4f, 0f, 6f), 6.6f);
 
@@ -290,6 +324,7 @@ public static class RobotRigSetup
 
         // ----- 横向きのロープ（うんてい） -----
         // 下は通れないので、ぶら下がって渡る
+        // （X軸まわりに90度倒すと、ロープは高さ2.8mのところを Z の向きへ6m伸びる）
         RobotRopeSetup.CreateRopeAt("RopeHorizontal", new Vector3(8f, 2.8f, -8f), 6f,
             Quaternion.Euler(90f, 0f, 0f));
 
@@ -299,11 +334,14 @@ public static class RobotRigSetup
 
         // ----- 鍵と、鍵付きの扉 -----
         // 鍵を持って扉まで運び、F で開ける
+        // （最後の "" は鍵の種類の名前。空にしておくと、どの鍵でもこの扉に合う）
         StageGimmickSetup.CreateKey("DoorKey", new Vector3(-6f, 0.3f, -6f), "");
         StageGimmickSetup.CreateLockedDoor("LockedDoor", new Vector3(-9f, 1.5f, -9f), "");
 
         if (prefab != null)
         {
+            // プレハブとのつながりを残したまま置く（あとでプレハブを直すと、このシーンにも反映される）。
+            // 地面に埋まらないよう、10cm 浮かせておく
             GameObject robot = (GameObject)PrefabUtility.InstantiatePrefab(prefab);
             robot.transform.position = new Vector3(0f, 0.1f, -3f);
         }
@@ -311,15 +349,15 @@ public static class RobotRigSetup
         EditorSceneManager.SaveScene(scene, ScenePath);
     }
 
-    /// <summary>ロボットが持てる箱を1つ置く。</summary>
+    /// <summary>
+    /// ロボットが持てる箱を1つ置く。
+    /// `size` は1辺の長さ（メートル）、`mass` は重さ（kg）。
+    /// </summary>
     private static void CreateGrabbableBox(string name, Vector3 position, float size, float mass, Material material)
     {
-        GameObject box = GameObject.CreatePrimitive(PrimitiveType.Cube);
-        box.name = name;
-        box.transform.position = position;
-        box.transform.localScale = new Vector3(size, size, size);
-        box.GetComponent<MeshRenderer>().sharedMaterial = material;
+        GameObject box = CreateBox(name, position, new Vector3(size, size, size), material);
 
+        // 動き（linear）と回転（angular）に少しブレーキをかける。離したあと、いつまでも滑ったり転がったりしにくくなる
         Rigidbody body = box.AddComponent<Rigidbody>();
         body.mass = mass;
         body.linearDamping = 0.5f;
@@ -328,19 +366,33 @@ public static class RobotRigSetup
         box.AddComponent<Grabbable>();
     }
 
-    private static void CreateBox(string name, Vector3 position, Vector3 scale, Material material)
+    /// <summary>
+    /// 当たり判定つきの箱を1つ置く（壁・段差・足場などに使う）。
+    /// `position` は箱の中心、`scale` は幅・高さ・奥行き（メートル）。
+    /// </summary>
+    private static GameObject CreateBox(string name, Vector3 position, Vector3 scale, Material material)
     {
         GameObject box = GameObject.CreatePrimitive(PrimitiveType.Cube);
         box.name = name;
         box.transform.position = position;
         box.transform.localScale = scale;
         box.GetComponent<MeshRenderer>().sharedMaterial = material;
+
+        return box;
     }
 
     // ------------------------------------------------------------
     // 補助
     // ------------------------------------------------------------
 
+    /// <summary>
+    /// 色だけのマテリアルを用意する。
+    ///
+    /// **すでにあれば作り直さず、色だけ塗り直す。**
+    /// 同じファイルを使い続けるので、他のシーンやプレハブからの参照もそのまま残る。
+    ///
+    /// URP のシェーダーが見つからない（URP を使っていない）ときは、標準のシェーダーで作る。
+    /// </summary>
     private static Material CreateMaterial(string path, Color color)
     {
         Material existing = AssetDatabase.LoadAssetAtPath<Material>(path);
@@ -362,6 +414,10 @@ public static class RobotRigSetup
         return material;
     }
 
+    /// <summary>
+    /// フォルダが無ければ作る。
+    /// **1段ずつしか作れない**（親フォルダが先に無いと失敗する）ので、呼ぶ側で親から順に呼んでいる。
+    /// </summary>
     private static void EnsureFolder(string path)
     {
         if (AssetDatabase.IsValidFolder(path))

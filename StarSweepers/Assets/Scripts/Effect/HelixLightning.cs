@@ -21,13 +21,18 @@ public class HelixLightning : MonoBehaviour
     [Tooltip("加算合成（光を足す）のマテリアル。空なら実行時に作る")]
     [SerializeField] private Material lineMaterial;
 
+    [Tooltip("太くて薄い光の色（HDR。1 より明るくするとブルームで光る）")]
     [ColorUsage(true, true)]
     [SerializeField] private Color glowColor = new Color(0.15f, 3f, 0.45f, 1f);
 
+    [Tooltip("細くて明るい芯の色（HDR）")]
     [ColorUsage(true, true)]
     [SerializeField] private Color coreColor = new Color(0.9f, 4f, 1.2f, 1f);
 
+    [Tooltip("光の太さ（メートル）")]
     [SerializeField] private float glowWidth = 0.16f;
+
+    [Tooltip("芯の太さ（メートル）")]
     [SerializeField] private float coreWidth = 0.025f;
 
     [Header("本数")]
@@ -44,6 +49,7 @@ public class HelixLightning : MonoBehaviour
     [Tooltip("らせんが走る範囲の高さ（体の高さ）")]
     [SerializeField] private float bodyHeight = 1.8f;
 
+    [Tooltip("らせんの半径（メートル。体の中心から）")]
     [SerializeField] private float radius = 0.45f;
 
     [Tooltip("1本が何周回るか（最小・最大）")]
@@ -70,26 +76,40 @@ public class HelixLightning : MonoBehaviour
     [SerializeField] private float visibleChance = 0.8f;
 
     [Header("枝分かれ")]
+    [Tooltip("作り直すたびに、枝が生える確率")]
     [Range(0f, 1f)]
     [SerializeField] private float branchChance = 0.5f;
 
+    [Tooltip("枝の長さ（メートル。最小・最大）")]
     [SerializeField] private Vector2 branchLengthRange = new Vector2(0.15f, 0.4f);
 
     [Header("光")]
     [Tooltip("まわりを照らすライト（空なら照らさない）")]
     [SerializeField] private Light flickerLight;
 
+    [Tooltip("ライトの明るさ。ちらつかせ、Burst 中はさらに明るくなる")]
     [SerializeField] private float lightIntensity = 3f;
 
     [Header("Burst（一時的に激しくする）")]
+    [Tooltip("Burst の最中、らせんの半径を何倍にするか")]
     [SerializeField] private float burstRadiusScale = 1.5f;
+
+    [Tooltip("Burst の最中、ギザギザを何倍にするか")]
     [SerializeField] private float burstJitterScale = 1.8f;
+
+    [Tooltip("Burst の最中、明るさを何倍にするか")]
     [SerializeField] private float burstBrightnessScale = 1.6f;
 
+    /// <summary>枝1本の点の数（短い直線なので少なくてよい）。</summary>
     private const int BranchPointCount = 5;
 
+    /// <summary>ふだんの本数 ＋ Burst 用の本数ぶん、最初に全部作っておく（途中で増やさない）。</summary>
     private Bolt[] bolts;
+
+    /// <summary>Burst の残り秒数。0 以下ならふだんの状態。</summary>
     private float burstTimer;
+
+    /// <summary>直近の Burst の長さ（秒）。残り秒数との割合で「強さ」を出すために控えておく。</summary>
     private float burstDuration;
 
     /// <summary>電撃を出すかどうか。false にすると全部消える。</summary>
@@ -133,6 +153,8 @@ public class HelixLightning : MonoBehaviour
 
         // Burst の強さ（1 → 0 へ減っていく）
         float burst = burstDuration > 0f ? Mathf.Clamp01(burstTimer / burstDuration) : 0f;
+
+        // 出す本数は、強さに応じてふだんの本数に Burst 用の本数を足す（弱まるにつれて減っていく）
         int activeCount = boltCount + Mathf.CeilToInt(burstExtraBolts * burst);
 
         for (int i = 0; i < bolts.Length; i++)
@@ -153,16 +175,26 @@ public class HelixLightning : MonoBehaviour
     // 1本の電撃
     // ------------------------------------------------------------
 
+    /// <summary>
+    /// 電撃1本（芯と、そこから生える枝1本の組）。設定値は親の <see cref="HelixLightning"/> のものをそのまま読む。
+    /// 作り直す間隔はそれぞれが別々に持つので、本ごとにばらばらのタイミングでちらつく。
+    /// </summary>
     private class Bolt
     {
         private readonly HelixLightning owner;
         private readonly LightningLine main;
         private readonly LightningLine branch;
 
+        /// <summary>手順1で置く、らせん状の目印の点。</summary>
         private readonly Vector3[] controlPoints;
+
+        /// <summary>手順2・3を経た、実際に描く芯の点。</summary>
         private readonly Vector3[] points;
+
+        /// <summary>枝の点。</summary>
         private readonly Vector3[] branchPoints = new Vector3[BranchPointCount];
 
+        /// <summary>次に作り直すまでの残り秒数。</summary>
         private float timer;
 
         public Bolt(HelixLightning owner, int index)
@@ -176,6 +208,10 @@ public class HelixLightning : MonoBehaviour
             branch = new LightningLine(owner.transform, $"Bolt_{index}_Branch", owner.lineMaterial);
         }
 
+        /// <summary>
+        /// 手順4：毎フレーム呼ばれ、作り直す時間が来たときだけ 1〜3・5 をやり直す。
+        /// <paramref name="active"/> が false なら消す。<paramref name="burst"/> は Burst の強さ（0〜1）。
+        /// </summary>
         public void Tick(float deltaTime, bool active, float burst)
         {
             if (!active)
@@ -206,6 +242,7 @@ public class HelixLightning : MonoBehaviour
                 return;
             }
 
+            // Burst の強さに応じて、ふだん（1 倍）と Burst の倍率の間を取る
             float radiusScale = Mathf.Lerp(1f, owner.burstRadiusScale, burst);
             float jitterScale = Mathf.Lerp(1f, owner.burstJitterScale, burst);
             float brightness = Mathf.Lerp(1f, owner.burstBrightnessScale, burst);
@@ -216,6 +253,7 @@ public class HelixLightning : MonoBehaviour
 
             owner.SetLine(main, points, count, brightness, jitterScale);
 
+            // 枝は芯より少し暗く（8 割）・細く（7 割）して、芯が主役に見えるようにする
             if (Random.value < owner.branchChance)
             {
                 BuildBranch(count, owner.jitter * jitterScale);
@@ -230,6 +268,7 @@ public class HelixLightning : MonoBehaviour
         /// <summary>手順1：らせん状に目印の点を置く。</summary>
         private void BuildHelix(float radiusScale)
         {
+            // 体の高さの範囲（中心 ± 高さの半分）の中に、ランダムな長さで収まるように置く
             float length = owner.bodyHeight * Random.Range(owner.lengthRange.x, owner.lengthRange.y);
             float bottom = owner.centerHeight - owner.bodyHeight * 0.5f;
             float startY = bottom + Random.Range(0f, owner.bodyHeight - length);
@@ -250,6 +289,7 @@ public class HelixLightning : MonoBehaviour
                 float r = owner.radius * radiusScale * Random.Range(0.8f, 1.25f);
                 float y = startY + (downward ? 1f - t : t) * length;
 
+                // X・Z で円を描き、Y（上方向）に進む
                 controlPoints[i] = new Vector3(Mathf.Cos(angle) * r, y, Mathf.Sin(angle) * r);
             }
         }
@@ -257,6 +297,7 @@ public class HelixLightning : MonoBehaviour
         /// <summary>手順5：芯のどこかから、外向きに短い枝を生やす。</summary>
         private void BuildBranch(int mainCount, float jitterAmount)
         {
+            // 芯の真ん中あたり（全体の 1/4〜3/4 の位置）から生やす。端は細く消えていくので枝が浮いて見えるため
             int from = Random.Range(mainCount / 4, mainCount * 3 / 4);
             Vector3 start = points[from];
 
@@ -270,6 +311,7 @@ public class HelixLightning : MonoBehaviour
                 float t = i / (float)(BranchPointCount - 1);
                 Vector3 p = start + direction * (length * t);
 
+                // 根元（i == 0）は芯にくっつけたまま、先に行くほど大きくずらす
                 if (i > 0)
                 {
                     p += Random.insideUnitSphere * (jitterAmount * t);
@@ -280,6 +322,10 @@ public class HelixLightning : MonoBehaviour
         }
     }
 
+    /// <summary>
+    /// 線に点と色・太さを渡す。太さは毎回少しゆらす（作り直すたびに太さも変わって、よりちらついて見える）。
+    /// <paramref name="widthScale"/> は光の太さにだけ掛ける（枝を細くするため）。
+    /// </summary>
     private void SetLine(LightningLine line, Vector3[] positions, int count, float brightness, float widthScale)
     {
         line.Set(positions, count,

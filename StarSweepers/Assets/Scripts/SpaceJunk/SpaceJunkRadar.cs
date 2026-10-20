@@ -78,15 +78,18 @@ public class SpaceJunkRadar : MonoBehaviour
     private void OnGUI()
     {
         // マップにいる間だけ。ポーズ中は出さない（ポーズ画面の邪魔をしないように）
+        // OnGUI は1フレームに何度も呼ばれる（配置・入力・描画）。絵を描くだけなので、描画の回（Repaint）だけで描く
         if (SpaceJunkRound.Current == null || GamePause.IsPaused || Event.current.type != EventType.Repaint)
         {
             return;
         }
 
+        // 画面の高さ 1080 を 1 とした倍率（小さすぎ・大きすぎにならないよう 0.4〜3 倍に収める）
         float scale = Mathf.Clamp(Screen.height / 1080f, 0.4f, 3f);
         float diameter = size * scale;
         float radius = diameter * 0.5f;
 
+        // 画面の右下の角から、余白とレーダーの半径の分だけ内側が中心（GUI は左上が原点で、下向きが +y）
         Vector2 center = new Vector2(
             Screen.width - margin * scale - radius,
             Screen.height - margin * scale - radius);
@@ -96,6 +99,7 @@ public class SpaceJunkRadar : MonoBehaviour
         // レーダーの上＝自分が向いている方向
         float heading = transform.eulerAngles.y;
 
+        // 外枠。画像が無いときは、代わりに半透明の暗い緑の丸を敷く
         DrawSprite(frameSprite, area, Color.white);
         if (frameSprite == null)
         {
@@ -105,8 +109,10 @@ public class SpaceJunkRadar : MonoBehaviour
         // 方角の輪。北が「自分から見た北の方向」へ来るように回す
         DrawRotated(compassSprite, area, -heading, center);
 
+        // 点を置ける半径（画面のピクセル）。range メートル先が、ちょうどこの半径の所に来る
         float dotRadius = radius * innerRatio;
 
+        // 物資を先に描き、プレイヤーの点が上に重なるようにする
         DrawSupplies(center, dotRadius, heading, scale);
         DrawPlayers(center, dotRadius, heading, scale);
 
@@ -128,14 +134,16 @@ public class SpaceJunkRadar : MonoBehaviour
                 continue;
             }
 
-            // 重い（特殊）デブリは、その色の大きめの点で出す
-            bool highValue = item.TryGetComponent(out SpaceJunkHighValueMark mark) && mark.enabled;
+            // 重い（特殊）デブリは、その色の大きめの点（1.6 倍）で出す
+            // （印の部品の名前は HighValueMark だが、いまはイベントの特殊デブリと、
+            //   STAGE_02 の真ん中の得点の高いデブリ（SpaceJunkBonusDebris。金色）に付く）
+            bool isMarked = item.TryGetComponent(out SpaceJunkHighValueMark mark) && mark.enabled;
 
             if (ToRadar(item.transform.position, heading, dotRadius, false, out Vector2 offset))
             {
                 DrawDot(center + offset,
-                        highValue ? dot * 1.6f : dot,
-                        highValue ? mark.MarkColor : supplyColor);
+                        isMarked ? dot * 1.6f : dot,
+                        isMarked ? mark.MarkColor : supplyColor);
             }
         }
     }
@@ -148,6 +156,7 @@ public class SpaceJunkRadar : MonoBehaviour
 
         foreach (FishingNetPlayer player in FishingNetPlayer.All)
         {
+            // 自分（このレーダーが付いているプレイヤー）は、真ん中の矢印で出すので点にしない
             if (player == null || player.transform == transform || !player.gameObject.activeInHierarchy)
             {
                 continue;
@@ -181,10 +190,13 @@ public class SpaceJunkRadar : MonoBehaviour
         Vector3 local = Quaternion.Euler(0f, -heading, 0f) * relative;
 
         // 画面は下向きが +y なので、奥（+z）は上（-y）
+        // range で割って、縁がちょうど長さ 1 になるようにそろえる
         Vector2 radar = new Vector2(local.x, -local.z) / range;
 
+        // 長さが 1 以下なら範囲の中（長さの2乗で比べても同じなので、平方根を取らずに済ませている）
         bool inside = radar.sqrMagnitude <= 1f;
 
+        // 範囲の外は、向きだけ残して長さを 1（縁）にする
         if (!inside && clampToEdge)
         {
             radar = radar.normalized;
@@ -194,6 +206,7 @@ public class SpaceJunkRadar : MonoBehaviour
         return inside;
     }
 
+    /// <summary>画像を、その枠いっぱいに描く。画像が無ければ何もしない。</summary>
     private static void DrawSprite(Sprite sprite, Rect rect, Color color)
     {
         if (sprite == null)
@@ -221,14 +234,19 @@ public class SpaceJunkRadar : MonoBehaviour
         GUI.matrix = saved;
     }
 
-    /// <summary>画像の中で、その絵が入っている範囲（0〜1）。</summary>
+    /// <summary>
+    /// 画像の中で、その絵が入っている範囲（0〜1）。
+    /// 1枚の大きな画像に複数の絵がまとめて入っているとき（アトラス）でも、その絵の部分だけを描くため。
+    /// </summary>
     private static Rect TexCoords(Sprite sprite)
     {
-        Rect r = sprite.textureRect;
-        Texture t = sprite.texture;
-        return new Rect(r.x / t.width, r.y / t.height, r.width / t.width, r.height / t.height);
+        Rect pixelRect = sprite.textureRect;
+        Texture texture = sprite.texture;
+        return new Rect(pixelRect.x / texture.width, pixelRect.y / texture.height,
+                        pixelRect.width / texture.width, pixelRect.height / texture.height);
     }
 
+    /// <summary>丸い点を、<paramref name="at"/> を中心に描く（直径は画面のピクセル）。</summary>
     private static void DrawDot(Vector2 at, float diameter, Color color)
     {
         Color saved = GUI.color;
@@ -253,6 +271,8 @@ public class SpaceJunkRadar : MonoBehaviour
             hideFlags = HideFlags.HideAndDontSave
         };
 
+        // 真ん中からの距離で、丸の内側は不透明・外側は透明にする。
+        // 縁の 1 ピクセルだけ半透明にして、ギザギザに見えないようにしている
         float half = (size - 1) * 0.5f;
         for (int y = 0; y < size; y++)
         {

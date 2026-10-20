@@ -59,7 +59,10 @@ public class FishingObjectSpawner : MonoBehaviour
     [Tooltip("空いた場所を探す回数。見つからなければ、その回は出さない")]
     [SerializeField] private int placementTries = 8;
 
+    /// <summary>前に出してからの経過秒数。最初は「始まってからの秒数」として使う。</summary>
     private float timer;
+
+    /// <summary>始まった直後のまとめ出しを済ませたか。</summary>
     private bool initialDone;
 
     private void Update()
@@ -71,6 +74,7 @@ public class FishingObjectSpawner : MonoBehaviour
 
         timer += Time.deltaTime;
 
+        // 最初の1回：少し待ってから、まとめて出す
         if (!initialDone)
         {
             if (timer < startDelaySeconds)
@@ -88,6 +92,7 @@ public class FishingObjectSpawner : MonoBehaviour
             return;
         }
 
+        // そのあとは、決まった間隔で1つずつ出す
         if (timer < spawnIntervalSeconds)
         {
             return;
@@ -113,6 +118,7 @@ public class FishingObjectSpawner : MonoBehaviour
         return FishingMatch.PlayAllowed;
     }
 
+    /// <summary>1つ出してみる。数が上限に達している・空いた場所が無い、などのときは何も出さない。</summary>
     private void TrySpawnOne()
     {
         if (HookableObject.CountActive() >= maxObjects)
@@ -131,23 +137,36 @@ public class FishingObjectSpawner : MonoBehaviour
             return;
         }
 
+        // 向きは水平にランダム（見た目がそろいすぎないように）
         Quaternion rotation = Quaternion.Euler(0f, Random.Range(0f, 360f), 0f);
         GameObject spawned = Instantiate(prefab, position, rotation);
 
         // 通信中なら、全員の画面に出す
+        SpawnForEveryoneIfOnline(spawned, prefab);
+    }
+
+    /// <summary>
+    /// 通信中なら、出した物を全員の画面に出す（ホストだけが呼ばれる前提）。
+    /// 通信していなければ何もしない（Instantiate しただけで、この画面に出ている）。
+    /// </summary>
+    private void SpawnForEveryoneIfOnline(GameObject spawned, GameObject prefab)
+    {
         NetworkManager network = NetworkManager.Singleton;
-        if (network != null && network.IsListening)
+        if (network == null || !network.IsListening)
         {
-            NetworkObject networkObject = spawned.GetComponent<NetworkObject>();
-            if (networkObject != null)
-            {
-                networkObject.Spawn(true);
-            }
-            else
-            {
-                Debug.LogWarning($"[FISH] {prefab.name} に NetworkObject が無いため、ホストの画面にしか出ません。" +
-                                 "オンライン用のプレハブを入れてください。");
-            }
+            return;
+        }
+
+        NetworkObject networkObject = spawned.GetComponent<NetworkObject>();
+        if (networkObject != null)
+        {
+            // true ＝ ホストがシーンを切り替えたときに、この物も一緒に消す
+            networkObject.Spawn(true);
+        }
+        else
+        {
+            Debug.LogWarning($"[FISH] {prefab.name} に NetworkObject が無いため、ホストの画面にしか出ません。" +
+                             "オンライン用のプレハブを入れてください。");
         }
     }
 
@@ -166,7 +185,7 @@ public class FishingObjectSpawner : MonoBehaviour
         return Random.Range(0, total) < supply ? supplyPrefab : bombPrefab;
     }
 
-    /// <summary>範囲の中から、何も無い場所を探す。</summary>
+    /// <summary>範囲の中から、何も無い場所を探す。見つからなければ false（その回は出さない）。</summary>
     private bool TryFindPlace(out Vector3 position)
     {
         for (int i = 0; i < placementTries; i++)
@@ -176,7 +195,9 @@ public class FishingObjectSpawner : MonoBehaviour
                 dropHeight,
                 Random.Range(-areaHalfSize.y, areaHalfSize.y));
 
-            // 落とす高さから床の少し上まで、縦に長く調べる（プレイヤーや障害物の真上を避ける）
+            // 落とす高さから床の少し上まで、縦に長く調べる（プレイヤーや障害物の真上を避ける）。
+            // このオブジェクトの高さ＝床の高さとみなし、カプセルの下端が床に触れて「ふさがっている」と
+            // 誤判定しないよう、半径ぶん＋0.1m だけ浮かせている
             Vector3 bottom = new Vector3(candidate.x, transform.position.y + clearRadius + 0.1f, candidate.z);
             bool blocked = Physics.CheckCapsule(bottom, candidate, clearRadius, ~0, QueryTriggerInteraction.Ignore);
 

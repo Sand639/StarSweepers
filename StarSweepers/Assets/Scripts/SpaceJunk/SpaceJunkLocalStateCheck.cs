@@ -131,24 +131,38 @@ public class SpaceJunkLocalStateCheck : MonoBehaviour
         }
 
         // 今回ずれていなかった物の数え直し（続けてずれていたときだけ直すため）
-        if (hookMismatches.Count > 0)
-        {
-            List<ulong> stale = null;
-            foreach (ulong id in hookMismatches.Keys)
-            {
-                if (!seenThisCheck.Contains(id))
-                {
-                    (stale ??= new List<ulong>()).Add(id);
-                }
-            }
+        ForgetMismatchesNotSeenThisCheck();
+    }
 
-            if (stale != null)
+    /// <summary>
+    /// 今回の答え合わせでずれていなかった物の「続けてずれていた回数」を消す。
+    /// 一度ずれて次は合っていた物を、その次にずれたときに「2回続けて」と数えないため。
+    /// </summary>
+    private void ForgetMismatchesNotSeenThisCheck()
+    {
+        if (hookMismatches.Count == 0)
+        {
+            return;
+        }
+
+        // foreach の最中に Dictionary から消せないので、いったん集めてから消す
+        List<ulong> stale = null;
+        foreach (ulong id in hookMismatches.Keys)
+        {
+            if (!seenThisCheck.Contains(id))
             {
-                foreach (ulong id in stale)
-                {
-                    hookMismatches.Remove(id);
-                }
+                (stale ??= new List<ulong>()).Add(id);
             }
+        }
+
+        if (stale == null)
+        {
+            return;
+        }
+
+        foreach (ulong id in stale)
+        {
+            hookMismatches.Remove(id);
         }
     }
 

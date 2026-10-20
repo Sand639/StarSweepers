@@ -70,6 +70,7 @@ public class HookChargeUI : MonoBehaviour
     /// <summary><see cref="CreateOverhead"/> で作った複製か。</summary>
     private bool isOverheadCopy;
 
+    /// <summary>この表示の Canvas。頭の上に出すとき、画面の位置を Canvas の中の位置に直すのに使う。</summary>
     private Canvas canvas;
 
     /// <summary>
@@ -119,6 +120,7 @@ public class HookChargeUI : MonoBehaviour
         return copy;
     }
 
+    /// <summary>「頭の上に出す」形に切り替える。<see cref="CreateOverhead"/> で作った直後に1回だけ呼ぶ。</summary>
     private void BeginFollow(Transform target)
     {
         isOverheadCopy = true;
@@ -147,6 +149,10 @@ public class HookChargeUI : MonoBehaviour
         rect.localScale = Vector3.one * overheadScale;
     }
 
+    /// <summary>
+    /// 頭の上に出す複製だけ、毎フレーム相手を追いかける。
+    /// プレイヤーの移動が終わったあと（LateUpdate）に合わせるので、1フレーム遅れて見えない。
+    /// </summary>
     private void LateUpdate()
     {
         if (isOverheadCopy)
@@ -212,8 +218,10 @@ public class HookChargeUI : MonoBehaviour
         scaler.uiScaleMode = CanvasScaler.ScaleMode.ScaleWithScreenSize;
         scaler.referenceResolution = new Vector2(1920f, 1080f);
 
-        Color back = new Color(0.12f, 0.12f, 0.12f, 0.8f);
+        Color back = new Color(0.12f, 0.12f, 0.12f, 0.8f); // バーの下地（濃い灰色・少し透ける）
 
+        // チャージ … 高さ 24px のバー。伸びる部分は左端を軸（pivot）にして横の拡大率で伸ばすので、
+        // 位置は左端（-幅/2）まで寄せておき、最初は拡大率 0（＝何も見えない）にする
         GameObject chargeRoot = MakeContainer("ChargeRoot", canvasObject.transform);
         MakeImage("ChargeBG", chargeRoot.transform, new Vector2(width, 24f), back, Vector2.zero);
         Image chargeFill = MakeImage("ChargeFill", chargeRoot.transform,
@@ -221,6 +229,7 @@ public class HookChargeUI : MonoBehaviour
         chargeFill.rectTransform.pivot = new Vector2(0f, 0.5f);
         chargeFill.rectTransform.localScale = new Vector3(0f, 1f, 1f);
 
+        // スキルチェック … 高さ 28px のバー。枠の広さ（90／50／18px）は仮で、実際の広さは ThrowController が SetZone で決め直す
         GameObject timingRoot = MakeContainer("TimingRoot", canvasObject.transform);
         MakeImage("TimingBG", timingRoot.transform, new Vector2(width, 28f), back, Vector2.zero);
 
@@ -251,7 +260,7 @@ public class HookChargeUI : MonoBehaviour
             };
         }
 
-        // マーカーは一番上に出したいので、最後に作る
+        // マーカーは一番上に出したいので、最後に作る（幅 6px・高さ 44px。バーより高くして目立たせる）
         Image marker = MakeImage("Marker", timingRoot.transform, new Vector2(6f, 44f), Color.white, Vector2.zero);
 
         chargeRoot.SetActive(false);
@@ -267,6 +276,7 @@ public class HookChargeUI : MonoBehaviour
         return ui;
     }
 
+    /// <summary>ゲージのまとまり（親）を作る。位置の基準（pivot）は下の辺の真ん中。</summary>
     private static GameObject MakeContainer(string name, Transform parent)
     {
         GameObject go = new GameObject(name, typeof(RectTransform));
@@ -277,6 +287,7 @@ public class HookChargeUI : MonoBehaviour
         return go;
     }
 
+    /// <summary>色付きの四角を1つ作る。クリックの邪魔をしないよう、当たり判定（raycastTarget）は切る。</summary>
     private static Image MakeImage(string name, Transform parent, Vector2 size, Color color, Vector2 position)
     {
         GameObject go = new GameObject(name, typeof(RectTransform), typeof(CanvasRenderer), typeof(Image));
@@ -358,6 +369,7 @@ public class HookChargeUI : MonoBehaviour
             return;
         }
 
+        // 0〜1 を、ゲージの左端〜右端のピクセルに直す（0.5 が真ん中 ＝ 0px）
         float x = (center - 0.5f) * barWidth;
 
         PlaceRect(visual.hitRect, x, hit);
@@ -365,6 +377,7 @@ public class HookChargeUI : MonoBehaviour
         PlaceRect(visual.perfectRect, x, perfect);
     }
 
+    /// <summary>枠の四角を、中心 <paramref name="x"/>（px）と片側の広さ <paramref name="halfWidth01"/>（0〜1）から置く。高さは変えない。</summary>
     private void PlaceRect(RectTransform rect, float x, float halfWidth01)
     {
         if (rect == null)

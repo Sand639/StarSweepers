@@ -54,6 +54,7 @@ public class LockedDoor : MonoBehaviour
 
     private void Awake()
     {
+        // 扉の欄が空なら、同じ物に付いている MoveObject を使う（扉そのものにこれを付けたときの手間を省く）
         if (door == null)
         {
             door = GetComponent<MoveObject>();
@@ -62,6 +63,7 @@ public class LockedDoor : MonoBehaviour
 
     private void OnEnable()
     {
+        // 出ている間だけ一覧に載せる。止めた扉・消えた扉は、鍵を持つ側から見つからなくなる
         All.Add(this);
     }
 

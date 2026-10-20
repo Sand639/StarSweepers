@@ -100,6 +100,8 @@ public class FishingNetPlayer : NetworkBehaviour
     {
         get
         {
+            // 「ホストのPCの1人目」のプレイヤーが値を持っている
+            // （1台で複数人のときはホストのPCに何人もいるので、席 0 の人に決めている）
             foreach (FishingNetPlayer player in All)
             {
                 if (player != null && player.OwnerClientId == NetworkManager.ServerClientId && player.LocalSeat == 0)
@@ -117,10 +119,12 @@ public class FishingNetPlayer : NetworkBehaviour
     /// </summary>
     public static void ServerSetSelectedMap(string sceneName)
     {
+        // 書き込む先は HostSelectedMap と同じ「ホストのPCの1人目」のプレイヤー
         foreach (FishingNetPlayer player in All)
         {
             if (player != null && player.IsServer && player.OwnerClientId == NetworkManager.ServerClientId && player.LocalSeat == 0)
             {
+                // 同じ値を入れ直すと無駄な通信になるので、変わったときだけ書く
                 FixedString64Bytes value = new FixedString64Bytes(sceneName ?? string.Empty);
                 if (player.lobbyMapName.Value != value)
                 {
@@ -170,6 +174,10 @@ public class FishingNetPlayer : NetworkBehaviour
         }
     }
 
+    /// <summary>
+    /// 通信上で生まれたとき（**全員のPCで、全員ぶん呼ばれる**）。
+    /// 自分が操作するぶんなら出てくる場所とカメラを合わせ、他の人のぶんなら操作を止める。
+    /// </summary>
     public override void OnNetworkSpawn()
     {
         // ホストが参加番号を決める。**空いている一番小さい番号を使う**
@@ -210,6 +218,7 @@ public class FishingNetPlayer : NetworkBehaviour
         All.Remove(this);
     }
 
+    /// <summary>参加者のPCでは、ホストが決めた番号が少し遅れて届く。届いた時点で色を塗り直す。</summary>
     private void OnPlayerIndexChanged(int before, int after)
     {
         ApplyTeamColor();
@@ -300,6 +309,8 @@ public class FishingNetPlayer : NetworkBehaviour
         }
 
         hookPosition.Value = hookVisual.position;
+
+        // 待機中・溜めている間は糸が無い。それ以外（飛んでいる・引っ掛けている・戻っている）は糸が出ている
         lineVisible.Value = hookController.Phase != HookController.HookPhase.Idle
                          && hookController.Phase != HookController.HookPhase.Charging;
         lineGrabbing.Value = hookController.IsGrabbing;
@@ -427,12 +438,14 @@ public class FishingNetPlayer : NetworkBehaviour
     /// <summary>参加番号ごとに、円周上の違う場所へ移す。全員が重なって出てくるのを防ぐため。</summary>
     private void MoveToSpawnPoint()
     {
+        // 円周を最大人数で等分し、参加番号ぶんだけ回した場所に出す。向きは +180° で円の中心のほう
         int index = Mathf.Max(0, playerIndex.Value);
         float angle = index * (360f / FishingTeams.MaxPlayers);
         Vector3 position = Quaternion.Euler(0f, angle, 0f) * (Vector3.forward * spawnRadius);
 
         if (characterController != null)
         {
+            // CharacterController が有効なままだと、transform を直接動かしても元の位置に戻されることがあるので、いったん切って移す
             characterController.enabled = false;
             transform.SetPositionAndRotation(position, Quaternion.Euler(0f, angle + 180f, 0f));
             characterController.enabled = true;

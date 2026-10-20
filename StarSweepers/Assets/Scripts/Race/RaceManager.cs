@@ -104,8 +104,22 @@ public class RaceManager : MonoBehaviour
     /// <summary>「スタート！」を出しておく残り秒数。0より大きい間だけ出す。</summary>
     public float StartSignalRemaining { get; private set; }
 
+    /// <summary>走り出したときに「スタート！」を画面に出しておく秒数。</summary>
+    private const float StartSignalSeconds = 1.2f;
+
+    /// <summary>
+    /// 落ちた人を戻すときに、真下の地面を探す線の長さ（メートル）。
+    /// 通過点の <see cref="GroundSearchStartAbove"/> メートル上から、この長さだけ下へ調べる。
+    /// </summary>
+    private const float GroundSearchLength = 60f;
+
+    /// <summary>地面を探す線を、通過点の何メートル上から出すか。通過点が地面より低くても拾えるように。</summary>
+    private const float GroundSearchStartAbove = 3f;
+
+    /// <summary>ゴールした人数。次にゴールした人の順位になる。</summary>
     private int finishedCount;
 
+    /// <summary>地面を探すときの当たりを受け取る入れ物。毎回作らずに使い回す。</summary>
     private readonly RaycastHit[] groundHits = new RaycastHit[16];
 
     private void Awake()
@@ -128,6 +142,10 @@ public class RaceManager : MonoBehaviour
         ResetRace();
     }
 
+    /// <summary>
+    /// 毎フレームの流れ。**やり直し → 段階を進める → 落ちた人を戻す → 通過点を調べる → 位置を控える**の順。
+    /// カート側が動いたあと（LateUpdate、かつ実行順 100）に回すので、このフレームの移動がすべて済んでいる。
+    /// </summary>
     private void LateUpdate()
     {
         if (GamePause.IsPaused)
@@ -168,6 +186,9 @@ public class RaceManager : MonoBehaviour
     public void ResetRace()
     {
         State = Phase.Waiting;
+
+        // 用意の時間もこの1つの数字に含めて減らしていく。
+        // 残りが countdownSeconds を切ったところで「カウントダウン」の段階に移る（AdvancePhase）
         CountdownRemaining = readySeconds + countdownSeconds;
         ElapsedTime = 0f;
         StartSignalRemaining = 0f;
@@ -195,13 +216,18 @@ public class RaceManager : MonoBehaviour
         State = Phase.Running;
         CountdownRemaining = 0f;
         ElapsedTime = 0f;
-        StartSignalRemaining = 1.2f;
+        StartSignalRemaining = StartSignalSeconds;
 
         SetControlEnabled(true);
     }
 
+    /// <summary>
+    /// 時間を進めて、段階を「用意 → カウントダウン → 走行」と移す。
+    /// 「終了」は <see cref="PassCheckpoint"/> で全員がゴールしたときに入るので、ここでは触らない。
+    /// </summary>
     private void AdvancePhase()
     {
+        // 「スタート！」の表示は、段階とは別の時計で消す（走り出してから StartSignalSeconds 秒）
         if (StartSignalRemaining > 0f)
         {
             StartSignalRemaining -= Time.deltaTime;
@@ -240,6 +266,7 @@ public class RaceManager : MonoBehaviour
         }
     }
 
+    /// <summary>全員の操作を受け付ける・受け付けないを切り替える。</summary>
     private void SetControlEnabled(bool canControl)
     {
         for (int i = 0; i < RaceRacer.All.Count; i++)
@@ -255,6 +282,10 @@ public class RaceManager : MonoBehaviour
     // 周回を数える
     // ------------------------------------------------------------
 
+    /// <summary>
+    /// 全員について、**次に狙う通過点**をこのフレームで横切ったかを調べる。
+    /// 「次の通過点」だけを見るので、順番を飛ばした近道は数えられない。
+    /// </summary>
     private void CheckCheckpoints()
     {
         if (checkpoints.Count == 0)
@@ -271,6 +302,7 @@ public class RaceManager : MonoBehaviour
                 continue;
             }
 
+            // 番号は PassCheckpoint で常に範囲内に収めているので、ふだんは割っても値は変わらない
             RaceCheckpoint next = checkpoints[racer.NextCheckpoint % checkpoints.Count];
 
             if (next == null || !next.WasCrossed(racer.PreviousPosition, racer.TrackedPosition))
@@ -282,6 +314,10 @@ public class RaceManager : MonoBehaviour
         }
     }
 
+    /// <summary>
+    /// 通過点を1つ通ったときの記録。
+    /// 次の通過点へ進め、スタート／ゴールの線なら周回を増やし、規定の周回に達したらゴール扱いにする。
+    /// </summary>
     private void PassCheckpoint(RaceRacer racer, RaceCheckpoint passed)
     {
         // 落ちたときに戻す場所として覚えておく
@@ -304,6 +340,15 @@ public class RaceManager : MonoBehaviour
             return;
         }
 
+        FinishRacer(racer);
+    }
+
+    /// <summary>
+    /// ゴールの記録。**順位はゴールした順**（それまでにゴールした人数 + 1）。
+    /// ゴールした人は操作できなくなり、全員がゴールしたらレースを「終了」にする。
+    /// </summary>
+    private void FinishRacer(RaceRacer racer)
+    {
         finishedCount++;
 
         racer.Finished = true;
@@ -323,6 +368,7 @@ public class RaceManager : MonoBehaviour
     // 落ちたら戻す
     // ------------------------------------------------------------
 
+    /// <summary>落ちた判定の高さより下にいる人を、コースに戻す。</summary>
     private void CheckFalls()
     {
         for (int i = 0; i < RaceRacer.All.Count; i++)
@@ -369,6 +415,7 @@ public class RaceManager : MonoBehaviour
         Vector3 forward = checkpoint.Forward;
         forward.y = 0f;
 
+        // 通過点がほぼ真上・真下を向いていて水平な向きが取れないときは、とりあえず +Z を向かせる
         if (forward.sqrMagnitude < 0.0001f)
         {
             forward = Vector3.forward;
@@ -388,11 +435,12 @@ public class RaceManager : MonoBehaviour
     /// </summary>
     private Vector3 SnapToGround(Vector3 point)
     {
-        const float startAbove = 3f;
-
+        // 少し上から下へ線を飛ばす。通過点そのものが地面より低い位置にあっても拾えるように
         int count = Physics.RaycastNonAlloc(
-            point + Vector3.up * startAbove, Vector3.down, groundHits, 60f, ~0, QueryTriggerInteraction.Ignore);
+            point + Vector3.up * GroundSearchStartAbove, Vector3.down, groundHits,
+            GroundSearchLength, ~0, QueryTriggerInteraction.Ignore);
 
+        // 当たった中で一番近い（＝一番上にある）ものを地面とみなす
         float nearest = float.MaxValue;
         Vector3 ground = point;
 
@@ -416,6 +464,7 @@ public class RaceManager : MonoBehaviour
         return nearest < float.MaxValue ? ground + Vector3.up * respawnAboveGround : point;
     }
 
+    /// <summary>戻した記録をコンソールに書く（インスペクターで切れる）。</summary>
     private void LogRespawn(RaceRacer racer, string where)
     {
         if (logRespawns)
@@ -439,6 +488,10 @@ public class RaceManager : MonoBehaviour
     // 並べる・集める
     // ------------------------------------------------------------
 
+    /// <summary>
+    /// スタート位置を、参加している人に上から順に割り当てる。
+    /// 割り当てられなかった人（スタート位置が足りない）は、置かれた場所がそのままスタート地点になる。
+    /// </summary>
     private void LineUpRacers()
     {
         if (startGrid.Count == 0)
@@ -495,6 +548,7 @@ public class RaceManager : MonoBehaviour
 
             GetRespawnPoint(checkpoint, out Vector3 position, out _);
 
+            // 黄緑の球（半径 0.3m）と、通過点までを結ぶ線
             Gizmos.color = new Color(0.6f, 1f, 0.3f, 0.9f);
             Gizmos.DrawSphere(position, 0.3f);
             Gizmos.DrawLine(position, checkpoint.transform.position);
@@ -512,6 +566,7 @@ public class RaceManager : MonoBehaviour
         center /= count;
         center.y = fallHeight;
 
+        // 枠の大きさ（150m 四方）は目安。コース全体が収まる程度の広さにしてある
         Gizmos.color = new Color(1f, 0.25f, 0.2f, 0.8f);
         Gizmos.DrawWireCube(center, new Vector3(150f, 0f, 150f));
     }

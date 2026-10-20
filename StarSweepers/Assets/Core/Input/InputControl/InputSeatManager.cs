@@ -30,6 +30,7 @@ namespace ProjectEL4S.InputControl
     /// 押してもらうと、どのキーボード・マウスが何番かをファイルに保存し、次からは起動しただけでその番号になる。
     /// 保存先は <see cref="InputSeatStore.FilePath"/>。
     /// </summary>
+    // キーボード・マウスの管理役（-100）が先に動いてから席の値をそろえ、ふつうのスクリプト（0）はそのあとで読む、という順番
     [DefaultExecutionOrder(-90)]
     public sealed class InputSeatManager : MonoBehaviour
     {
@@ -45,6 +46,7 @@ namespace ProjectEL4S.InputControl
         [Header("席")]
         [Tooltip("遊ぶ人数。MultiKeyboardManager の Max Keyboards・MultiMouseManager の Max Pointers もこの数以上にすること")]
         [SerializeField] private int _seatCount = 2;
+        [Tooltip("席の色（P1 から順。席のほうが多ければ繰り返す）。画面で P1・P2 を描き分けるときに使う")]
         [SerializeField] private Color[] _seatColors =
         {
             new Color(0.2f, 0.8f, 1f),
@@ -54,7 +56,9 @@ namespace ProjectEL4S.InputControl
         };
 
         [Header("つなぐ相手（空なら、シーンにある物を使う。無ければこの GameObject に作る）")]
+        [Tooltip("キーボードを台ごとに読む管理役")]
         [SerializeField] private MultiKeyboardManager _keyboards;
+        [Tooltip("マウスを台ごとに読む管理役")]
         [SerializeField] private MultiMouseManager _mice;
 
         [Header("固定登録")]
@@ -66,6 +70,7 @@ namespace ProjectEL4S.InputControl
         [SerializeField] private bool _joinGamepadsByPress = true;
 
         [Header("操作")]
+        [Tooltip("キーボードでの移動に使うキー（WASD／矢印／両方）")]
         [SerializeField] private MultiKeyboardMoveKeys _moveKeys = MultiKeyboardMoveKeys.WasdAndArrows;
         [Tooltip("スティックのデッドゾーン")]
         [SerializeField] private float _stickDeadzone = 0.15f;
@@ -75,13 +80,18 @@ namespace ProjectEL4S.InputControl
         [SerializeField] private InputSeatButtonBinding[] _buttons = InputSeatButtonBinding.CreateDefaults();
 
         private InputSeat[] _seats = Array.Empty<InputSeat>();
+        // _buttons を「ボタンの番号 → 割り当て」の形に並べ直したもの（毎フレーム探さずに済むように）。無いボタンは null
         private InputSeatButtonBinding[] _bindingByButton;
         // コントローラが抜けた席。次に入ってきたコントローラはここへ戻す
         private readonly List<int> _seatsWaitingForGamepad = new List<int>();
 
+        // ---- 固定登録の途中経過（登録していないときは使わない）
         private InputSeatRegistrationStep _step;
+        // 前のフレームまでに割り当て済みだったキーボードの台数。「登録済みのキーボードで Enter」を見分けるのに使う
         private int _seenKeyboardCount;
+        // キーボードの番で決まったデバイスの名前。マウスの番が終わったら、まとめて保存する
         private string[] _registeredKeyboards;
+        // 登録を始める前の「クリックしたマウスだけ割り当てる」の設定。終わったら元に戻す
         private bool _miceClickOnlyBefore;
 
         public static InputSeatManager Instance { get; private set; }
@@ -130,6 +140,7 @@ namespace ProjectEL4S.InputControl
         {
             get
             {
+                // 登録は押した順に 0 番から埋まっていくので、「割り当て済みの台数」がそのまま次の席の番号になる
                 switch (_step)
                 {
                     case InputSeatRegistrationStep.Keyboards: return _keyboards.AssignedKeyboardCount;
@@ -161,6 +172,7 @@ namespace ProjectEL4S.InputControl
             }
         }
 
+        // 登録で押してもらう台数。席の数と管理役の台数の少ないほう（それ以上は入れる場所が無い）
         private int KeyboardTarget => Mathf.Min(_seats.Length, _keyboards.Keyboards.Count);
         private int MouseTarget => Mathf.Min(_seats.Length, _mice.Pointers.Count);
 
@@ -324,6 +336,7 @@ namespace ProjectEL4S.InputControl
             if (Application.isPlaying && _seats.Length > 0) BuildBindings();
         }
 
+        /// <summary>インスペクターの割り当て一覧を、ボタンの番号で引ける形に並べ直す。同じボタンが 2 つあれば上のほうだけ使う。</summary>
         private void BuildBindings()
         {
             _bindingByButton = new InputSeatButtonBinding[Enum.GetValues(typeof(InputSeatButton)).Length];
@@ -338,6 +351,7 @@ namespace ProjectEL4S.InputControl
             }
         }
 
+        /// <summary>固定登録を管理役に渡す。null なら固定を外して「押した順」に戻す。</summary>
         private void ApplyRegistration(InputSeatSaveData data)
         {
             _keyboards.SetFixedDevices(data?.keyboards);
@@ -386,6 +400,7 @@ namespace ProjectEL4S.InputControl
             }
         }
 
+        /// <summary>先頭から count 台のうち、割り当て済みのキーボードのどれかで Enter が押されたか。</summary>
         private bool EnterPressedOnKeyboards(int count)
         {
             for (int i = 0; i < count && i < _keyboards.Keyboards.Count; i++)
@@ -397,6 +412,7 @@ namespace ProjectEL4S.InputControl
             return false;
         }
 
+        /// <summary>キーボードの番を終えて、マウスの番に進む。</summary>
         private void EnterMiceStep()
         {
             _registeredKeyboards = _keyboards.RawInputAvailable ? _keyboards.GetAssignedDeviceNames() : Array.Empty<string>();
@@ -407,6 +423,7 @@ namespace ProjectEL4S.InputControl
             if (!_mice.RawInputAvailable) FinishRegistration();
         }
 
+        /// <summary>マウスの番も終わったので、キーボード・マウスの名前をファイルに保存し、その登録で割り当て直す。</summary>
         private void FinishRegistration()
         {
             var data = new InputSeatSaveData
@@ -421,6 +438,7 @@ namespace ProjectEL4S.InputControl
             ApplyRegistration(data);
         }
 
+        /// <summary>登録の状態を抜ける（保存するかどうかは呼ぶ側が決める）。登録中だけ変えていた設定も戻す。</summary>
         private void EndRegistrationMode()
         {
             _mice.AssignOnClickOnly = _miceClickOnlyBefore;
@@ -429,6 +447,7 @@ namespace ProjectEL4S.InputControl
 
         // ---------------------------------------------------------------- コントローラ
 
+        /// <summary>USB が抜けるなどして消えたコントローラを席から外し、その席を「戻り待ち」にする。</summary>
         private void DropDisconnectedGamepads()
         {
             for (int i = 0; i < _seats.Length; i++)
@@ -442,6 +461,7 @@ namespace ProjectEL4S.InputControl
             }
         }
 
+        /// <summary>まだどの席にも入っていないコントローラで、合図のボタンが押されたら空いている席に入れる。</summary>
         private void JoinPressedGamepads()
         {
             var pads = Gamepad.all;
@@ -456,6 +476,10 @@ namespace ProjectEL4S.InputControl
             }
         }
 
+        /// <summary>
+        /// 新しく入ってきたコントローラを入れる席。全部埋まっていれば -1。
+        /// 優先順：①コントローラが抜けた席（挿し直したら元の席へ戻るように）→ ②誰も座っていない席 → ③コントローラだけ無い席
+        /// </summary>
         private int PickSeatForGamepad()
         {
             for (int k = 0; k < _seatsWaitingForGamepad.Count; k++)
@@ -474,6 +498,7 @@ namespace ProjectEL4S.InputControl
             return -1;
         }
 
+        /// <summary>席に入る合図のボタン（s_joinButtons）のどれかが、押された瞬間か（thisFrame）／押されているか。</summary>
         private static bool AnyJoinButton(Gamepad pad, bool thisFrame)
         {
             for (int i = 0; i < s_joinButtons.Length; i++)
@@ -486,6 +511,10 @@ namespace ProjectEL4S.InputControl
 
         // ---------------------------------------------------------------- 席の入力
 
+        /// <summary>
+        /// 1 席ぶんの値を今フレームの入力で更新する。
+        /// キーボード＋マウスとコントローラの両方がつながっていれば、両方を見て合わせる（移動は大きいほう、ボタンはどちらでも）。
+        /// </summary>
         private void UpdateSeat(InputSeat seat)
         {
             var kb = seat.HasKeyboard ? seat.Keyboard : null;
@@ -501,6 +530,7 @@ namespace ProjectEL4S.InputControl
 
             Vector2 kbMove = kb != null ? kb.ReadMove(_moveKeys) : Vector2.zero;
             Vector2 padMove = pad != null ? ApplyDeadzone(pad.leftStick.ReadValue()) : Vector2.zero;
+            // 足すと 2 つ同時に倒したとき速くなりすぎるので、大きいほうだけ使う
             seat.Move = kbMove.sqrMagnitude >= padMove.sqrMagnitude ? kbMove : padMove;
 
             Vector2 aim = pad != null ? ApplyDeadzone(pad.rightStick.ReadValue()) : Vector2.zero;
@@ -512,6 +542,7 @@ namespace ProjectEL4S.InputControl
             seat.LookDelta = mouseDelta + padDelta;
             UpdateCursor(seat, mouse, mouseDelta, padDelta);
 
+            // ボタンごとに、割り当てられたキー・マウスのボタン・コントローラのボタンのどれかが押されていれば「押されている」
             bool kbmUsed = false;
             int buttonCount = _bindingByButton.Length;
             for (int b = 0; b < buttonCount; b++)
@@ -550,6 +581,7 @@ namespace ProjectEL4S.InputControl
                 seat.SetButton(b, pressed, down);
             }
 
+            // 「最後に触った機器」の判定。どちらも触っていないフレームは前の値のまま
             kbmUsed |= kb != null && (kb.AnyKeyDown || kbMove != Vector2.zero);
             kbmUsed |= mouseDelta != Vector2.zero;
             bool padUsed = pad != null && (padMove != Vector2.zero || aim != Vector2.zero || AnyJoinButton(pad, thisFrame: true));
@@ -559,6 +591,10 @@ namespace ProjectEL4S.InputControl
             else if (!seat.HasAnyDevice) seat.LastUsedScheme = InputSeatScheme.None;
         }
 
+        /// <summary>
+        /// 席のカーソル位置を更新する。マウスが動いたフレームはマウスの位置、右スティックだけのフレームは積算した仮想カーソル。
+        /// 両方持っている席でも 1 つのカーソルとしてつながるようにしてある。
+        /// </summary>
         private static void UpdateCursor(InputSeat seat, MultiMousePointer mouse, Vector2 mouseDelta, Vector2 padDelta)
         {
             if (!seat.CursorInitialized)
@@ -581,6 +617,11 @@ namespace ProjectEL4S.InputControl
             }
         }
 
+        /// <summary>
+        /// スティックのデッドゾーン処理。
+        /// 単に「デッドゾーン以下なら 0」にするだけだと、縁を越えた瞬間に値が 0 → 0.15 に飛ぶので、
+        /// 縁で 0・倒し切りで 1 になるよう残りの範囲を引き延ばす（向きは変えず、長さだけ直す）。
+        /// </summary>
         private Vector2 ApplyDeadzone(Vector2 v)
         {
             float mag = v.magnitude;

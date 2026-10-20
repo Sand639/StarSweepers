@@ -75,8 +75,10 @@ public static class SpaceJunkTeams
     public static int[] GoalOwners(int teamCount, int goalMask)
     {
         int teams = Mathf.Clamp(teamCount, 1, MaxTeams);
+        // 4つ全部のゴールのビットが立った値（1+2+4+8 = 15）
         int allGoals = (1 << GoalCount) - 1;
 
+        // 4つそろっていないマップでは、「あるゴール」を番号順に1チームずつ持つ
         if (teams > 1 && goalMask >= 0 && (goalMask & allGoals) != allGoals)
         {
             int[] owners = { ClosedGoal, ClosedGoal, ClosedGoal, ClosedGoal };
