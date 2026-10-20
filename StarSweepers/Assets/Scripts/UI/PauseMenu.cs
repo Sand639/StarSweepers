@@ -9,14 +9,34 @@ using UnityEngine.UI;
 /// **Escape で開くポーズ画面。**
 ///
 /// | 項目 | 押すとどうなるか |
+/// | --- | --- |
 /// | **ゲームをつづける** | 画面を閉じて、続きから遊ぶ |
-/// | **設定** | 音量とマウス感度を変える画面へ |
+/// | **設定** | 音量・マウス感度・操作タイプ・レティクル・投げ方を変える画面へ（下の表） |
 /// | **ロビーに戻る** | **宇宙ごみの試合中だけ出る。** 確かめてから試合を抜けてロビーへ（ホストなら全員で戻る）。`SpaceJunkLeaveMatch` |
 /// | **タイトルにもどる** | **つながっている間（ロビーでも）出る。** 確かめてからタイトルへ（ホストなら全員がタイトルへ）。`SpaceJunkLeaveMatch` |
 /// | **ゲームをやめる** | 確かめてから、ゲームを終了する（エディタでは再生を止める） |
 ///
 /// **マウスで選ぶ。** 項目に重なると**色が変わり、少し大きくなり、左に「▶」が出る**
 /// （<see cref="MenuHoverHighlight"/>）。
+///
+/// ## 設定の画面
+///
+/// 値は <see cref="GameSettings"/> に入れる（PCに保存され、次に遊ぶときも残る）。
+///
+/// | 項目 | 変わるもの | 使う側 |
+/// | --- | --- | --- |
+/// | **音量**（スライダー） | ゲーム全体の音の大きさ（0〜1） | <see cref="GameSettings.Volume"/> |
+/// | **マウス感度**（スライダー） | 視点を回す速さの倍率（0.2〜3） | カメラ |
+/// | **操作タイプ：タイプA／B** | コントローラーの移動・向きの操作と、フックの引き寄せ方 | FishingPlayerController・PlayerAimController・ThrowController |
+/// | **レティクル：タイプA／B** | 溜めている間の狙いの見せ方 | HookChargeStrip |
+/// | **投げ方：左右で使い分け／ZRワンボタン** | 宇宙ごみ式のフックの撃ち方・投げ方 | HookController・ThrowController |
+///
+/// 切り替えの項目は、押すたびにもう片方へ変わり、**設定の画面を作り直して**新しい文字を見せる
+/// （<see cref="BuildSettingsPageRefresh"/>）。
+///
+/// ## コントローラーで戻る（B ボタン）
+///
+/// 確かめる画面・設定の画面 → 最初の画面へ。最初の画面 → 閉じる。
 ///
 /// ## 画面はコードで組み立てている
 ///
@@ -118,10 +138,17 @@ public class PauseMenu : MonoBehaviour
     /// <summary>「タイトルにもどる」を決定したときに呼ぶ処理。ホストなら全員がタイトルに戻る。</summary>
     public static System.Action ReturnToTitle;
 
+    /// <summary>画面いっぱいの入れ物（Canvas）。開く・閉じるは、これを出し入れするだけ。</summary>
     private GameObject root;
+
+    /// <summary>最初の画面・設定の画面・確かめる画面。どれか1つだけを出す。</summary>
     private GameObject mainPage;
     private GameObject settingsPage;
+
+    /// <summary>確かめる画面。出すたびに作り、閉じたら消すので、出ていない間は null。</summary>
     private GameObject confirmPage;
+
+    /// <summary>パソコンから借りてきた日本語フォント（<see cref="FindFont"/>）。</summary>
     private Font font;
 
     // 開く前のカーソルの状態（閉じたときに戻すため）
@@ -182,6 +209,10 @@ public class PauseMenu : MonoBehaviour
         Debug.Log("[UI] シーンにポーズ画面が無かったので、自動で用意しました。Escape で開きます。");
     }
 
+    /// <summary>
+    /// 毎フレーム、開く・閉じる・戻るのボタンを見る。
+    /// Escape／Start は開く・閉じるの切り替え、B は「ひとつ前へ戻る」。
+    /// </summary>
     private void Update()
     {
         // タイトル画面が出ている間は開かない（Esc はタイトル画面の「戻る」に使う。2026/10/6）
@@ -464,6 +495,10 @@ public class PauseMenu : MonoBehaviour
     // 画面を組み立てる
     // ------------------------------------------------------------
 
+    /// <summary>
+    /// 画面をまるごと作る（<see cref="Awake"/> で1回だけ）。
+    /// Canvas → 暗くする板 → 最初の画面・設定の画面、の順に重ねる（あとに作った物ほど手前に出る）。
+    /// </summary>
     private void Build()
     {
         EnsureEventSystem();
@@ -479,6 +514,8 @@ public class PauseMenu : MonoBehaviour
         // ほかのUIより手前に出す
         canvas.sortingOrder = 100;
 
+        // 1920x1080 を基準に、画面の大きさに合わせて拡大・縮小する（幅と高さを半分ずつ見る）。
+        // このファイルの位置・大きさの数字は、すべて 1920x1080 のときのピクセル
         CanvasScaler scaler = root.GetComponent<CanvasScaler>();
         scaler.uiScaleMode = CanvasScaler.ScaleMode.ScaleWithScreenSize;
         scaler.referenceResolution = new Vector2(1920f, 1080f);
@@ -512,6 +549,10 @@ public class PauseMenu : MonoBehaviour
         return page;
     }
 
+    /// <summary>
+    /// 最初の画面の項目を、上から順に並べる。y は画面の真ん中からの高さ（上が＋）で、
+    /// 1つ置くごとに「項目の高さ＋すき間」だけ下げる（出ない項目があっても、すき間が空かない）。
+    /// </summary>
     private void BuildMainPage()
     {
         float y = 90f;
@@ -552,6 +593,12 @@ public class PauseMenu : MonoBehaviour
         BuildMainPage();
     }
 
+    /// <summary>
+    /// 設定の画面の項目を並べる。y は画面の真ん中からの高さ（上が＋）。
+    /// 1段目（y＝90）から「項目の高さ＋すき間」（88）の何段ぶん下か（× 2f、× 3f …）で置いている。
+    /// ただし2本目のスライダーだけは、1段目から 96 下げた位置に直接置いている。
+    /// 項目を足すときは、下の「もどる」の段の数（× 5f）も1つ増やす。
+    /// </summary>
     private void BuildSettingsPage()
     {
         CreateSlider(settingsPage.transform, "音量", 90f, GameSettings.Volume, 0f, 1f,
@@ -573,6 +620,7 @@ public class PauseMenu : MonoBehaviour
             () => ShowSettings(false));
     }
 
+    /// <summary>操作タイプの項目に出す文字（いまの設定を見せる）。</summary>
     private static string ControllerOperationLabel()
     {
         return GameSettings.ControllerOperation == ControllerOperationType.TypeB
@@ -580,6 +628,7 @@ public class PauseMenu : MonoBehaviour
             : "操作タイプ：タイプA";
     }
 
+    /// <summary>操作タイプを A ⇔ B に切り替えて保存し、項目の文字を新しくする。</summary>
     private void ToggleControllerOperation()
     {
         GameSettings.ControllerOperation = GameSettings.ControllerOperation == ControllerOperationType.TypeA
@@ -588,6 +637,7 @@ public class PauseMenu : MonoBehaviour
         BuildSettingsPageRefresh();
     }
 
+    /// <summary>レティクルの項目に出す文字（いまの設定を見せる）。</summary>
     private static string AimReticleLabel()
     {
         return GameSettings.AimReticle == AimReticleType.TypeB
@@ -595,6 +645,7 @@ public class PauseMenu : MonoBehaviour
             : "レティクル：タイプA";
     }
 
+    /// <summary>レティクルを A ⇔ B に切り替えて保存し、項目の文字を新しくする。</summary>
     private void ToggleAimReticle()
     {
         GameSettings.AimReticle = GameSettings.AimReticle == AimReticleType.TypeA
@@ -603,6 +654,7 @@ public class PauseMenu : MonoBehaviour
         BuildSettingsPageRefresh();
     }
 
+    /// <summary>投げ方の項目に出す文字（いまの設定を見せる）。</summary>
     private static string ThrowOperationLabel()
     {
         return GameSettings.ThrowOperation == ThrowOperationType.OneButton
@@ -622,11 +674,14 @@ public class PauseMenu : MonoBehaviour
     // 表示中の設定ページを作り直し、切り替えた値をすぐに見せる。
     private void BuildSettingsPageRefresh()
     {
+        // Destroy はフレームの終わりに消えるので、先に隠して、新しい画面と重ならないようにする（RebuildMainPage と同じ）
         settingsPage.SetActive(false);
         Destroy(settingsPage);
         settingsPage = CreatePage("SettingsPage", "設定");
         BuildSettingsPage();
         settingsPage.SetActive(true);
+
+        // 作り直したので、コントローラーの選択は一番上（音量）に戻る
         SelectFirstForGamepad(settingsPage);
     }
 
@@ -676,6 +731,7 @@ public class PauseMenu : MonoBehaviour
         rowRect.sizeDelta = new Vector2(ItemWidth, ItemHeight);
         rowRect.anchoredPosition = new Vector2(0f, y);
 
+        // 横長の行の左に名前、右にスライダーを置く（どちらも行の端からの距離で位置を決める）
         GameObject labelObject = CreateText("Label", row.transform, label, fontSize - 4);
         RectTransform labelRect = labelObject.GetComponent<RectTransform>();
         labelRect.anchorMin = new Vector2(0f, 0.5f);
@@ -701,6 +757,7 @@ public class PauseMenu : MonoBehaviour
         fillArea.transform.SetParent(sliderObject.transform, false);
         Stretch(fillArea.GetComponent<RectTransform>());
 
+        // 値のところまで色を塗る部分。右端は Slider が値に合わせて動かす
         GameObject fill = CreateImage("Fill", fillArea.transform, itemHoverColor);
         RectTransform fillRect = fill.GetComponent<RectTransform>();
         fillRect.anchorMin = Vector2.zero;
@@ -717,6 +774,8 @@ public class PauseMenu : MonoBehaviour
         slider.targetGraphic = handle.GetComponent<Image>();
         slider.minValue = min;
         slider.maxValue = max;
+
+        // 今の値を先に入れてから、変わったときの処理をつなぐ（逆だと、作っただけで保存が走る）
         slider.value = value;
         slider.onValueChanged.AddListener(onChanged);
     }
@@ -725,6 +784,7 @@ public class PauseMenu : MonoBehaviour
     // 部品づくり
     // ------------------------------------------------------------
 
+    /// <summary>単色の板を1枚作る（項目の背景・暗くする板・スライダーの部品に使う）。</summary>
     private static GameObject CreateImage(string name, Transform parent, Color color)
     {
         GameObject image = new GameObject(name, typeof(RectTransform), typeof(Image));
@@ -734,6 +794,7 @@ public class PauseMenu : MonoBehaviour
         return image;
     }
 
+    /// <summary>借りてきた日本語フォントで文字を1つ作る。親いっぱいに広げ、真ん中にそろえる。</summary>
     private GameObject CreateText(string name, Transform parent, string content, int size)
     {
         GameObject textObject = new GameObject(name, typeof(RectTransform), typeof(Text));
@@ -754,6 +815,7 @@ public class PauseMenu : MonoBehaviour
         return textObject;
     }
 
+    /// <summary>親の大きさいっぱいに広げる。</summary>
     private static void Stretch(RectTransform rect)
     {
         rect.anchorMin = Vector2.zero;

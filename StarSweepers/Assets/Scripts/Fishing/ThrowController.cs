@@ -116,6 +116,67 @@ public class SkillCheckZone
 ///   ・**押さなければ、ゲージが右端に着いたところで前へ投げる**（向いている方向）。枠の外で押すとミスで、同じく前へ投げる
 ///   ・前へ投げるほうが時間がかかるので、後ろへ引っ張るほうが早く次へ移れる
 ///   ・横取り・大型物件・重い物のゲージも、右クリック（RT・ZR）で押す
+///
+/// ## 投げ方の種類ごとの違い（まとめ）
+///
+/// 「どの流れになるか」は、プレハブの **Style** と、設定画面の **操作タイプ**（<see cref="GameSettings.ControllerOperation"/>）・
+/// **投げ方**（<see cref="GameSettings.ThrowOperation"/>）の組み合わせで決まる。
+///
+/// | 種類 | フックを撃つボタン | ゲージ | 押したとき | 押さなかったとき |
+/// | --- | --- | --- | --- | --- |
+/// | **釣り式**（SweepOnce） | Attack | 1回だけ動く。枠が2つ | 前半の枠＝後ろへ／後半の枠＝前へ投げる | 通り過ぎたらミス（少しだけ寄せて終わり） |
+/// | **宇宙ごみ式・左で撃つ** | 左（LT） | 往復。真ん中に枠1つ | 頭上を越えて後ろへ引っ張る | ずっと待つ |
+/// | **宇宙ごみ式・右で撃つ** | 右（RT） | 1回だけ動く。真ん中に枠1つ | 向いている方向へ投げる | 右端で後ろへ落とす |
+/// | **ZRワンボタン** | 右（RT・ZR）だけ | 1回だけ動く。枠1つ | 枠の中＝後ろへ引っ張る／枠の外＝ミス | 右端で前へ投げる |
+/// | **重い物**（宇宙ごみ式） | 左（ZRワンボタンなら右） | 1回だけ動く。重いほど速い | 地面を引きずる（遠さは真ん中への近さ） | 右端で少しだけ引きずる |
+/// | **操作タイプB**（物理の引き寄せ） | そのまま | 出さない | 残りの距離が近いほど強く、頭上へ抜ける | 引ききったら後ろへ弱く落とす |
+///
+/// 操作タイプBは「重い物」と「ZRワンボタン」には使わない（<see cref="Begin"/> の中で外している）。
+///
+/// ## 引っ掛けたあとの入口と、毎フレームの係
+///
+/// | 引っ掛けた相手 | 入口（HookController が呼ぶ） | 毎フレームの係 |
+/// | --- | --- | --- |
+/// | ふつうの物資 | <see cref="Begin"/> | 釣り式＝<see cref="Update"/> の後半／宇宙ごみ式＝<see cref="UpdateTwoButtons"/>／タイプB＝<see cref="UpdateDistanceBasedPull"/>＋<see cref="FixedUpdate"/> |
+/// | アンカー（<see cref="AnchorGimmick"/>） | <see cref="Begin"/> | <see cref="Update"/> の中。物資ではなく**プレイヤーのほうを寄せる** |
+/// | 大型物件（<see cref="IHookPullable"/>） | <see cref="BeginPullable"/> | <see cref="UpdatePullableTarget"/> |
+/// | ほかの人が持っている物資（横取りの待ち） | <see cref="BeginContest"/> | <see cref="UpdateContest"/> |
+///
+/// 宇宙ごみ式の段階（<see cref="TwoButtonStage"/>）の移り方：
+///
+///   ・左で撃った … AimPull →（押す）→ PullTravel →（頭上に着く）→ <see cref="FinishAsPull"/>
+///   ・右で撃った … Lifting →（頭上に着く）→ AimThrow →（押す）→ <see cref="FinishAsTwoButtonThrow"/>／（右端）→ <see cref="FinishAsDropBehind"/>
+///   ・重い物 …… AimPull →（押す・右端）→ HeavyDrag →（引きずり終わる）→ <see cref="FinishHeavyDrag"/>
+///   ・ZRワンボタン … ForwardSwing →（枠の中で押す）→ PullTravel → <see cref="FinishAsPull"/>／（右端）→ <see cref="FinishAsSwingForward"/>
+///   ・途中で壁に当たったら、どこからでも <see cref="FinishAsBlocked"/>（その場に落とす）
+///
+/// ## オンラインのとき
+///
+/// **物資に力を加えるのはホスト**（<see cref="FishingNetSupply"/> の RequestThrow／RequestRelease で頼む）。
+/// 手元で力を加えると、どこへ飛んだかが人によって変わってしまうため。オンラインでないときは、ここで直接力を加える。
+///
+/// ## 終わり方
+///
+/// どの流れも、最後は <see cref="EndPull"/>（投げた・落とした）か <see cref="AbandonPull"/>（物資が消えた）を通り、
+/// <see cref="HookController.NotifyThrowFinished"/> でフックを手元へ戻し始める。
+///
+/// ## このファイルの目次（上から順）
+///
+/// 1. 投げの段階・方向・操作のしかたの enum と、スキルチェックの枠（<see cref="SkillCheckZone"/>）
+/// 2. 設定項目（宇宙ごみ式 → ZRワンボタン → 重い物 → 釣り式の軌道・枠・力 → ミス → タイプB）
+/// 3. 途中経過の変数と、ほかの部品が読む口（<see cref="IsPulling"/>・<see cref="UsesOneButton"/>・<see cref="RefusesHook"/> など）
+/// 4. 始める：<see cref="Begin"/>・<see cref="BeginPullable"/>
+/// 5. 毎フレーム：<see cref="Update"/>（どの係へ回すかの分かれ道）・<see cref="FixedUpdate"/>
+/// 6. 操作タイプBの物理の引き寄せ（<see cref="UpdateDistanceBasedPull"/> 〜 <see cref="LaunchDistanceBasedThrow"/>）
+/// 7. 横取り（<see cref="BeginContest"/> 〜 <see cref="EndContest"/>）
+/// 8. 大型物件（<see cref="UpdatePullableTarget"/>・<see cref="CompletePullable"/>）
+/// 9. 引き寄せの軌道（<see cref="UpdateReelPosition"/>）
+/// 10. 壁に当たる（<see cref="MoveHeldTo"/>・<see cref="IsWall"/>・<see cref="FinishAsBlocked"/>）
+/// 11. 宇宙ごみ式（<see cref="BeginTwoButtons"/>・ゲージ・<see cref="UpdateTwoButtons"/>）
+/// 12. ZRワンボタン（<see cref="StartForwardSwing"/> 〜 <see cref="FinishAsSwingForward"/>）と、ボタンの読み口（<see cref="PullPressed"/> など）
+/// 13. 宇宙ごみ式の終わり方（<see cref="FinishAsPull"/> 〜 <see cref="Launch"/>）と、案内の文字（<see cref="OnGUI"/>）
+/// 14. 釣り式のスキルチェックの判定（<see cref="Resolve"/>・<see cref="FinishAsThrow"/>・<see cref="FinishAsMiss"/>）
+/// 15. 外からやめさせる（<see cref="AbandonBecauseLost"/>・<see cref="ForceRelease"/>・<see cref="ReleaseTargetForExplosion"/>）と後片付け
 /// </summary>
 public class ThrowController : MonoBehaviour
 {
@@ -297,17 +358,39 @@ public class ThrowController : MonoBehaviour
     private InputAction attackAction;
     private PlayerInputSource input;
 
+    // ---- いま引っ張っている相手（同時に入るのは、このうち1つだけ） ----
+
+    /// <summary>いま引っ張っている物資。大型物件・横取りの待ちのときは null。</summary>
     private HookableObject target;
+
+    /// <summary>いま引っ掛けている大型物件。物資のときは null。</summary>
     private IHookPullable pullableTarget;
+
+    /// <summary>引っ張りの途中か（何かを引っ掛けている間 true）。false の間は Update で何もしない。</summary>
     private bool active;
+
+    /// <summary>今回の引っ張りが、操作タイプBの「物理の引き寄せ」か。<see cref="Begin"/> の時点で決まり、途中では変わらない。</summary>
     private bool distanceBasedPullActive;
+
     private float armDelay;   // Begin 直後の1入力を誤爆しないための短い待ち
+
+    /// <summary>釣り式で、引き寄せ始めてからの秒数。これを Skill Check Duration で割ったものがゲージの位置になる。</summary>
     private float timer;
+
+    /// <summary>操作タイプBで、引き寄せ始めてからの秒数。</summary>
     private float distancePullElapsed;
+
+    /// <summary>引っ掛けた瞬間の物資の位置。軌道の出発点と、投げ返す・後ろへ飛ばす向きの計算に使う。</summary>
     private Vector3 reelStart;
+
+    /// <summary>引っ掛ける前の物資の重力・物理の状態。手を離すときに <see cref="RestorePhysics"/> で元に戻す。</summary>
     private bool targetGravityWas;
     private bool targetKinematicWas;
+
+    /// <summary>アンカーを引っ掛けているときの相手。アンカーは物資を寄せず、**プレイヤーのほうを寄せる**。</summary>
     private AnchorGimmick anchorTarget;
+
+    /// <summary>アンカーで寄せられているプレイヤーの体と、その移動の係（寄せている間は重力を止めてもらう）。</summary>
     private CharacterController pullingPlayer;
     private FishingPlayerController pullingPlayerMovement;
 
@@ -325,8 +408,17 @@ public class ThrowController : MonoBehaviour
     }
 
     private TwoButtonStage stage;
+
+    /// <summary>ゲージが動き始めてからの秒数（<see cref="StartBar"/> で 0 に戻す）。<see cref="BarPosition"/> がマーカーの位置に直す。</summary>
     private float barTimer;
+
+    /// <summary>
+    /// いまの段階に入ってからの秒数。持ち上げ・引っ張り・引きずり・ZRワンボタンの動きの進み具合に使う
+    /// （段階が変わるたびに 0 に戻すので、1つの変数を使い回している）。
+    /// </summary>
     private float liftTimer;
+
+    /// <summary>引っ張るボタンを押したときの、真ん中への近さ（0〜1）。頭上に着いて後ろへ飛ばすときの強さになる。</summary>
     private float pullAccuracy;
 
     /// <summary>ZRワンボタンで、スキルチェックを枠の外で押した（もう引っ張れず、前へ投げるだけ）か。</summary>
@@ -340,6 +432,7 @@ public class ThrowController : MonoBehaviour
     /// <summary>重い物の重さ。</summary>
     private float heavyWeight = 1f;
 
+    /// <summary>重い物を引きずるときの、出発点と行き先（地面の高さのまま。<see cref="StartHeavyDrag"/> で決める）。</summary>
     private Vector3 dragFrom;
     private Vector3 dragTo;
 
@@ -354,6 +447,7 @@ public class ThrowController : MonoBehaviour
     /// <summary>横取りをホストに頼んで、返事を待っているか。</summary>
     private bool stealPending;
 
+    /// <summary>横取りの返事を待つ、残りの秒数。0 になったらあきらめる（<see cref="StealReplyTimeout"/> から数え下げる）。</summary>
     private float stealPendingTimer;
 
     /// <summary>横取りしたときのゲージの真ん中への近さ（そのまま引っ張る強さに使う）。</summary>
@@ -449,7 +543,13 @@ public class ThrowController : MonoBehaviour
         SetAnchorGravitySuppressed(false);
     }
 
-    /// <summary>HookController から呼ばれる。引き寄せとスキルチェックを開始する。</summary>
+    /// <summary>
+    /// HookController から呼ばれる。引き寄せとスキルチェックを開始する。
+    ///
+    /// ここで**どの流れになるか**が決まる（上から順に見て、当てはまったところで決まる）：
+    /// アンカー → 操作タイプBの物理の引き寄せ → 宇宙ごみ式（<see cref="BeginTwoButtons"/>）→ 釣り式。
+    /// 横取りが決まったときにも、<see cref="StartStolenPull"/> からもう一度呼ばれる。
+    /// </summary>
     public void Begin(HookableObject hookable)
     {
         distanceBasedPullActive = false;
@@ -457,7 +557,7 @@ public class ThrowController : MonoBehaviour
         pullableTarget = null;
         active = true;
         timer = 0f;
-        armDelay = 0.12f;
+        armDelay = 0.12f; // 秒。フックを撃ったボタンの押しっぱなし・連打を、すぐにゲージの入力として拾わないため
         heavy = false;
         heavyWeight = 1f;
 
@@ -559,6 +659,13 @@ public class ThrowController : MonoBehaviour
         }
     }
 
+    /// <summary>
+    /// 毎フレーム、いまの相手に合わせた係へ回す。
+    ///
+    /// **調べる順番に意味がある。** 横取りの待ち・大型物件は <see cref="target"/> を持たないので、
+    /// 「物資が消えたか」を見るより先に分ける（この2つの係は、ポーズ・スタンを自分の中で調べる）。
+    /// どれでもなければ、最後に釣り式（ゲージの位置 = 経過秒 ÷ Skill Check Duration）を動かす。
+    /// </summary>
     private void Update()
     {
         if (!active)
@@ -647,6 +754,10 @@ public class ThrowController : MonoBehaviour
         }
     }
 
+    /// <summary>
+    /// 操作タイプBの物理の引き寄せだけ、ここで力を加える。
+    /// 力は物理の計算と同じ間隔で加えないと、フレームの重さで引く強さが変わってしまうため（入力は Update で読む）。
+    /// </summary>
     private void FixedUpdate()
     {
         if (!active || target == null || target.IsVanished || anchorTarget != null ||
@@ -674,6 +785,7 @@ public class ThrowController : MonoBehaviour
         }
 
         // 目の前まで引ききったら、再発動できなかった扱いで弱く後ろへ落とす。
+        // （時間の上限は釣り式と同じ Skill Check Duration。0.03 ＝ 残りが最大飛距離の 3% 以下）
         if (distancePullElapsed >= skillCheckDuration || distanceRatio <= 0.03f)
         {
             FinishDistanceBasedPull(distanceRatio, true);
@@ -689,6 +801,8 @@ public class ThrowController : MonoBehaviour
             return;
         }
 
+        // 足元より 0.45m 上へ向けて引く（足元そのものだと、地面へ押しつける向きになって引っかかるため）。
+        // Acceleration なので、物の重さに関係なく同じ速さで寄ってくる
         Vector3 pullPoint = hook.PlayerRoot.position + Vector3.up * 0.45f;
         Vector3 toPlayer = pullPoint - body.worldCenterOfMass;
         if (toPlayer.sqrMagnitude > 0.0001f)
@@ -696,6 +810,8 @@ public class ThrowController : MonoBehaviour
             body.AddForce(toPlayer.normalized * pullForceB, ForceMode.Acceleration);
         }
 
+        // 重力を弱める：重力そのものは切らずに、逆向きの力を足して打ち消す（Drag Gravity Scale B ぶんだけ重力が残る）。
+        // もともと重力を使わない物や、重力が上向きの場面では何もしない
         if (targetGravityWas && body.useGravity && Physics.gravity.y < 0f && dragGravityScaleB < 1f)
         {
             float upwardAcceleration = -Physics.gravity.y * (1f - dragGravityScaleB);
@@ -720,7 +836,17 @@ public class ThrowController : MonoBehaviour
         return Mathf.Clamp01(Vector3.Distance(target.transform.position, hook.PlayerRoot.position) / hook.MaxRange);
     }
 
-    /// <summary>距離割合から従来のクリティカル力に対する倍率を計算する。</summary>
+    /// <summary>
+    /// 距離割合から従来のクリティカル力に対する倍率を計算する。
+    ///
+    /// | 残りの距離（最大飛距離に対する割合） | 倍率（Throw Force Perfect に掛ける） |
+    /// | --- | --- |
+    /// | 15% 以下 | 1（いちばん強い） |
+    /// | 15%〜50% | 1 → 0.7 へなめらかに下がる |
+    /// | 50%〜100% | 0.7 → 0.05 へなめらかに下がる |
+    ///
+    /// **引きつけてから押すほど強い**ので、早押しより「待って押す」ほうが得になる。
+    /// </summary>
     private static float CalculateDistancePullStrength(float distanceRatio)
     {
         if (distanceRatio <= 0.15f)
@@ -738,6 +864,7 @@ public class ThrowController : MonoBehaviour
     private void FinishDistanceBasedPull(float distanceRatio, bool missed)
     {
         Vector3 direction = ResolveDistancePullDirection(missed);
+        // 引ききり（ミス）のときは、最適時の 10% の力で後ろへ落とすだけ
         float strength = missed ? 0.1f : CalculateDistancePullStrength(distanceRatio);
         float force = throwForcePerfect * strength;
 
@@ -758,9 +885,11 @@ public class ThrowController : MonoBehaviour
         }
         forward.Normalize();
 
+        // side ＝ 向いている方向の右手側。少し右へずらして、斜めの軌道を作るのに使う（Throw Side Offset B）
         Vector3 side = Vector3.Cross(Vector3.up, forward).normalized;
         if (missed)
         {
+            // 後ろへ、少し右へずらして転がす（0.35 は横へのずらし具合。後ろ 1 に対して右 0.35）
             return (-forward + side * 0.35f).normalized;
         }
 
@@ -826,6 +955,11 @@ public class ThrowController : MonoBehaviour
         }
     }
 
+    /// <summary>
+    /// 横取りの待ちの毎フレーム。流れ：
+    /// ゲージを動かす →（引っ張るボタン）→ <see cref="RequestSteal"/> → オンラインなら返事待ち（<see cref="OnStealResult"/>）→ 引っ張り始める。
+    /// 相手が消えた・自分がスタンした・持っている人が先に手を離した・返事が来なかった、のどれかで <see cref="EndContest"/>。
+    /// </summary>
     private void UpdateContest()
     {
         if (contestTarget == null || contestTarget.IsVanished)
@@ -878,6 +1012,8 @@ public class ThrowController : MonoBehaviour
     /// <summary>その物資を、いま自分以外の人が持っているか。</summary>
     private bool IsHeldByOther(HookableObject item)
     {
+        // オンラインではホストから配られる「誰が持っているか」を見る。
+        // このPCだけ（1台で複数人）のときは、同じPCの ThrowController を探す
         FishingNetSupply netSupply = hook != null && hook.IsOnline ? item.GetComponent<FishingNetSupply>() : null;
         if (netSupply != null && netSupply.IsSpawned)
         {
@@ -969,13 +1105,18 @@ public class ThrowController : MonoBehaviour
         Debug.Log($"[FISH] 横取りした：真ん中への近さ {stealAccuracy:0.00}");
 
         hook.AttachStolen(item);
+
+        // 横取りは「引っ張る」で決めたので、左で撃ったときと同じ流れにする（Begin の中で使う）
         nextIsThrow = false;
         Begin(item);
 
+        // Begin が、ゲージを出さない流れ（タイプBの物理の引き寄せ・アンカー）にしたときは、そちらに任せる
         if (!active || target == null || distanceBasedPullActive || anchorTarget != null)
         {
             return;
         }
+
+        // ここからは、Begin が出したゲージを飛ばして、横取りしたときの強さでそのまま引っ張りへ進める
 
         if (heavy)
         {
@@ -1010,8 +1151,13 @@ public class ThrowController : MonoBehaviour
         }
     }
 
+    /// <summary>
+    /// 大型物件を引っ掛けている間の毎フレーム。往復するゲージを動かし、引っ張るボタンで <see cref="FinishPullable"/>。
+    /// 物件が消えた・フックが外れた扱いになったときや、スタンしたときはやめる。
+    /// </summary>
     private void UpdatePullableTarget()
     {
+        // HookComponent が null ＝ 物件そのものが壊された（Unity 上で消えた）
         Component component = pullableTarget.HookComponent;
         if (component == null || !pullableTarget.IsHooked)
         {
@@ -1043,6 +1189,7 @@ public class ThrowController : MonoBehaviour
         }
     }
 
+    /// <summary>大型物件の引っ張りが決まった。物件に動いてもらい、フックを戻す（大型物件は飛ばさない）。</summary>
     private void FinishPullable(float accuracy)
     {
         Vector3 playerPosition = hook != null ? hook.PlayerRoot.position : transform.position;
@@ -1061,7 +1208,10 @@ public class ThrowController : MonoBehaviour
         }
     }
 
-    /// <summary>拉扯ゲージが確定した時だけ、対象の介面を呼ぶ。</summary>
+    /// <summary>
+    /// 引っ張り（拉扯）のゲージを押して強さが決まったときだけ、大型物件の <see cref="IHookPullable.CompletePull"/> を呼ぶ。
+    /// <paramref name="accuracy"/> はゲージの真ん中への近さ（0〜1）。テスト（MovableBlockTests）からも直接呼ばれるので static にしてある。
+    /// </summary>
     public static void CompletePullable(
         IHookPullable pullable,
         Vector3 playerPosition,
@@ -1094,18 +1244,21 @@ public class ThrowController : MonoBehaviour
         Vector3 aimDirection = hook.CurrentAimDirection;
 
         Vector3 overhead = root + Vector3.up * overheadHeight;
+        // 抜けていく先：後ろへ Pass Distance、高さは頭上の 45%（少し下がりながら抜けていく）
         Vector3 behind = root - aimDirection * passDistance + Vector3.up * (overheadHeight * 0.45f);
 
         Vector3 position;
 
         if (t <= 0.5f)
         {
+            // 前半：SmoothStep でゆっくり出てゆっくり頭上に着く。sin の山で、途中だけ Arc Lift ぶん高く膨らませる
             float u = Mathf.Clamp01(t / 0.5f);
             position = Vector3.Lerp(reelStart, overhead, Mathf.SmoothStep(0f, 1f, u));
             position.y += Mathf.Sin(u * Mathf.PI) * arcLift;
         }
         else
         {
+            // 後半：一定の速さで後ろへ（SmoothStep を使わない）。膨らみは前半の 40% に抑える
             float u = Mathf.Clamp01((t - 0.5f) / 0.5f);
             position = Vector3.Lerp(overhead, behind, u);
             position.y += Mathf.Sin(u * Mathf.PI) * (arcLift * 0.4f);
@@ -1193,7 +1346,7 @@ public class ThrowController : MonoBehaviour
             return false;
         }
 
-        // 上向きの面（床・台の上）は壁ではない
+        // 上向きの面（床・台の上）は壁ではない（0.7 ＝ 傾きがおよそ 45度より緩い面）
         if (hit.normal.y > 0.7f)
         {
             return false;
@@ -1295,6 +1448,7 @@ public class ThrowController : MonoBehaviour
 
             // 真ん中に1つ。見た目は「外側＝通常・内側＝強い・中心＝最も強い」の3段だが、
             // 実際の強さは**真ん中からの近さでなめらかに**変わる（段ではない）
+            // （SetZone の数字：中心 0.5、外側の片幅 0.5＝ゲージ全体、内側 0.28、中心 0.07。見た目だけの値）
             hook.UI.SetZoneCount(1);
             hook.UI.SetZone(0, 0.5f, 0.5f, 0.28f, 0.07f);
             hook.UI.SetMarker(0f);
@@ -1330,6 +1484,11 @@ public class ThrowController : MonoBehaviour
         return 1f - Mathf.Clamp01(Mathf.Abs(barPosition - 0.5f) / 0.5f);
     }
 
+    /// <summary>
+    /// 宇宙ごみ式の毎フレーム。いまの段階（<see cref="stage"/>）ごとに動かし、条件がそろったら次の段階へ移す。
+    /// 段階の移り方は、クラスの説明の「宇宙ごみ式の段階の移り方」を見ること。
+    /// **重い物の AimPull を、ふつうの AimPull より先に書いている**（`when heavy` の付いた case を先に判定させるため）。
+    /// </summary>
     private void UpdateTwoButtons()
     {
         switch (stage)
@@ -1472,11 +1631,17 @@ public class ThrowController : MonoBehaviour
         }
     }
 
+    /// <summary>
+    /// ZRワンボタンの「前へ投げる動き」の毎フレーム。
+    /// 物資の位置（頭上へ持ち上げる）と、ゲージ（左端 → 右端へ1回）を、**同じ経過秒（<see cref="liftTimer"/>）から別々に**決めている。
+    /// 枠の中で押す → <see cref="StartPullBackFromSwing"/>（後ろへ引っ張る）。ゲージが右端に着く → <see cref="FinishAsSwingForward"/>（前へ投げる）。
+    /// </summary>
     private void UpdateForwardSwing()
     {
         liftTimer += Time.deltaTime;
 
         // 物資の位置：弧を描いて頭上へ（釣り式の軌道の前半）。頭上に着いたら、そのまま頭上で構える
+        // （持ち上げの秒数がゲージの秒数より長く設定されていても、ゲージが右端に着くまでに頭上へ着くよう、短いほうを使う）
         float lift = Mathf.Clamp01(liftTimer / Mathf.Min(oneButtonLiftSeconds, oneButtonSwingSeconds));
         if (!UpdateReelPosition(lift * 0.5f))
         {
@@ -1492,6 +1657,7 @@ public class ThrowController : MonoBehaviour
 
         if (!swingMissed && armDelay <= 0f && ThrowPressed())
         {
+            // 強さ ＝ 枠の真ん中で 1、枠の端で 0（枠の広さで割って 0〜1 にそろえる）
             float offset = Mathf.Abs(bar - oneButtonZoneCenter);
             if (offset <= oneButtonZoneHalfWidth)
             {
@@ -1553,6 +1719,7 @@ public class ThrowController : MonoBehaviour
         Launch(direction.normalized, oneButtonForwardForce, throwLift);
     }
 
+    /// <summary>ゲージを1フレームぶん進めて、画面のマーカーを動かす（宇宙ごみ式・横取り・大型物件で共通）。</summary>
     private void TickBar()
     {
         barTimer += Time.deltaTime;
@@ -1769,6 +1936,7 @@ public class ThrowController : MonoBehaviour
                     ? $"{PullButtonName}：引っ張る　真ん中ほど強い"
                     : "右クリック（RT）：向いている方向へ投げる　真ん中ほど強い";
 
+        // 文字の大きさは、画面の高さ 1080 で 22。画面の大きさに合わせて 0.6〜2倍の間で増減させる
         GUIStyle labelStyle = new GUIStyle(GUI.skin.label)
         {
             alignment = TextAnchor.MiddleCenter,
@@ -1776,8 +1944,10 @@ public class ThrowController : MonoBehaviour
             fontStyle = FontStyle.Bold
         };
 
+        // 画面の上から 70% の高さ（ゲージの少し上）に、横いっぱいの帯で出す
         Rect rect = new Rect(0f, Screen.height * 0.70f, Screen.width, labelStyle.fontSize * 1.6f);
 
+        // 2px ずらした黒い影を先に描いてから白い文字を重ね、明るい背景でも読めるようにする
         Color saved = GUI.color;
         GUI.color = new Color(0f, 0f, 0f, 0.7f);
         GUI.Label(new Rect(rect.x + 2f, rect.y + 2f, rect.width, rect.height), text, labelStyle);
@@ -1825,6 +1995,7 @@ public class ThrowController : MonoBehaviour
         FinishAsMiss("枠の外で押した");
     }
 
+    /// <summary>釣り式で、枠の中で押せた。枠の向きへ、段階（通常／強い／非常に強い）に応じた力で投げる。</summary>
     private void FinishAsThrow(SkillCheckZone zone, ThrowTier tier)
     {
         Vector3 direction = ResolveDirection(zone.direction, tier);
@@ -1853,6 +2024,10 @@ public class ThrowController : MonoBehaviour
         EndPull();
     }
 
+    /// <summary>
+    /// ミスで終わる（釣り式のゲージが通り過ぎた・枠の外で押した、またはスタンした）。
+    /// 投げずに、プレイヤーの方へ Miss Pull Force だけ軽く押して手を離す。<paramref name="reason"/> はログに出す理由。
+    /// </summary>
     private void FinishAsMiss(string reason)
     {
         Rigidbody body = target.Body;
@@ -2059,7 +2234,11 @@ public class ThrowController : MonoBehaviour
         }
     }
 
-    /// <summary>爆風で物資を引き離す。投げ・ミスの通信や力を追加せず、糸とゲージを戻す。</summary>
+    /// <summary>
+    /// 爆風で物資を引き離す。投げ・ミスの通信や力を追加せず、糸とゲージを戻す。
+    /// このPCだけで遊んでいるときの横取り（<see cref="RequestSteal"/>）でも、持っている人の手を離させるのに使う。
+    /// その物資を引っ張っている係を、このPCの中から全部探して止める（1台で複数人のときに備えて）。
+    /// </summary>
     public static void ReleaseTargetForExplosion(HookableObject item)
     {
         foreach (ThrowController puller in FindObjectsByType<ThrowController>(FindObjectsSortMode.None))
@@ -2080,6 +2259,10 @@ public class ThrowController : MonoBehaviour
         item.SetHooked(false);
     }
 
+    /// <summary>
+    /// **引っ張りの後片付け。** 投げた・落とした・壁に当たったなど、物資の物理を戻し終えたあとに必ず通る。
+    /// 引っ掛けの印を外し、途中経過を空にして、フックに手元へ戻ってもらう（<see cref="HookController.NotifyThrowFinished"/>）。
+    /// </summary>
     private void EndPull()
     {
         SetAnchorGravitySuppressed(false);
@@ -2101,6 +2284,10 @@ public class ThrowController : MonoBehaviour
         hook.NotifyThrowFinished();
     }
 
+    /// <summary>
+    /// アンカーでプレイヤーを寄せている間、プレイヤーの移動の係に「ふつうの移動と重力を止めて」と頼む（false で元に戻す）。
+    /// アンカーを使っていないときは <see cref="pullingPlayerMovement"/> が null なので何もしない。
+    /// </summary>
     private void SetAnchorGravitySuppressed(bool suppressed)
     {
         if (pullingPlayerMovement != null)
@@ -2116,6 +2303,7 @@ public class ThrowController : MonoBehaviour
         body.useGravity = targetGravityWas;
     }
 
+    /// <summary>釣り式の投げの段階から、Inspector の「投げる力」の値を選ぶ。</summary>
     private float ForceOf(ThrowTier tier)
     {
         switch (tier)

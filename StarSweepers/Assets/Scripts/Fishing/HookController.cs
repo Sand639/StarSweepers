@@ -17,6 +17,25 @@ using UnityEngine.InputSystem;
 ///
 /// フックの実際の飛び方の計算はここに置き、HookProjectile は当たり判定だけにしている。
 /// 引き寄せ・投げは ThrowController、糸の見た目は HookLine に分けてある。
+///
+/// ## 段階（<see cref="HookPhase"/>）の移り方
+///
+///   Idle →（ボタンを押す）→ Charging →（離す）→ Flying
+///   Flying →（物資・大型物件に当たる）→ Attached →（ThrowController が投げ終わる）→ Returning → Idle
+///   Flying →（何にも当たらず届く距離まで伸びた）→ Returning → Idle
+///
+///   毎フレームの係は Tick〜（<see cref="TickIdle"/> など）。段階ごとに1つずつある。
+///
+/// ## 当たったときの分かれ道（<see cref="OnHookableTouched"/>）
+///
+/// | 当たった物資 | どうなるか |
+/// | --- | --- |
+/// | だれもつかんでいない | 引っ掛ける → <see cref="ThrowController.Begin"/>（オンラインでは先に引っ掛けた形にして、ホストに確かめてもらう。爆発物なら導火線に火がつく） |
+/// | ほかの人がつかんでいる（宇宙ごみ式） | くっついて待つ（横取りの待ち）→ <see cref="ThrowController.BeginContest"/> |
+/// | ほかの人がつかんでいる（釣り式） | 何もせず素通り |
+/// | 重い物に、右（投げる）で撃ったフック | 引っ掛けずに戻る（<see cref="ThrowController.RefusesHook"/>） |
+///
+/// 大型物件（<see cref="IHookPullable"/>）に当たったときは <see cref="OnPullableTouched"/> → <see cref="ThrowController.BeginPullable"/>。
 /// </summary>
 
 public class HookController : MonoBehaviour
@@ -95,12 +114,25 @@ public class HookController : MonoBehaviour
     private PlayerInputSource input;
 
     private HookPhase phase = HookPhase.Idle;
+
+    /// <summary>チャージ量（0〜1）。押している間に増え、飛距離を決める。</summary>
     private float charge;
+
+    /// <summary>今回の発射で、フックがここまでに進んだ距離（m）。</summary>
     private float traveled;
+
+    /// <summary>今回の発射で、フックが伸びる距離（m）。ここまで進んでも何にも当たらなければ戻り始める。</summary>
     private float targetDistance;
+
     private Vector3 launchDirection = Vector3.forward;
+
+    /// <summary>フックの先のいまの位置（ワールド座標）。毎フレームの最後に、見た目（HookProjectile・糸）をここへ合わせる。</summary>
     private Vector3 hookPosition;
+
+    /// <summary>いま引っ掛けている物資（自分の物）。無ければ null。</summary>
     private HookableObject attached;
+
+    /// <summary>いま引っ掛けている大型物件。無ければ null。物資と同時には入らない。</summary>
     private IHookPullable attachedPullable;
 
     /// <summary>
@@ -358,6 +390,7 @@ public class HookController : MonoBehaviour
         UpdateHookVisual();
     }
 
+    /// <summary>手元で待っている間。撃つボタンが押されたら、チャージを始める。</summary>
     private void TickIdle()
     {
         // フックは手元にくっついている
@@ -377,6 +410,7 @@ public class HookController : MonoBehaviour
             // （左＝くっついた場所で止まって引っ張る／右＝頭上で止まって投げる）
             // **投げ方が「ZRワンボタン」なら、右（RT・ZR）だけで撃つ**（2026/10/15）。
             // 引っ掛けたあとの流れは ThrowController が決める（前へ投げる動き＋途中のスキルチェックで後ろへ引っ張る）
+            // 左右を同時に押したときは左を優先する（right は left が false のときだけ見る）
             bool left = !throwController.UsesOneButton && throwController.PullPressed();
             bool right = !left && throwController.ThrowPressed();
             pressed = left || right;
@@ -399,10 +433,15 @@ public class HookController : MonoBehaviour
         }
     }
 
+    /// <summary>
+    /// 構えてチャージしている間。**押し始めたのと同じボタン**が離されたら撃つ
+    /// （宇宙ごみ式で左で押し始めたなら左、右なら右。もう片方を離しても撃たない）。
+    /// </summary>
     private void TickCharging()
     {
         hookPosition = handPoint.position;
 
+        // Charge Time 秒で 0 → 1。0 で割らないよう、Charge Time は 0.01 秒より短くしない
         charge = Mathf.Clamp01(charge + Time.deltaTime / Mathf.Max(0.01f, chargeTime));
         if (ui != null)
         {
@@ -424,6 +463,10 @@ public class HookController : MonoBehaviour
         }
     }
 
+    /// <summary>
+    /// フックを撃つ。向きは狙いの方向（無ければ体の正面）、伸びる距離はチャージ量で決まる。
+    /// オートエイムで相手が選ばれたときだけ、向きと距離を相手に合わせて上書きする。
+    /// </summary>
     private void Fire()
     {
         launchDirection = aim != null && aim.HasAim ? aim.AimDirection : transform.forward;
@@ -458,8 +501,13 @@ public class HookController : MonoBehaviour
         }
     }
 
+    /// <summary>
+    /// 前へ伸びている間。このフレームに進む区間を球で調べ（<c>SphereCast</c>）、当たった物によって
+    /// 大型物件 → 物資の順に引っ掛ける。何にも当たらず Target Distance まで進んだら戻り始める。
+    /// </summary>
     private void TickFlying()
     {
+        // このフレームに進む距離（m）
         float step = flySpeed * Time.deltaTime;
 
         // オートエイムの相手が途中で消えたり、先に取られたりしたら、そこからはまっすぐ飛ぶ
@@ -478,6 +526,7 @@ public class HookController : MonoBehaviour
             Vector3 toTarget = aimPoint - hookPosition;
 
             // すでに相手の中まで来ている（球の判定は、中から始まると当たらない）
+            // （判定の球の半径に 0.1m の余裕を足した距離まで近づいたら、当たったことにする）
             if (toTarget.magnitude <= hookCastRadius + 0.1f)
             {
                 OnHookableTouched(autoTarget);
@@ -496,9 +545,12 @@ public class HookController : MonoBehaviour
         }
 
         // 動いた区間に物資があれば、その手前で引っ掛ける（速いフックがすり抜けないように）
+        // （トリガーの当たり判定も拾う：大型物件の引っ掛け口（MovableBlockPullPoint など）がトリガーになっているため）
         if (Physics.SphereCast(hookPosition, hookCastRadius, moveDirection,
                 out RaycastHit hit, step, hookableMask, QueryTriggerInteraction.Collide))
         {
+            // 大型物件は、右（投げる）で撃ったフックでは、ここでは引っ掛けない（左で撃ったときだけ）。
+            // ※ OnPullableTouched のほうは、ZRワンボタンなら右で撃っても引っ掛ける（2026/10/15）
             IHookPullable pullable = FindPullable(hit.collider);
             if (!chargingWithThrow && CanHookPullable(pullable, PlayerRoot))
             {
@@ -506,6 +558,7 @@ public class HookController : MonoBehaviour
                 return;
             }
 
+            // ほかの人がつかんでいる物資は、横取りの待ちができる（宇宙ごみ式）ときだけ相手にする
             HookableObject touched = hit.collider.GetComponentInParent<HookableObject>();
             if (touched != null && !touched.IsVanished && (!touched.IsHooked || CanContest))
             {
@@ -523,6 +576,7 @@ public class HookController : MonoBehaviour
         }
     }
 
+    /// <summary>手元へ戻っている間。手元から Catch Distance 以内まで戻ったら、待機に戻る（次が撃てる）。</summary>
     private void TickReturning()
     {
         hookPosition = Vector3.MoveTowards(
@@ -534,6 +588,10 @@ public class HookController : MonoBehaviour
         }
     }
 
+    /// <summary>
+    /// 何かに刺さっている間。フックの先を相手（大型物件 → 横取りの待ちの相手 → 自分の物資の順に見る）に貼り付けておく。
+    /// 相手が消えたら、取り残されないよう自分で戻り始める。
+    /// </summary>
     private void TickAttached()
     {
         // ThrowController が物資を引き寄せている。フックと糸の先は物資の結び目に貼り付く。
@@ -578,7 +636,7 @@ public class HookController : MonoBehaviour
         hookPosition = attached.AnchorPoint;
     }
 
-    /// <summary>命中した Collider またはその親から、拉扯対象を探す。</summary>
+    /// <summary>命中した Collider またはその親から、拉扯対象（引っ張れる大型物件。<see cref="IHookPullable"/>）を探す。</summary>
     public static IHookPullable FindPullable(Collider hitCollider)
     {
         if (hitCollider == null)
@@ -609,7 +667,11 @@ public class HookController : MonoBehaviour
             || playerAware.CanBeHookedBy(playerRoot);
     }
 
-    /// <summary>左ボタンで飛ばした Hook が大型の拉扯対象に触れたときに呼ばれる。</summary>
+    /// <summary>
+    /// 左ボタンで飛ばした Hook が大型の拉扯対象（引っ張れる大型物件）に触れたときに呼ばれる。
+    /// ZRワンボタンのときは右で飛ばしたフックでも呼ばれる。<see cref="TickFlying"/> の球の判定と、
+    /// フック先端のトリガー（HookProjectile の PullableTouched）の両方から呼ばれる。
+    /// </summary>
     private void OnPullableTouched(IHookPullable pullable)
     {
         // ZRワンボタンでは撃つのがいつも右（投げる）なので、大型物件も右で撃ったフックで引っ掛ける（2026/10/15）
@@ -850,7 +912,11 @@ public class HookController : MonoBehaviour
         Debug.Log("[FISH] その物資は先に取られていました。フックを戻します。");
     }
 
-    /// <summary>古い依頼への断りでは、現在引っ掛けている別の物資を外さない。</summary>
+    /// <summary>
+    /// 古い依頼への断りでは、現在引っ掛けている別の物資を外さない。
+    /// （ホストの断りが遅れて届くあいだに、別の物資を引っ掛け直していることがあるため。断られた物資が
+    /// <paramref name="expectedTarget"/> で、いま引っ掛けている物資と同じときだけ取り消す）
+    /// </summary>
     public void CancelAttachBecauseTaken(HookableObject expectedTarget)
     {
         if (attached != expectedTarget)
