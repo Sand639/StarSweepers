@@ -138,6 +138,26 @@ public class LiquidBeam : MonoBehaviour
 
     [SerializeField] private float lightIntensity = 3f;
 
+    [Tooltip("先端のライトを使うか。オフにすると、Head Light が入っていても照らさない")]
+    [SerializeField] private bool useHeadLight = true;
+
+    /// <summary>
+    /// **すべての液体のビームのライトを、まとめてオン／オフする**（デバッグ用。初期値はオン）。
+    /// 例：<c>LiquidBeam.LightsEnabled = false;</c> で、いま出ている物も含めて全部のライトが消える。
+    /// 1本ずつ切り替えたいときは <see cref="UseHeadLight"/>。
+    /// </summary>
+    public static bool LightsEnabled { get; set; } = true;
+
+    /// <summary>このビームの先端のライトを使うか。<see cref="LightsEnabled"/> がオフなら、こちらがオンでも照らさない。</summary>
+    public bool UseHeadLight
+    {
+        get => useHeadLight;
+        set => useHeadLight = value;
+    }
+
+    /// <summary>いまライトを点けてよいか。</summary>
+    private bool LightOn => headLight != null && useHeadLight && LightsEnabled;
+
     private enum State
     {
         Idle,
@@ -542,12 +562,17 @@ public class LiquidBeam : MonoBehaviour
             ribbons[i].Tick(deltaTime, fade);
         }
 
-        if (headLight != null)
+        if (LightOn)
         {
             headLight.enabled = true;
             headLight.transform.localPosition = new Vector3(0f, 0f, head);
             headLight.color = ColorAt(1f);
             headLight.intensity = lightIntensity * fade;
+        }
+        else if (headLight != null)
+        {
+            // 途中でオフにされたときも、すぐ消えるように
+            headLight.enabled = false;
         }
     }
 
