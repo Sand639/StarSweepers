@@ -7,9 +7,13 @@ using UnityEngine;
 /// タイトル画面のプレハブに、**コードが頼りにしている印の付いた部品**がそろっているかを確かめる。
 /// 配置や見た目は自由に変えてよいが、印を消すとその部品は動かなくなるので、ここで気づけるようにする。
 /// （2026/10/19：メインを ソロプレイ／マルチプレイ／設定／ゲームを終了 にし、マルチプレイの画面にまとめた形に合わせた）
+///
+/// 確かめるのは、**保存されているプレハブ**（`Assets/Resources/TitleScreen.prefab`）そのもの。作るツール（<see cref="TitleScreenPrefabBuilder"/>）は動かさない。
+/// だから、ツールの版を上げてまだ Unity で開いていない（部品が足されていない）ときも、ここで落ちて気づける。
 /// </summary>
 public class TitleScreenPrefabTests
 {
+    /// <summary>プレハブを読み込む（開かずに読むだけ。書き換えはしない）。無ければ、そこでテストを失敗にする。</summary>
     private static GameObject LoadPrefab()
     {
         GameObject prefab = AssetDatabase.LoadAssetAtPath<GameObject>(TitleScreenPrefabBuilder.PrefabPath);
@@ -17,6 +21,7 @@ public class TitleScreenPrefabTests
         return prefab;
     }
 
+    /// <summary>その印（Role）の付いた部品（隠れている部品も含める）。無ければ null。</summary>
     private static Transform FindPart(TitlePartRole role)
     {
         foreach (TitlePart part in LoadPrefab().GetComponentsInChildren<TitlePart>(true))
@@ -29,6 +34,11 @@ public class TitleScreenPrefabTests
         return null;
     }
 
+    /// <summary>
+    /// プレハブの版が、ツールの版（<see cref="TitleScreenPrefabBuilder.PrefabVersion"/>）と同じか。
+    /// 落ちたら、Unity のエディタを開き直す（読み込んだあとに足りない部品が足される）か、
+    /// <see cref="TitleScreenPrefabBuilder.UpgradeFromCommandLine"/> を動かす。
+    /// </summary>
     [Test]
     public void TitlePrefab_IsTheCurrentVersion()
     {
@@ -36,6 +46,7 @@ public class TitleScreenPrefabTests
             Is.EqualTo(TitleScreenPrefabBuilder.PrefabVersion));
     }
 
+    /// <summary>コードが Role で探す部品（画面・一覧・チェックの印・参加の確認の窓・つないでいる途中の表示）があるか。</summary>
     [TestCase(TitlePartRole.PageMain)]
     [TestCase(TitlePartRole.PageMulti)]
     [TestCase(TitlePartRole.PageCreate)]
@@ -71,6 +82,10 @@ public class TitleScreenPrefabTests
         Assert.That(FindPart(role), Is.Null, $"使わなくなった画面 {role} が残っている");
     }
 
+    /// <summary>
+    /// 押すと何かが起きるボタン（Action）が、画面ごとにそろっているか。
+    /// 「戻る」や設定のタブなど、ここに無い Action は確かめていない。
+    /// </summary>
     [Test]
     public void TitlePrefab_HasEveryButton()
     {
@@ -101,6 +116,7 @@ public class TitleScreenPrefabTests
         }
     }
 
+    /// <summary>入力欄（<see cref="TitleInput"/> の Kind）がそろっていて、使わなくなった欄が残っていないか。</summary>
     [Test]
     public void TitlePrefab_HasInputs()
     {
