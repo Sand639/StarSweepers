@@ -68,34 +68,130 @@ public partial class SpaceJunkRound : NetworkBehaviour
              "**ふだんはホストがロビーで決めた値が使われる**ので、ここは効かない")]
     [SerializeField] private float fallbackSeconds = 60f;
 
-    [Header("始まりの演出（2026/10/7。スプラトゥーンのようにマップを見せてから 3・2・1・START）")]
+    [Header("始まりの演出（2026/10/7。10/20 に流れを作り直した。いろいろ試すため、秒数と角度はここで変えられる）")]
     [Tooltip("OFF にすると演出をせず、すぐに始まる")]
     [SerializeField] private bool playIntro = true;
 
-    [Tooltip("全員の読み込みを待つ秒数（演出の前）。遅いPCでも最初から見られるように")]
+    [Tooltip("全員の読み込みを待つ秒数（演出の前）。遅いPCでも最初から見られるように。この間は ① の回り始めの位置で止まる")]
     [Min(0f)]
     [SerializeField] private float introLeadSeconds = 1.5f;
 
-    [Tooltip("マップをぐるっと見せる秒数")]
+    [Tooltip("① マップをぐるっと見せる秒数")]
     [Min(0f)]
-    [SerializeField] private float introFlyoverSeconds = 4f;
+    [SerializeField] private float introFlyoverSeconds = 3f;
 
-    [Tooltip("自分のプレイヤーへカメラが寄る秒数")]
+    [Tooltip("① マップの紹介で、カメラが向き続ける場所（マップの中央）")]
+    [SerializeField] private Vector3 introLookCenter = Vector3.zero;
+
+    [Tooltip("① マップの紹介で、真上（Y軸）から何度傾けた所から見るか。0 で真上、90 で真横")]
+    [Range(0f, 90f)]
+    [SerializeField] private float introFlyoverTilt = 45f;
+
+    [Tooltip("① マップの紹介で、マップの中央を中心に回る角度（度）")]
+    [SerializeField] private float introFlyoverDegrees = 180f;
+
+    [Tooltip("② 自分のチームへカメラが寄る秒数")]
     [Min(0f)]
-    [SerializeField] private float introZoomSeconds = 1.5f;
+    [SerializeField] private float introZoomSeconds = 1f;
 
-    [Tooltip("3・2・1 のカウントダウンの秒数")]
+    [Tooltip("② 寄ったときの、チームの中央から後ろ（マップの外側）への距離（水平）。味方が離れているほど、自動で少し足す")]
+    [Min(0f)]
+    [SerializeField] private float introCloseDistance = 8f;
+
+    [Tooltip("② 寄ったときの高さ（チームの中央から）")]
+    [SerializeField] private float introCloseHeight = 3.5f;
+
+    [Tooltip("③ 寄ったあと、止まっている秒数")]
+    [Min(0f)]
+    [SerializeField] private float introHoldBeforeOrbitSeconds = 0.5f;
+
+    [Tooltip("④ ② の位置から、チームの中央を中心に回る秒数（0 で回らない）")]
+    [Min(0f)]
+    [SerializeField] private float introTeamOrbitSeconds = 1.5f;
+
+    [Tooltip("④ チームの中央を中心に回る角度（度）。マイナスにすると逆向きに回る")]
+    [SerializeField] private float introTeamOrbitDegrees = -120f;
+
+    [Tooltip("④ 回り終わったときの、チームの中央からの距離（水平）。② の距離から少しずつ離れる")]
+    [Min(0f)]
+    [SerializeField] private float introOrbitEndDistance = 10f;
+
+    [Tooltip("④ 回り終わったときの高さ。② の高さから少しずつ上がり、上からチームを映す")]
+    [SerializeField] private float introOrbitEndHeight = 10f;
+
+    [Tooltip("⑤ 回ったあと、止まっている秒数")]
+    [Min(0f)]
+    [SerializeField] private float introHoldAfterOrbitSeconds = 1f;
+
+    [Tooltip("⑥ 全体カメラ（ふだんのカメラ）の位置へ移る秒数")]
+    [Min(0f)]
+    [SerializeField] private float introReturnSeconds = 1f;
+
+    [Tooltip("④ が始まってから、3・2・1 のカウントダウンが始まるまでの秒数")]
+    [Min(0f)]
+    [SerializeField] private float introCountdownDelaySeconds = 1f;
+
+    [Tooltip("3・2・1 のカウントダウンの秒数。終わったら START!（ここから動ける）")]
     [Min(0f)]
     [SerializeField] private float introCountdownSeconds = 3f;
 
-    /// <summary>マップをぐるっと見せる秒数（演出の部品 <see cref="SpaceJunkRoundIntro"/> が読む）。</summary>
+    // ↓ 演出の設定を、演出の部品 SpaceJunkRoundIntro が読むための窓口（中身は上の同じ名前の値）
+
+    /// <summary>① マップをぐるっと見せる秒数（演出の部品 <see cref="SpaceJunkRoundIntro"/> が読む）。</summary>
     public float IntroFlyoverSeconds => introFlyoverSeconds;
 
-    /// <summary>自分のプレイヤーへカメラが寄る秒数。</summary>
+    /// <summary>① カメラが向き続ける場所（マップの中央）。</summary>
+    public Vector3 IntroLookCenter => introLookCenter;
+
+    /// <summary>① 真上から何度傾けた所から見るか。</summary>
+    public float IntroFlyoverTilt => introFlyoverTilt;
+
+    /// <summary>① マップの中央を中心に回る角度。</summary>
+    public float IntroFlyoverDegrees => introFlyoverDegrees;
+
+    /// <summary>② 自分のチームへカメラが寄る秒数。</summary>
     public float IntroZoomSeconds => introZoomSeconds;
+
+    /// <summary>② 寄ったときの、チームの中央から後ろへの距離。</summary>
+    public float IntroCloseDistance => introCloseDistance;
+
+    /// <summary>② 寄ったときの高さ。</summary>
+    public float IntroCloseHeight => introCloseHeight;
+
+    /// <summary>③ 寄ったあと止まっている秒数。</summary>
+    public float IntroHoldBeforeOrbitSeconds => introHoldBeforeOrbitSeconds;
+
+    /// <summary>④ チームの周りを回る秒数。</summary>
+    public float IntroTeamOrbitSeconds => introTeamOrbitSeconds;
+
+    /// <summary>④ チームの周りを回る角度（マイナスで逆向き）。</summary>
+    public float IntroTeamOrbitDegrees => introTeamOrbitDegrees;
+
+    /// <summary>④ 回り終わったときの、チームの中央からの距離。</summary>
+    public float IntroOrbitEndDistance => introOrbitEndDistance;
+
+    /// <summary>④ 回り終わったときの高さ。</summary>
+    public float IntroOrbitEndHeight => introOrbitEndHeight;
+
+    /// <summary>⑤ 回ったあと止まっている秒数。</summary>
+    public float IntroHoldAfterOrbitSeconds => introHoldAfterOrbitSeconds;
+
+    /// <summary>⑥ 全体カメラ（ふだんのカメラ）へ移る秒数。</summary>
+    public float IntroReturnSeconds => introReturnSeconds;
+
+    /// <summary>④ が始まってから、カウントダウンが始まるまでの秒数。</summary>
+    public float IntroCountdownDelaySeconds => introCountdownDelaySeconds;
 
     /// <summary>3・2・1 のカウントダウンの秒数。</summary>
     public float IntroCountdownSeconds => introCountdownSeconds;
+
+    /// <summary>
+    /// 演出の長さ（① マップの紹介〜START まで。読み込み待ちは入れない）。
+    /// カウントダウンは ④ の途中から数えるので、④⑤⑥ のカメラの動きはこの中に入ったり、START をまたいだりする。
+    /// </summary>
+    private float IntroTotalSeconds =>
+        introFlyoverSeconds + introZoomSeconds + introHoldBeforeOrbitSeconds + introCountdownDelaySeconds +
+        introCountdownSeconds;
 
     /// <summary>
     /// **動き出してよい時刻**（全員で同期された時計 ServerTime）。これより前は始まりの演出中で、誰も動けない。
@@ -108,12 +204,12 @@ public partial class SpaceJunkRound : NetworkBehaviour
 
     /// <summary>始まりの演出が始まる時刻（ServerTime）。</summary>
     public double IntroStartServerTime =>
-        playStartServerTime.Value - introFlyoverSeconds - introZoomSeconds - introCountdownSeconds;
+        playStartServerTime.Value - IntroTotalSeconds;
 
     /// <summary>いまの時刻（全員で同期された時計）。</summary>
     public double ServerNow => NetworkManager != null ? NetworkManager.ServerTime.Time : 0d;
 
-    /// <summary>**始まりの演出中か**（マップの紹介〜カウントダウン）。この間は誰も動けず、素材も出ない。</summary>
+    /// <summary>**始まりの演出中か**（マップの紹介〜START）。この間は誰も動けず、素材も出ない。</summary>
     public bool IsIntro =>
         phase.Value == SpaceJunkRoundPhase.Playing && playStartServerTime.Value > 0d && ServerNow < playStartServerTime.Value;
 
@@ -312,7 +408,7 @@ public partial class SpaceJunkRound : NetworkBehaviour
         // **始まりの演出のぶん、動き出す時刻を後ろにずらす。** 残り時間とイベントは、動き出してから数える
         double now = NetworkManager.ServerTime.Time;
         double playStart = playIntro
-            ? now + introLeadSeconds + introFlyoverSeconds + introZoomSeconds + introCountdownSeconds
+            ? now + introLeadSeconds + IntroTotalSeconds
             : 0d;
         playStartServerTime.Value = playStart;
 
