@@ -54,6 +54,10 @@ public abstract class SpaceJunkCameraMode : MonoBehaviour
     /// </summary>
     protected bool SnapNext { get; set; } = true;
 
+    /// <summary>
+    /// 同じカメラに付いている切り替え部品。**無ければ（null なら）、この部品が自分でカメラを動かす**
+    /// （<see cref="LateUpdate"/>）。あれば、切り替え部品が <see cref="TryGetPose"/> を呼んで動かす。
+    /// </summary>
     private SpaceJunkCameraModeSwitch owner;
 
     protected virtual void Awake()
@@ -218,6 +222,7 @@ public abstract class SpaceJunkCameraMode : MonoBehaviour
             Vector3 away = goal.transform.position - center;
             away.y = 0f;
 
+            // 中心とほぼ同じ場所（1cm 未満）のゴールは、向きが決められないので数えない
             if (away.sqrMagnitude > 0.0001f)
             {
                 ownSide += away.normalized;
@@ -225,6 +230,7 @@ public abstract class SpaceJunkCameraMode : MonoBehaviour
         }
 
         // 自分のゴールが無い／全部持っていて打ち消し合った → 北向きのまま
+        // （長さ 1 の方向を足しているので、0.1 未満なら「ほぼ打ち消し合った」とみなす）
         if (ownSide.sqrMagnitude < 0.01f)
         {
             return 0f;
@@ -247,14 +253,18 @@ public abstract class SpaceJunkCameraMode : MonoBehaviour
     protected bool IsInView(Vector3 position, Quaternion rotation, Vector3 point, float margin)
     {
         // カメラから見た位置（Unity のカメラは -Z が前）
+        // `local` は Transform から見た位置なので +Z が前。投影行列（projectionMatrix）は OpenGL の決まりで
+        // -Z を前として受け取るので、Z の符号を反転して渡している
         Vector3 local = Quaternion.Inverse(rotation) * (point - position);
         Vector4 clip = View.projectionMatrix * new Vector4(local.x, local.y, -local.z, 1f);
 
+        // カメラの後ろ（w が 0 以下）や、近すぎて描かれない距離（nearClipPlane より手前）の点は「映らない」
         if (clip.w <= 0.0001f || local.z <= View.nearClipPlane)
         {
             return false;
         }
 
+        // 画面の位置を -1〜+1 から 0〜1（左下が 0、右上が 1）に直す
         float x = clip.x / clip.w * 0.5f + 0.5f;
         float y = clip.y / clip.w * 0.5f + 0.5f;
 
@@ -269,16 +279,19 @@ public abstract class SpaceJunkCameraMode : MonoBehaviour
     {
         Vector3 back = rotation * Vector3.back;
 
+        // いちばん近い距離で全部入るなら、それ以上下がる必要は無い
         if (AllInView(focus + back * near, rotation, points, margin))
         {
             return near;
         }
 
+        // いちばん遠い距離でも入らないなら、あきらめて far（はみ出す人は画面の外に出る）
         if (!AllInView(focus + back * far, rotation, points, margin))
         {
             return far;
         }
 
+        // 二分探索。24 回で範囲は 2^24（約 1700 万）分の 1 になるので、500m の範囲でも誤差は 0.1mm 以下
         for (int i = 0; i < 24; i++)
         {
             float middle = (near + far) * 0.5f;
@@ -296,6 +309,7 @@ public abstract class SpaceJunkCameraMode : MonoBehaviour
         return far;
     }
 
+    /// <summary>カメラをそこに置いたとき、<paramref name="points"/> が全部画面に入るか。</summary>
     private bool AllInView(Vector3 position, Quaternion rotation, List<Vector3> points, float margin)
     {
         foreach (Vector3 point in points)
@@ -308,7 +322,14 @@ public abstract class SpaceJunkCameraMode : MonoBehaviour
         return true;
     }
 
-    /// <summary>なめらかに寄せるときの割合（フレームの長さに左右されない形）。</summary>
+    /// <summary>
+    /// なめらかに寄せるときの割合（フレームの長さに左右されない形）。
+    ///
+    /// `Lerp(いま, 目標, Smooth(sharpness, deltaTime))` の形で使う。
+    /// 単に `sharpness * deltaTime` を割合にすると、フレームが長いときに 1 を超えて行き過ぎるが、
+    /// この式なら 0〜1 に収まり、**1 秒あたりに縮まる残りの割合**がフレームレートに関係なく一定になる
+    /// （sharpness が大きいほど、残りが早く縮む）。
+    /// </summary>
     protected static float Smooth(float sharpness, float deltaTime)
     {
         return 1f - Mathf.Exp(-sharpness * deltaTime);

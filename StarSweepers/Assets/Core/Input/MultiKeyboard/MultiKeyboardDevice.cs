@@ -13,23 +13,31 @@ namespace ProjectEL4S.MultiKeyboard
         WasdAndArrows = 2,
     }
 
-    /// <summary>物理キーボード 1 台に対応する入力状態。使い方は Input System の Keyboard とほぼ同じ。</summary>
+    /// <summary>
+    /// 物理キーボード 1 台に対応する入力状態。使い方は Input System の Keyboard とほぼ同じ。
+    /// 値は <see cref="MultiKeyboardManager"/> が毎フレーム入れる（このクラス自身は Windows を触らない）。
+    /// </summary>
     public sealed class MultiKeyboardDevice
     {
         private static readonly int s_keyCount = ComputeKeyCount();
 
+        // Key の番号をそのまま添字にした「押されているか」「このフレーム押したか」「このフレーム離したか」
         private readonly bool[] _pressed = new bool[s_keyCount];
         private readonly bool[] _down = new bool[s_keyCount];
         private readonly bool[] _up = new bool[s_keyCount];
         // 押されているキーの一覧（離すとき・表示用に全キーを舐めずに済ませる）
         private readonly List<Key> _pressedKeys = new List<Key>();
 
+        /// <summary>このキーボードの番号（0 から）。<see cref="MultiKeyboardManager.GetKeyboard"/> に渡す番号と同じ。</summary>
         public int Index { get; }
+        /// <summary>表示用の色（MultiKeyboardManager の Keyboard Colors から）。</summary>
         public Color Color { get; internal set; }
 
         /// <summary>物理デバイスが割り当てられているか。</summary>
         public bool IsAssigned { get; internal set; }
+        /// <summary>Windows がこのキーボードに付けた番号（Raw Input の HANDLE）。抜き差しや再起動で変わるので保存には使わない。</summary>
         public IntPtr DeviceHandle { get; internal set; }
+        /// <summary>Windows のデバイスパス（\\?\HID#VID_xxxx… の形）。同じ USB の口に挿している限り変わらないので、固定登録はこちらで覚える。</summary>
         public string DeviceName { get; internal set; } = string.Empty;
 
         /// <summary>今押されているキー（押した順）。</summary>
@@ -65,6 +73,7 @@ namespace ProjectEL4S.MultiKeyboard
             return v.sqrMagnitude > 1f ? v.normalized : v;
         }
 
+        /// <summary>フレームの頭で「このフレームに押した・離した」を消す（「押されている」は持ち越す）。</summary>
         internal void BeginFrame()
         {
             AnyKeyDown = false;
@@ -103,6 +112,7 @@ namespace ProjectEL4S.MultiKeyboard
             }
         }
 
+        /// <summary>デバイスとの結び付きと、押しているキーを全部消して未割り当てに戻す。</summary>
         internal void ResetAssignment()
         {
             IsAssigned = false;
@@ -117,6 +127,9 @@ namespace ProjectEL4S.MultiKeyboard
 
         private static bool InRange(Key key) => key > Key.None && (int)key < s_keyCount;
 
+        /// <summary>
+        /// 配列の大きさ。Key の番号は飛び飛びなので、「値の個数」ではなく「いちばん大きい番号 + 1」にして番号をそのまま添字に使えるようにする。
+        /// </summary>
         private static int ComputeKeyCount()
         {
             int max = 0;

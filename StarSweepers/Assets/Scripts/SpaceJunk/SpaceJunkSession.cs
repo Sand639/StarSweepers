@@ -80,6 +80,18 @@ public struct SpaceJunkPlayerSlot : INetworkSerializable, IEquatable<SpaceJunkPl
 /// 設定もチーム分けも勝ち数も、**すべてホストが決めて全員へ配る**
 /// （ネットワークの制作工程.md の「動きは本人、勝敗と点数はホスト」の形）。
 /// 参加者のPCからは読むだけ。
+///
+/// ## 流れ（何がどの順で起きるか）
+///
+/// 1. **部屋ができる** … ホストがこれをプレハブから出す（<see cref="OnNetworkSpawn"/>）。
+///    つながっている人の席を作り、前回のマップの選び方を読み込む。参加者は自分の名前をホストへ送る
+/// 2. **ロビー** … 人が入る・抜けるたびに席を直す。ホストは設定端末からチーム数・何本先取・時間・マップを変える
+///    （`ServerSet…` のメソッド）。裏では1秒ごとに「席とつながっている人」の答え合わせをする
+/// 3. **試合開始** … ロビーの「ゲームを始める」→ <see cref="ServerStartMatch"/>。勝ち数を 0 に戻してマップへ移る
+/// 4. **ラウンド** … マップ側の <see cref="SpaceJunkRound"/> が決着を付けて <see cref="ServerReportRoundResult"/> を呼ぶ。
+///    何本先取に届かなければ、結果を見せてから次のマップへ（<see cref="NextRoundAfterDelay"/>）
+/// 5. **試合終了** … 届いたら <see cref="SpaceJunkMatchState.MatchOver"/> にして、結果を見せてからロビーへ戻る
+///    （<see cref="ReturnToLobbyAfterDelay"/>）。ホストがポーズ画面から打ち切ったときは <see cref="ServerReturnToLobby"/>
 /// </summary>
 public class SpaceJunkSession : NetworkBehaviour
 {
@@ -168,7 +180,10 @@ public class SpaceJunkSession : NetworkBehaviour
     /// <summary>何本先取か。</summary>
     public int RoundsToWin => Mathf.Max(1, roundsToWin.Value);
 
-    /// <summary>1ラウンドの最大時間（秒）。</summary>
+    /// <summary>
+    /// 1ラウンドの最大時間（秒）。
+    /// 5秒は念のための下限（ホストが入れられる下限は <see cref="MinRoundSeconds"/>。壊れた値が届いても一瞬で終わるラウンドにならないように）。
+    /// </summary>
     public float RoundSeconds => Mathf.Max(5f, roundSeconds.Value);
 
     /// <summary>いまの段階。</summary>
@@ -238,15 +253,8 @@ public class SpaceJunkSession : NetworkBehaviour
     /// <summary>その人の所属チーム。席が無ければ 0。</summary>
     public int TeamOf(ulong clientId)
     {
-        foreach (SpaceJunkPlayerSlot slot in slots)
-        {
-            if (slot.ClientId == clientId)
-            {
-                return slot.Team;
-            }
-        }
-
-        return 0;
+        int index = TeamSlotIndex(clientId);
+        return index >= 0 ? slots[index].Team : 0;
     }
 
     /// <summary>
@@ -326,6 +334,10 @@ public class SpaceJunkSession : NetworkBehaviour
     // 出入り
     // ------------------------------------------------------------
 
+    /// <summary>
+    /// 全員のPCで、この係が現れたとき。
+    /// 参加者は自分の名前をホストへ送り、**ホストは席と勝ち数の枠を作って、人の出入りの知らせを受け取り始める。**
+    /// </summary>
     public override void OnNetworkSpawn()
     {
         Current = this;
@@ -406,6 +418,7 @@ public class SpaceJunkSession : NetworkBehaviour
         PlayerPrefs.Save();
     }
 
+    /// <summary>係が消えるとき（部屋を閉じた・切断した）。ホストは人の出入りの知らせを受け取るのをやめる。</summary>
     public override void OnNetworkDespawn()
     {
         if (IsServer && NetworkManager != null)
@@ -420,6 +433,7 @@ public class SpaceJunkSession : NetworkBehaviour
         }
     }
 
+    /// <summary>誰かがつながってきたとき（ホストだけ）。定員を超えていなければ席を作る。</summary>
     private void OnClientConnected(ulong clientId)
     {
         // **定員（6人）を超えてつながってきた人は、断って切る。**（2026/10/14・大槻さん「定員を6人に」）
@@ -439,15 +453,7 @@ public class SpaceJunkSession : NetworkBehaviour
     /// <summary>その接続番号の席が、もうあるか。</summary>
     private bool HasSlot(ulong clientId)
     {
-        foreach (SpaceJunkPlayerSlot slot in slots)
-        {
-            if (slot.ClientId == clientId)
-            {
-                return true;
-            }
-        }
-
-        return false;
+        return TeamSlotIndex(clientId) >= 0;
     }
 
     // ------------------------------------------------------------
@@ -457,10 +463,17 @@ public class SpaceJunkSession : NetworkBehaviour
     /// <summary>席の答え合わせの間隔（秒）。</summary>
     private const float SlotCheckInterval = 1f;
 
+    /// <summary>次の答え合わせまでの数え上げ（秒）。</summary>
     private float slotCheckTimer;
 
     /// <summary>「席とつながっている人が食い違う」が何回続いたか。</summary>
     private int slotMismatchCount;
+
+    /// <summary>
+    /// 食い違いが何回続いたら席を直すか。
+    /// 入ってきた直後は席ができるまで一瞬食い違うので、1回だけでは直さない。
+    /// </summary>
+    private const int SlotMismatchRepairCount = 2;
 
     // ------------------------------------------------------------
     // 名前（2026/10/6）
@@ -472,6 +485,7 @@ public class SpaceJunkSession : NetworkBehaviour
     /// <summary>自分の名前が席に入っているかを確かめる間隔（秒）。参加者のPCだけ。</summary>
     private const float NameCheckInterval = 2f;
 
+    /// <summary>次の名前の確認までの数え上げ（秒）。</summary>
     private float nameCheckTimer;
 
     /// <summary>
@@ -544,6 +558,10 @@ public class SpaceJunkSession : NetworkBehaviour
         SubmitNameServerRpc(name);
     }
 
+    /// <summary>
+    /// 参加者から名前が届いたとき（ホストで動く）。控えに入れ、**席がもうあればその席の名前も書き換える。**
+    /// 席がまだ無いときは、あとで <see cref="AddSlot"/> が控えから入れる。
+    /// </summary>
     [ServerRpc(RequireOwnership = false)]
     private void SubmitNameServerRpc(FixedString64Bytes name, ServerRpcParams rpcParams = default)
     {
@@ -598,6 +616,10 @@ public class SpaceJunkSession : NetworkBehaviour
         }
     }
 
+    /// <summary>
+    /// 毎フレームの答え合わせ。**参加者は自分の名前、ホストは席の一覧**を、取りこぼしが無いか定期的に確かめる。
+    /// どちらも `unscaledDeltaTime` で数える（ポーズで時間が止まっても答え合わせは続ける）。
+    /// </summary>
     private void Update()
     {
         // 参加者のPC：自分の名前が席に入っているか確かめる
@@ -612,6 +634,7 @@ public class SpaceJunkSession : NetworkBehaviour
             return;
         }
 
+        // ホストのPC：席の一覧とつながっている人を、一定の間隔で比べる
         slotCheckTimer += Time.unscaledDeltaTime;
         if (slotCheckTimer < SlotCheckInterval)
         {
@@ -632,54 +655,61 @@ public class SpaceJunkSession : NetworkBehaviour
     {
         IReadOnlyList<ulong> connected = NetworkManager.ConnectedClientsIds;
 
-        bool mismatch = false;
-        foreach (SpaceJunkPlayerSlot slot in slots)
-        {
-            if (!SlotStillValid(connected, slot.ClientId))
-            {
-                mismatch = true;
-                break;
-            }
-        }
-
-        if (!mismatch)
-        {
-            foreach (ulong clientId in connected)
-            {
-                if (TeamSlotIndex(clientId) < 0)
-                {
-                    mismatch = true;
-                    break;
-                }
-            }
-        }
-
-        // 1台で複数人のときの2人目以降（ホストが追加で出したプレイヤー）にも、席があるか
-        if (!mismatch)
-        {
-            foreach (FishingNetPlayer player in FishingNetPlayer.All)
-            {
-                if (IsExtraLocalPlayer(player) && TeamSlotIndex(player.PlayerKey) < 0)
-                {
-                    mismatch = true;
-                    break;
-                }
-            }
-        }
-
-        if (!mismatch)
+        if (!HasSlotMismatch(connected))
         {
             slotMismatchCount = 0;
             return;
         }
 
         slotMismatchCount++;
-        if (slotMismatchCount < 2)
+        if (slotMismatchCount < SlotMismatchRepairCount)
         {
             return;
         }
         slotMismatchCount = 0;
 
+        ServerRepairSlots(connected);
+    }
+
+    /// <summary>
+    /// 席の一覧と、つながっている人が食い違っているか。
+    /// 「抜けた人の席が残っている」「席の無い人がいる」のどちらかがあれば true。
+    /// </summary>
+    private bool HasSlotMismatch(IReadOnlyList<ulong> connected)
+    {
+        // 抜けた人の席が残っていないか
+        foreach (SpaceJunkPlayerSlot slot in slots)
+        {
+            if (!SlotStillValid(connected, slot.ClientId))
+            {
+                return true;
+            }
+        }
+
+        // つながっている人全員に席があるか
+        foreach (ulong clientId in connected)
+        {
+            if (TeamSlotIndex(clientId) < 0)
+            {
+                return true;
+            }
+        }
+
+        // 1台で複数人のときの2人目以降（ホストが追加で出したプレイヤー）にも、席があるか
+        foreach (FishingNetPlayer player in FishingNetPlayer.All)
+        {
+            if (IsExtraLocalPlayer(player) && TeamSlotIndex(player.PlayerKey) < 0)
+            {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    /// <summary>食い違いを直す。抜けた人の席を消し、席の無い人（2人目以降も含む）の席を作る。</summary>
+    private void ServerRepairSlots(IReadOnlyList<ulong> connected)
+    {
         for (int i = slots.Count - 1; i >= 0; i--)
         {
             if (!SlotStillValid(connected, slots[i].ClientId))
@@ -708,6 +738,7 @@ public class SpaceJunkSession : NetworkBehaviour
         }
     }
 
+    /// <summary>接続番号の一覧に、その番号が入っているか。</summary>
     private static bool ContainsId(IReadOnlyList<ulong> ids, ulong id)
     {
         for (int i = 0; i < ids.Count; i++)
@@ -740,6 +771,7 @@ public class SpaceJunkSession : NetworkBehaviour
         return player != null && player.IsSpawned && player.LocalSeat > 0;
     }
 
+    /// <summary>人ごとの番号から、そのプレイヤーの体を探す。いなければ null。</summary>
     private static FishingNetPlayer FindPlayerByKey(ulong key)
     {
         foreach (FishingNetPlayer player in FishingNetPlayer.All)
@@ -782,12 +814,17 @@ public class SpaceJunkSession : NetworkBehaviour
         }
     }
 
+    /// <summary>参加者のPCから「このPCで遊ぶ人数」が届いたとき（ホストで動く）。</summary>
     [ServerRpc(RequireOwnership = false)]
     private void RequestLocalPlayerCountServerRpc(int count, ServerRpcParams rpcParams = default)
     {
         ServerApplyLocalPlayerCount(rpcParams.Receive.SenderClientId, count);
     }
 
+    /// <summary>
+    /// そのPCで遊ぶ人数を合わせる（ホストだけ）。多ければ2人目以降を消し、足りなければ出す。
+    /// 1人目（接続番号そのもの）はここでは触らない。
+    /// </summary>
     private void ServerApplyLocalPlayerCount(ulong clientId, int count)
     {
         if (state.Value != SpaceJunkMatchState.Lobby)
@@ -798,7 +835,14 @@ public class SpaceJunkSession : NetworkBehaviour
 
         count = Mathf.Clamp(count, 1, LocalMultiplayer.MaxLocalPlayers);
 
-        // 多すぎるぶんを消す（後ろから。消すと FishingNetPlayer.All から抜けるため）
+        ServerRemoveExtraLocalPlayers(clientId, count);
+        ServerSpawnMissingLocalPlayers(clientId, count);
+    }
+
+    /// <summary>そのPCの、<paramref name="count"/> 人目より後ろのプレイヤーを消す（席も消す）。</summary>
+    private void ServerRemoveExtraLocalPlayers(ulong clientId, int count)
+    {
+        // 後ろから回す（消すと FishingNetPlayer.All から抜けるため）
         for (int i = FishingNetPlayer.All.Count - 1; i >= 0; i--)
         {
             FishingNetPlayer player = FishingNetPlayer.All[i];
@@ -811,8 +855,14 @@ public class SpaceJunkSession : NetworkBehaviour
             Debug.Log($"[JUNK] 1台で複数人：接続番号 {clientId} の {player.LocalSeat + 1} 人目を消しました。");
             player.NetworkObject.Despawn(true);
         }
+    }
 
-        // 足りないぶんを出す
+    /// <summary>
+    /// そのPCの2人目〜<paramref name="count"/> 人目のうち、まだ出ていない人を Player Prefab から出す（席も作る）。
+    /// 定員に達したらそこでやめる。
+    /// </summary>
+    private void ServerSpawnMissingLocalPlayers(ulong clientId, int count)
+    {
         GameObject prefab = NetworkManager.NetworkConfig.PlayerPrefab;
         if (prefab == null)
         {
@@ -854,6 +904,7 @@ public class SpaceJunkSession : NetworkBehaviour
         }
     }
 
+    /// <summary>その人（人ごとの番号）の席を消す。</summary>
     private void RemoveSlot(ulong key)
     {
         for (int i = slots.Count - 1; i >= 0; i--)
@@ -878,6 +929,10 @@ public class SpaceJunkSession : NetworkBehaviour
         return -1;
     }
 
+    /// <summary>
+    /// 誰かが抜けたとき（ホストだけ）。**そのPCの席を全部消す**
+    /// （1台で複数人なら、2人目以降の席も一緒に。人ごとの番号から接続番号に戻して比べる）。
+    /// </summary>
     private void OnClientDisconnected(ulong clientId)
     {
         for (int i = slots.Count - 1; i >= 0; i--)
@@ -895,12 +950,9 @@ public class SpaceJunkSession : NetworkBehaviour
     /// </summary>
     private void AddSlot(ulong clientId)
     {
-        foreach (SpaceJunkPlayerSlot existing in slots)
+        if (HasSlot(clientId))
         {
-            if (existing.ClientId == clientId)
-            {
-                return;
-            }
+            return;
         }
 
         if (slots.Count >= SpaceJunkTeams.MaxPlayers)
@@ -995,12 +1047,15 @@ public class SpaceJunkSession : NetworkBehaviour
         }
     }
 
-    /// <summary>何本先取かを変える。</summary>
+    /// <summary>何本先取として、ホストが入れられる一番大きい数。</summary>
+    private const int MaxRoundsToWin = 5;
+
+    /// <summary>何本先取かを変える。範囲の外なら端にそろえる。</summary>
     public void ServerSetRoundsToWin(int value)
     {
         if (IsServer)
         {
-            roundsToWin.Value = Mathf.Clamp(value, 1, 5);
+            roundsToWin.Value = Mathf.Clamp(value, 1, MaxRoundsToWin);
         }
     }
 
@@ -1158,6 +1213,7 @@ public class SpaceJunkSession : NetworkBehaviour
         StartCoroutine(NextRoundAfterDelay());
     }
 
+    /// <summary>ラウンドの結果を見せる時間だけ待ってから、次のラウンドのマップへ移る。</summary>
     private IEnumerator NextRoundAfterDelay()
     {
         // ⚠ **WaitForSeconds ではなく WaitForSecondsRealtime を使うこと。**
@@ -1181,6 +1237,7 @@ public class SpaceJunkSession : NetworkBehaviour
         LoadNextMap();
     }
 
+    /// <summary>試合の結果を見せる時間だけ待ってから、全員をロビーへ戻す。</summary>
     private IEnumerator ReturnToLobbyAfterDelay()
     {
         // 上と同じ理由で、止まらない時計で数える

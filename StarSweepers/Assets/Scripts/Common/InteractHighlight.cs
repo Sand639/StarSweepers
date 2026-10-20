@@ -16,7 +16,17 @@ using UnityEngine;
 /// </summary>
 public class InteractHighlight
 {
+    /// <summary>
+    /// 色を持つ材質かどうかを見分けるための、色の項目の名前。
+    /// このプロジェクトの材質（URP の Lit）は、本体の色をこの名前で持っている。
+    /// これが無い材質（粒子やUIなど）は色を変えない。
+    /// </summary>
+    private const string BaseColorProperty = "_BaseColor";
+
+    /// <summary>いま色を変えている見た目。<see cref="originalColors"/> と同じ並び順。</summary>
     private readonly List<Renderer> renderers = new List<Renderer>();
+
+    /// <summary>変える前の色。<see cref="Clear"/> で戻すときに使う。</summary>
     private readonly List<Color> originalColors = new List<Color>();
 
     /// <summary>いま色を変えている最中か。</summary>
@@ -40,9 +50,10 @@ public class InteractHighlight
         foreach (Renderer renderer in renderers)
         {
             if (renderer == null || renderer.material == null
-                || !renderer.material.HasProperty("_BaseColor"))
+                || !renderer.material.HasProperty(BaseColorProperty))
             {
                 // 色を持たない見た目でも、数を合わせるために控えておく
+                // （renderers[i] と originalColors[i] が同じ物を指すようにする）
                 originalColors.Add(Color.white);
                 continue;
             }

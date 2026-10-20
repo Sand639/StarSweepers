@@ -38,6 +38,10 @@ namespace ProjectEL4S.MultiMouse
     /// </summary>
     public sealed class RawInputMouse : IDisposable
     {
+        /// <summary>
+        /// デバイス 1 台ぶんの「Poll されるまでの合計」。
+        /// マウスは 1 フレームに何十件も届くので、キーボードのように 1 件ずつ溜めず、移動量は足し算・ボタンはビットの OR でまとめる。
+        /// </summary>
         private sealed class Accum
         {
             public int DeltaX;
@@ -51,6 +55,7 @@ namespace ProjectEL4S.MultiMouse
         }
 
         private readonly object _lock = new object();
+        // デバイスのハンドル → 合計。Dictionary は並び順を保証しないので、初めて入力が来た順を _order に別で持つ
         private readonly Dictionary<IntPtr, Accum> _accum = new Dictionary<IntPtr, Accum>();
         private readonly List<IntPtr> _order = new List<IntPtr>();
         private int _eventCount;
@@ -81,6 +86,7 @@ namespace ProjectEL4S.MultiMouse
             get { lock (_lock) { return _lastThief; } }
         }
 
+        /// <summary>受信スレッドから呼ばれ、そのデバイスの合計に 1 件ぶんを足す。Poll はメインスレッドから来るので lock で守る。</summary>
         private void Push(IntPtr device, int dx, int dy, int wheel, int down, int up, bool hasAbs, float ax, float ay)
         {
             lock (_lock)
@@ -140,27 +146,31 @@ namespace ProjectEL4S.MultiMouse
 
 #if UNITY_STANDALONE_WIN || UNITY_EDITOR_WIN
 
-        private const int WM_CLOSE = 0x0010;
-        private const int WM_QUIT = 0x0012;
-        private const int WM_INPUT = 0x00FF;
-        private const uint PM_REMOVE = 0x0001;
-        private const uint QS_ALLINPUT = 0x04FF;
-        private const uint MWMO_INPUTAVAILABLE = 0x0004;
+        // ---- Windows が決めている番号（値は Win32 の定義どおり。名前も Windows のものに合わせてある）
+        // ウィンドウに届くメッセージの種類
+        private const int WM_CLOSE = 0x0010;             // 閉じる（Dispose から送って受信スレッドを止める）
+        private const int WM_QUIT = 0x0012;              // メッセージループを抜ける合図
+        private const int WM_INPUT = 0x00FF;             // Raw Input が 1 件届いた
+        private const uint PM_REMOVE = 0x0001;           // PeekMessage：読んだメッセージは列から取り除く
+        private const uint QS_ALLINPUT = 0x04FF;         // MsgWaitForMultipleObjectsEx：どの種類のメッセージが来ても起きる
+        private const uint MWMO_INPUTAVAILABLE = 0x0004; // MsgWaitForMultipleObjectsEx：待ち始める前から溜まっているメッセージでも起きる
 
-        private const uint RIDEV_REMOVE = 0x00000001;
-        private const uint RIDEV_INPUTSINK = 0x00000100;
-        private const uint RID_INPUT = 0x10000003;
-        private const uint RIDI_DEVICENAME = 0x20000007;
-        private const uint RIM_TYPEMOUSE = 0;
-        private const ushort MOUSE_MOVE_ABSOLUTE = 0x01;
+        // Raw Input の登録・問い合わせに使う値
+        private const uint RIDEV_REMOVE = 0x00000001;    // 登録を消す
+        private const uint RIDEV_INPUTSINK = 0x00000100; // 前面でないウィンドウにも届ける（見えない窓で受けるので必須）
+        private const uint RID_INPUT = 0x10000003;       // GetRawInputData：入力の中身をもらう
+        private const uint RIDI_DEVICENAME = 0x20000007; // GetRawInputDeviceInfo：デバイスの名前をもらう
+        private const uint RIM_TYPEMOUSE = 0;            // RAWINPUTHEADER.dwType がマウス
+        private const ushort MOUSE_MOVE_ABSOLUTE = 0x01; // RAWMOUSE.usFlags：移動量ではなく絶対座標で届く（ペンタブなど）
 
+        // RAWMOUSE.usButtonFlags のビット（押した・離したは別のビットで、同時に立つこともある）
         private const int RI_LEFT_DOWN = 0x0001;
         private const int RI_LEFT_UP = 0x0002;
         private const int RI_RIGHT_DOWN = 0x0004;
         private const int RI_RIGHT_UP = 0x0008;
         private const int RI_MIDDLE_DOWN = 0x0010;
         private const int RI_MIDDLE_UP = 0x0020;
-        private const int RI_WHEEL = 0x0400;
+        private const int RI_WHEEL = 0x0400;             // ホイールが回った（量は usButtonData に入る）
 
         [StructLayout(LayoutKind.Sequential)]
         private struct RAWINPUTDEVICE
@@ -200,8 +210,10 @@ namespace ProjectEL4S.MultiMouse
             public int ptY;
         }
 
+        // ウィンドウにメッセージが届くたびに Windows から呼ばれる関数の形（StaticWndProc がこれ）
         private delegate IntPtr WndProcDelegate(IntPtr hWnd, uint msg, IntPtr wParam, IntPtr lParam);
 
+        // ---- Windows の関数（user32.dll / kernel32.dll）。引数の名前と型は Win32 の定義どおり
         [DllImport("user32.dll", CharSet = CharSet.Unicode, SetLastError = true)]
         private static extern ushort RegisterClassExW(ref WNDCLASSEX lpwcx);
 
@@ -253,7 +265,9 @@ namespace ProjectEL4S.MultiMouse
 
         // 登録が残っているかを確かめる間隔。Unity が取り返すのはフォーカスが戻ったときなので、これで十分
         private const int RegistrationCheckIntervalMs = 200;
+        // GetRegisteredRawInputDevices の受け皿。このプロセスで登録されている「デバイスの種類」の数ぶん要る（32 もあれば足りる）
         private readonly RAWINPUTDEVICE[] _registeredBuf = new RAWINPUTDEVICE[32];
+        // 次に登録を確かめる時刻（Environment.TickCount のミリ秒）
         private int _nextRegistrationCheck;
         // こちらが登録する前にマウスの登録を持っていたウィンドウ（Unity）。止めるときにここへ返す
         private IntPtr _previousOwner;
@@ -275,15 +289,19 @@ namespace ProjectEL4S.MultiMouse
         private const int MouseLastXOffset = 12;  // LONG   lLastX
         private const int MouseLastYOffset = 16;  // LONG   lLastY
 
-        private Thread _thread;
-        private IntPtr _hwnd;
-        private IntPtr _buffer;
+        private Thread _thread;        // 受信スレッド（メッセージ専用ウィンドウを持ち、WM_INPUT を待ち続ける）
+        private IntPtr _hwnd;          // 受信用の見えないウィンドウ
+        private IntPtr _buffer;        // GetRawInputData の受け皿（1 件ぶん。毎回確保しないよう使い回す）
         private uint _bufferSize;
-        private string _className;
+        private string _className;     // ウィンドウクラスの名前（Start ごとにユニーク）
         private IntPtr _hInstance;
-        private volatile bool _stopRequested;
+        private volatile bool _stopRequested;   // 受信スレッドに「止まれ」を伝える印（別スレッドから書くので volatile）
         private volatile bool _disposed;
 
+        /// <summary>
+        /// 受信スレッドを立ち上げ、ウィンドウの用意と Raw Input の登録が済むまで待つ（最長 3 秒）。
+        /// 成功すれば true。失敗の理由は <see cref="LastError"/>。
+        /// </summary>
         public bool Start()
         {
             if (IsRunning) return true;
@@ -301,7 +319,7 @@ namespace ProjectEL4S.MultiMouse
                 Name = "RawInputMouse",
             };
             _thread.Start();
-            ready.Wait(3000);
+            ready.Wait(3000);   // 受信スレッドが ready.Set() するまで待つ（ミリ秒）。普段は一瞬で返る
             ready.Dispose();
 
             IsRunning = _hwnd != IntPtr.Zero && LastError == null;
@@ -312,6 +330,11 @@ namespace ProjectEL4S.MultiMouse
             return IsRunning;
         }
 
+        /// <summary>
+        /// 受信スレッドの本体。流れは「ウィンドウクラスを登録 → 見えないウィンドウを作る → 受け皿を確保 →
+        /// 今の登録の持ち主（Unity）を覚える → Raw Input を登録 → メッセージループ（止まるまで） → 片付け」。
+        /// 内側の try/finally は、途中で失敗しても必ず ready.Set() して <see cref="Start"/> を待たせっぱなしにしないため。
+        /// </summary>
         private void ThreadMain(ManualResetEventSlim ready)
         {
             t_owner = this;
@@ -378,6 +401,7 @@ namespace ProjectEL4S.MultiMouse
             }
         }
 
+        /// <summary>RegisterRawInputDevices に渡す「マウスを target のウィンドウへ」という登録 1 件ぶん。</summary>
         private static RAWINPUTDEVICE[] BuildDevices(uint flags, IntPtr target)
         {
             return new[]
@@ -423,6 +447,7 @@ namespace ProjectEL4S.MultiMouse
         /// </summary>
         private void EnsureRegistration()
         {
+            // TickCount は約 25 日で一周して負になるが、「引き算して符号を見る」形なら一周をまたいでも正しく比べられる
             int now = Environment.TickCount;
             if (now - _nextRegistrationCheck < 0) return;
             _nextRegistrationCheck = now + RegistrationCheckIntervalMs;
@@ -469,6 +494,7 @@ namespace ProjectEL4S.MultiMouse
             return true;
         }
 
+        /// <summary>ウィンドウのクラス名（ログで「誰に取られたか」を見分けるため）。取れなければハンドルの 16 進。</summary>
         private static string ClassNameOf(IntPtr hwnd)
         {
             if (hwnd == IntPtr.Zero) return "(登録そのものが消えていた)";
@@ -476,6 +502,10 @@ namespace ProjectEL4S.MultiMouse
             return GetClassNameW(hwnd, sb, sb.Capacity) > 0 ? sb.ToString() : "0x" + hwnd.ToInt64().ToString("X");
         }
 
+        /// <summary>
+        /// 受信スレッドの片付け（スレッドの最後に必ず通る）。
+        /// unregisterRawInput は「登録まで済んでいたか」。済んでいなければ登録には触らない（他人の登録を消さないため）。
+        /// </summary>
         private void Teardown(bool unregisterRawInput)
         {
             // 先に受信を止める。
@@ -510,6 +540,10 @@ namespace ProjectEL4S.MultiMouse
             }
         }
 
+        /// <summary>
+        /// 受信用ウィンドウにメッセージが届くたびに Windows から呼ばれる（受信スレッド上）。
+        /// static なのは、関数ポインタとして Windows に渡すため。自分のインスタンスは t_owner から引く。
+        /// </summary>
         private static IntPtr StaticWndProc(IntPtr hWnd, uint msg, IntPtr wParam, IntPtr lParam)
         {
             // ここから managed 例外を native 側へ抜かすとプロセスが落ちるので、全部受け止める
@@ -532,26 +566,31 @@ namespace ProjectEL4S.MultiMouse
             return DefWindowProcW(hWnd, msg, wParam, lParam);
         }
 
+        /// <summary>WM_INPUT 1 件を読み、そのデバイスの合計に足す。読めない・要らない入力は黙って捨てる。</summary>
         private void HandleRawInput(IntPtr hRawInput)
         {
             if (_buffer == IntPtr.Zero) return;
 
             uint size = _bufferSize;
             uint copied = GetRawInputData(hRawInput, RID_INPUT, _buffer, ref size, (uint)HeaderSize);
-            if (copied == uint.MaxValue || copied < HeaderSize) return;
+            if (copied == uint.MaxValue || copied < HeaderSize) return;   // uint.MaxValue = 失敗（(UINT)-1）
 
             // PtrToStructure を使うと 1 イベントごとに boxing が発生するので、直接読む
+            // （先頭 0 = dwType、8 = hDevice。HeaderSize のコメントの並びどおり）
             if ((uint)Marshal.ReadInt32(_buffer, 0) != RIM_TYPEMOUSE) return;
             IntPtr device = Marshal.ReadIntPtr(_buffer, 8);
 
             int mouse = HeaderSize;
             ushort usFlags = (ushort)Marshal.ReadInt16(_buffer, mouse + MouseFlagsOffset);
+            // ulButtons（4 バイト）は、下 2 バイトが usButtonFlags（どのボタンが押された・離された）、
+            // 上 2 バイトが usButtonData（ホイールの回転量。符号付き）という 2 つの値の合わさった物
             int buttons = Marshal.ReadInt32(_buffer, mouse + MouseButtonsOffset);
             int flags = buttons & 0xFFFF;
             short buttonData = (short)(buttons >> 16);
             int lastX = Marshal.ReadInt32(_buffer, mouse + MouseLastXOffset);
             int lastY = Marshal.ReadInt32(_buffer, mouse + MouseLastYOffset);
 
+            // Windows のビット並びから、こちらの並び（bit0:左 bit1:右 bit2:中。RawMouseFrame.ButtonDown と同じ）に詰め直す
             int down = 0;
             int up = 0;
             if ((flags & RI_LEFT_DOWN) != 0) down |= 1 << 0;
@@ -577,10 +616,12 @@ namespace ProjectEL4S.MultiMouse
         /// <summary>デバイスの識別名（\\?\HID#VID_xxxx... 形式）。どのマウスかの判別用。</summary>
         public string GetDeviceName(IntPtr device)
         {
+            // 1 回目は受け皿を渡さずに「何文字か」だけ聞き、2 回目でその大きさの受け皿に書いてもらう（Win32 でよくある形）
             uint size = 0;
             if (GetRawInputDeviceInfoW(device, RIDI_DEVICENAME, IntPtr.Zero, ref size) != 0 || size == 0)
                 return device.ToString();
 
+            // size は文字数。Unicode は 1 文字 2 バイトで、終端の 1 文字ぶんも足しておく
             IntPtr buf = Marshal.AllocHGlobal((int)((size + 1) * 2));
             try
             {
@@ -643,6 +684,7 @@ namespace ProjectEL4S.MultiMouse
                 PostMessageW(_hwnd, WM_CLOSE, IntPtr.Zero, IntPtr.Zero);
             }
             // PostMessage を取りこぼしても MessageLoop が 100ms ごとにフラグを見るので必ず抜ける
+            // （2000 = スレッドが終わるのを待つ上限のミリ秒。これを超えたら諦めてメインスレッドを止めない）
             if (!thread.Join(2000))
             {
                 LastError = "Raw Input スレッドの停止がタイムアウトしました";

@@ -253,18 +253,7 @@ public class SpaceJunkEventSettings
             Debug.LogWarning($"[JUNK] デバッグ用の固定で、イベント「{SpaceJunkEvents.DefaultName(debugForceEvent)}」を出します。" +
                              "確かめ終わったら SpaceJunkSession の Debug Force Event を None に戻してください。");
 
-            if (pool != null)
-            {
-                foreach (SpaceJunkEventEntry entry in pool)
-                {
-                    if (entry != null && entry.kind == debugForceEvent)
-                    {
-                        return entry;
-                    }
-                }
-            }
-
-            return new SpaceJunkEventEntry(debugForceEvent, string.Empty, 0f);
+            return FindForcedEntry();
         }
 
         if (pool == null)
@@ -272,20 +261,14 @@ public class SpaceJunkEventSettings
             return null;
         }
 
-        int total = 0;
-        foreach (SpaceJunkEventEntry entry in pool)
-        {
-            if (entry != null)
-            {
-                total += Mathf.Max(0, entry.weight);
-            }
-        }
-
+        int total = TotalWeight();
         if (total <= 0)
         {
             return null;
         }
 
+        // 0〜合計 の中から1つ引き、候補の選ばれやすさを順に引いていって、0 を下回ったところの候補にする
+        // （選ばれやすさが大きい候補ほど、引いた数がその候補の範囲に入りやすい）
         int roll = Random.Range(0, total);
 
         foreach (SpaceJunkEventEntry entry in pool)
@@ -303,5 +286,40 @@ public class SpaceJunkEventSettings
         }
 
         return null;
+    }
+
+    /// <summary>
+    /// デバッグ用の固定イベント（<see cref="debugForceEvent"/>）の行。
+    /// Pool にその種類の行があればその行（名前・説明・続く秒数を使う）。無ければ、初期の名前でラウンドの終わりまで続く行を作る。
+    /// </summary>
+    private SpaceJunkEventEntry FindForcedEntry()
+    {
+        if (pool != null)
+        {
+            foreach (SpaceJunkEventEntry entry in pool)
+            {
+                if (entry != null && entry.kind == debugForceEvent)
+                {
+                    return entry;
+                }
+            }
+        }
+
+        return new SpaceJunkEventEntry(debugForceEvent, string.Empty, 0f);
+    }
+
+    /// <summary>候補の選ばれやすさ（Weight）の合計。空の行は数えない。</summary>
+    private int TotalWeight()
+    {
+        int total = 0;
+        foreach (SpaceJunkEventEntry entry in pool)
+        {
+            if (entry != null)
+            {
+                total += Mathf.Max(0, entry.weight);
+            }
+        }
+
+        return total;
     }
 }

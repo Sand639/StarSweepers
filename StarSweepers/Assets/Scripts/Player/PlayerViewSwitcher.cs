@@ -95,6 +95,8 @@ public class PlayerViewSwitcher : MonoBehaviour
         }
         else
         {
+            // 毎フレーム「残りの距離の一定の割合」だけ近づける。
+            // Exp を使うと、フレームレートが変わっても同じ速さで寄っていく
             cameraTransform.localPosition = Vector3.Lerp(
                 cameraTransform.localPosition,
                 target,
@@ -109,6 +111,7 @@ public class PlayerViewSwitcher : MonoBehaviour
         }
     }
 
+    /// <summary>切り替えキー（既定は V）が押されたら、TPS と FPS を入れ替える。</summary>
     private void ReadSwitchKey()
     {
         var keyboard = Keyboard.current;
@@ -136,6 +139,10 @@ public class PlayerViewSwitcher : MonoBehaviour
         ApplyVisibility();
     }
 
+    /// <summary>
+    /// いまのモードでカメラが居るべき位置（首振りの中心 CameraPivot から見た相対位置）。
+    /// TPS は「少し上・後ろ」、FPS は目の位置そのまま（＋微調整）。
+    /// </summary>
     private Vector3 GetTargetPosition()
     {
         if (CurrentMode == ViewMode.FirstPerson)
@@ -143,6 +150,7 @@ public class PlayerViewSwitcher : MonoBehaviour
             return firstPersonOffset;
         }
 
+        // z がマイナス＝キャラクターの後ろ
         return new Vector3(0f, heightOffset, -distance);
     }
 

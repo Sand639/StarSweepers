@@ -41,12 +41,14 @@ public static class ReticleFactory
         reticleObject.transform.SetParent(canvasObject.transform, false);
         reticleObject.layer = canvasObject.layer;
 
+        // 画面の中央に、40×40 の入れ物を置く（大きさの単位は 1920×1080 のときのピクセル）
         RectTransform reticleRect = reticleObject.AddComponent<RectTransform>();
         reticleRect.anchorMin = new Vector2(0.5f, 0.5f);
         reticleRect.anchorMax = new Vector2(0.5f, 0.5f);
         reticleRect.anchoredPosition = Vector2.zero;
         reticleRect.sizeDelta = new Vector2(40f, 40f);
 
+        // 中央の点は 3×3。4本の線は太さ 2・長さ 9 で、中央から 11 離す（点と線の間に少し隙間ができる）
         List<Graphic> parts = new List<Graphic>
         {
             CreatePart(reticleRect, "Center", new Vector2(0f, 0f), new Vector2(3f, 3f)),
@@ -58,6 +60,7 @@ public static class ReticleFactory
 
         Reticle reticle = reticleObject.AddComponent<Reticle>();
 
+        // private な [SerializeField] の一覧（parts）に、作った画像をエディタから入れる
         SerializedObject serialized = new SerializedObject(reticle);
         SerializedProperty partsProperty = serialized.FindProperty("parts");
         partsProperty.arraySize = parts.Count;

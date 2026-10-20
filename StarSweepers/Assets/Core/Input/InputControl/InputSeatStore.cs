@@ -27,8 +27,10 @@ namespace ProjectEL4S.InputControl
     {
         public const string FileName = "InputSeats.json";
 
+        /// <summary>保存ファイルの場所。Unity が決める「この製品の保存用フォルダ」（persistentDataPath）の直下。</summary>
         public static string FilePath => Path.Combine(Application.persistentDataPath, FileName);
 
+        /// <summary>保存ファイルがあるか（読めるかどうかまでは見ない）。</summary>
         public static bool Exists => File.Exists(FilePath);
 
         /// <summary>無い・読めないときは null。</summary>
@@ -40,6 +42,7 @@ namespace ProjectEL4S.InputControl
             {
                 var data = JsonUtility.FromJson<InputSeatSaveData>(File.ReadAllText(path));
                 if (data == null) return null;
+                // 手で書き換えられて項目が消えていても、読む側で null を見なくて済むようにしておく
                 data.keyboards = data.keyboards ?? Array.Empty<string>();
                 data.mice = data.mice ?? Array.Empty<string>();
                 return data;
@@ -51,11 +54,13 @@ namespace ProjectEL4S.InputControl
             }
         }
 
+        /// <summary>ファイルに書き込む（上書き）。書けなければ警告を出して false。</summary>
         public static bool Save(InputSeatSaveData data)
         {
             string path = FilePath;
             try
             {
+                // 初回はフォルダ自体がまだ無いことがある
                 Directory.CreateDirectory(Path.GetDirectoryName(path));
                 File.WriteAllText(path, JsonUtility.ToJson(data, true));
                 Debug.Log($"[InputSeat] キーボード・マウスの登録を保存しました: {path}");
@@ -68,6 +73,7 @@ namespace ProjectEL4S.InputControl
             }
         }
 
+        /// <summary>保存ファイルを消す（無ければ何もしない）。消せなくても例外にはせず、警告だけ出す。</summary>
         public static void Delete()
         {
             string path = FilePath;

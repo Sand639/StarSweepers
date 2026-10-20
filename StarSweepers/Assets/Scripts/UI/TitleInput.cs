@@ -35,6 +35,7 @@ public class TitleInput : MonoBehaviour
     private void OnEnable()
     {
         // 名前はどの画面の欄でも同じ。ほかの画面で変えた名前を、開くたびに入れ直す
+        // （Application.isPlaying は、再生していないとき（編集中）に保存された設定を触らないための用心）
         InputField field = Field;
         if (kind == TitleInputKind.PlayerName && Application.isPlaying && field != null && field.text != GameSettings.PlayerName)
         {

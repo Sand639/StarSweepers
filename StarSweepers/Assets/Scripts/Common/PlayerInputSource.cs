@@ -25,6 +25,7 @@ public class PlayerInputSource : MonoBehaviour
              "0 以上 = その番号の席（0 = P1、1 = P2）の機器だけで動く。シーンに InputSeatManager が要る")]
     [SerializeField] private int seatIndex = -1;
 
+    /// <summary>「席が見つからない」の警告を、毎フレームではなく一度だけ出すための印。席の番号を変えたら出し直す。</summary>
     private bool warnedNoSeat;
 
     /// <summary>席の番号。-1 なら単体操作。遊んでいる途中で変えてもよい。</summary>
@@ -213,6 +214,8 @@ public class PlayerInputSource : MonoBehaviour
         return (seat.HasKeyboard && seat.Keyboard.WasPressedThisFrame(key))
             || (seat.HasGamepad && seat.GamepadArmed && seat.Gamepad[button].wasPressedThisFrame);
     }
+
+    // ---- 席のボタン（席が無いときは「押されていない」扱い）----
 
     private bool SeatPressed(InputSeatButton button)
     {

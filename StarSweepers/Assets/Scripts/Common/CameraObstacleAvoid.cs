@@ -53,6 +53,10 @@ public class CameraObstacleAvoid : MonoBehaviour
     [Tooltip("**無視する物のまとまり。** 空なら、この物の一番上の親（自分のキャラクター）を無視する")]
     [SerializeField] private Transform ignoreRoot;
 
+    /// <summary>
+    /// 間に何があるかを調べるときの入れ物。毎フレーム作り直さないよう使い回している。
+    /// 一度に数えるのは16個まで（カメラと体の間にそれ以上の物が重なることはまず無い）。
+    /// </summary>
     private readonly RaycastHit[] hits = new RaycastHit[16];
 
     /// <summary>いま何かに遮られて、カメラを寄せているか。UIの表示などに使える。</summary>
@@ -71,6 +75,8 @@ public class CameraObstacleAvoid : MonoBehaviour
             return;
         }
 
+        // カメラは首振りの中心（親）からの相対位置で置かれているので、
+        // その長さ＝「本来居たい距離」、その向き＝「調べる方向」になる
         Vector3 local = transform.localPosition;
         float desired = local.magnitude;
 

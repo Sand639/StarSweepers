@@ -33,8 +33,15 @@ namespace ProjectEL4S.InputControl
     /// 既定の対応:
     ///   左マウス(0番) = 左スティック / 左クリック = 左トリガー / 右クリック = LB
     ///   右マウス(1番) = 右スティック / 左クリック = RB       / 右クリック = 右トリガー
+    ///
+    /// ## 位置づけ
+    ///
+    /// **「1人が両手にマウスを1台ずつ持つ」遊び方**のための部品。左右の手を、ゲームパッドの左右スティックに見立てる。
+    /// 「1人1席」で読みたいときは、こちらではなく <see cref="InputSeatManager"/> を使うこと。
+    /// 2026/10 時点では、ゲーム側のスクリプトからはまだ使われていない（確認用の <see cref="DualDeviceInputTestHud"/> だけ）。
     /// </summary>
     [DisallowMultipleComponent]
+    // マウスの管理役（MultiMouseManager = -100）が先に動き、ふつうのスクリプト（0）より先に値をそろえておくための順番
     [DefaultExecutionOrder(-50)]
     public sealed class DualDeviceInput : MonoBehaviour
     {
@@ -68,6 +75,7 @@ namespace ProjectEL4S.InputControl
             /// <summary>この側のデバイスが使える状態か（マウス未割り当て / パッド未接続なら false）。</summary>
             public bool IsActive { get; internal set; }
 
+            // 前のフレームの「押されているか」。Down / Up（押した瞬間・離した瞬間）を出すために持つ
             internal bool PrevTriggerPressed;
             internal bool PrevBumperPressed;
         }
@@ -80,7 +88,9 @@ namespace ProjectEL4S.InputControl
         [SerializeField] private int _rightMousePointerIndex = 1;
 
         [Header("ゲームパッド割り当て（変更可）")]
+        [Tooltip("左手側に使うスティック")]
         [SerializeField] private GamepadStick _leftSideStick = GamepadStick.LeftStick;
+        [Tooltip("右手側に使うスティック")]
         [SerializeField] private GamepadStick _rightSideStick = GamepadStick.RightStick;
 
         [Header("感度・閾値")]
@@ -187,6 +197,11 @@ namespace ProjectEL4S.InputControl
             }
         }
 
+        /// <summary>
+        /// 今フレーム使うデバイスを決める。
+        /// 自動切り替えのときは「今フレーム動いたほう」を優先し（ゲームパッドが先）、
+        /// どちらも動いていなければ直前のデバイスをそのまま使う（毎フレーム切り替わってちらつかないように）。
+        /// </summary>
         private DualInputScheme ResolveScheme(Gamepad gamepad)
         {
             if (!_autoSwitchScheme)
@@ -206,6 +221,7 @@ namespace ProjectEL4S.InputControl
 
         private bool HasGamepadActivity(Gamepad gamepad)
         {
+            // sqrMagnitude（長さの 2 乗）と比べるので、デッドゾーンも 2 乗しておく（平方根の計算を避ける）
             float dz = _stickDeadzone * _stickDeadzone;
             if (gamepad.leftStick.ReadValue().sqrMagnitude > dz) return true;
             if (gamepad.rightStick.ReadValue().sqrMagnitude > dz) return true;
@@ -298,6 +314,11 @@ namespace ProjectEL4S.InputControl
             side.BumperPressed = bumper;
         }
 
+        /// <summary>
+        /// スティックのデッドゾーン処理。
+        /// 単に「デッドゾーン以下なら 0」にするだけだと、縁を越えた瞬間に値が 0 → 0.15 に飛ぶので、
+        /// 縁で 0・倒し切りで 1 になるよう残りの範囲を引き延ばす（向きは変えず、長さだけ直す）。
+        /// </summary>
         private Vector2 ApplyDeadzone(Vector2 v)
         {
             float mag = v.magnitude;

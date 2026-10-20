@@ -44,16 +44,26 @@ public class FishingPlayerController : MonoBehaviour, ILaunchable
     private InputActionMap playerMap;
     private InputAction moveAction;
     private PlayerInputSource input;
+
+    /// <summary>上下方向の速さ（メートル／秒）。重力で減り、吹き飛ばしで上向きになる。</summary>
     private float verticalVelocity;
+
+    /// <summary>吹き飛ばされた横方向の勢い（メートル／秒）。歩く速さに足され、時間で弱まる。</summary>
     private Vector3 launchVelocity;
+
+    /// <summary>固定アンカー（<see cref="AnchorGimmick"/>）に引っ張られている最中か。その間は位置を ThrowController 側が動かす。</summary>
     private bool anchorMovementActive;
 
-    /// <summary>アンカー移動中は通常の入力移動と重力を止める。</summary>
+    /// <summary>
+    /// アンカー移動中は通常の入力移動と重力を止める。
+    /// <see cref="ThrowController"/> がアンカーを引っ掛けたとき true、着いた・やめたときに false で呼ぶ。
+    /// </summary>
     public void SetAnchorPulling(bool isPulling)
     {
         anchorMovementActive = isPulling;
         if (isPulling)
         {
+            // 引っ張られている間に落ちたり飛ばされたりしないよう、勢いを捨てる
             verticalVelocity = 0f;
             launchVelocity = Vector3.zero;
         }
@@ -116,6 +126,8 @@ public class FishingPlayerController : MonoBehaviour, ILaunchable
     private void OnDisable()
     {
         playerMap?.Disable();
+
+        // 止められたときに勢いを残さない（次に動き出した瞬間に飛んでいかないように）
         launchVelocity = Vector3.zero;
         verticalVelocity = 0f;
     }
@@ -170,6 +182,10 @@ public class FishingPlayerController : MonoBehaviour, ILaunchable
             }
         }
 
+        // ---- 上下の速さ ----
+        // アンカーに引っ張られている間は落ちない（位置は AnchorGimmick が水平に動かす）。
+        // 地面に着いているときは、0 ではなく少し下向き（-2 m/秒）に押し付けておく。
+        // 0 だと段差やゆるい坂で isGrounded が付いたり消えたりして、落下の速さがちらつくため
         if (anchorMovementActive)
         {
             verticalVelocity = 0f;
@@ -183,15 +199,19 @@ public class FishingPlayerController : MonoBehaviour, ILaunchable
             verticalVelocity += gravity * Time.deltaTime;
         }
 
+        // 横＝歩く速さ＋吹き飛ばされた勢い、縦＝重力。1回の Move にまとめて渡す
         Vector3 velocity = anchorMovementActive ? Vector3.zero : direction * moveSpeed + launchVelocity;
         velocity.y = verticalVelocity;
 
         CollisionFlags collisions = characterController.Move(velocity * Time.deltaTime);
+
+        // 上に飛ばされて天井に頭をぶつけたら、上向きの勢いを消す（天井に張り付かないように）
         if ((collisions & CollisionFlags.Above) != 0 && verticalVelocity > 0f)
         {
             verticalVelocity = 0f;
         }
 
+        // 吹き飛ばされた横の勢いを、フレームレートに依らず同じ速さで弱めていく
         if (anchorMovementActive)
         {
             launchVelocity = Vector3.zero;
@@ -203,9 +223,14 @@ public class FishingPlayerController : MonoBehaviour, ILaunchable
         }
     }
 
-    /// <summary>スタンせずに吹き飛ばす。オンラインでは自分の体だけが受け取る。</summary>
+    /// <summary>
+    /// スタンせずに吹き飛ばす。オンラインでは自分の体だけが受け取る。
+    /// 吹き飛ばす爆弾（`Sou/KnockBackExplosiveObject.cs`）から呼ばれる。
+    /// 横の勢いは上書き（連続で巻き込まれたら新しいほう）、上の勢いは上向きのときだけ受け取る。
+    /// </summary>
     public void Launch(Vector3 velocity)
     {
+        // アンカーに引っ張られている最中や、操作が止まっている体（オンラインの他人の体など）には効かせない
         if (anchorMovementActive || !isActiveAndEnabled || characterController == null || !characterController.enabled)
         {
             return;

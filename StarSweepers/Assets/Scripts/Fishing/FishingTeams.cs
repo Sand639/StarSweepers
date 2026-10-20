@@ -64,6 +64,7 @@ public static class FishingTeams
             return 0;
         }
 
+        // 上限を超えた参加番号が来ても落ちないよう、最後のチームに入れる
         return Mathf.Min(playerIndex / PlayersPerTeam, MaxTeams - 1);
     }
 
@@ -75,6 +76,7 @@ public static class FishingTeams
             return 1;
         }
 
+        // 切り上げの割り算（3人 → 2チーム、4人 → 2チーム、5人 → 3チーム）
         int teams = (playerCount + PlayersPerTeam - 1) / PlayersPerTeam;
         return Mathf.Clamp(teams, 1, MaxTeams);
     }

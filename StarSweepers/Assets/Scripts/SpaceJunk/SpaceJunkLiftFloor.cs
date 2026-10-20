@@ -43,8 +43,14 @@ public class SpaceJunkLiftFloor : MonoBehaviour
     [SerializeField] private float carryHeight = 1.5f;
 
     private Rigidbody body;
+
+    /// <summary>置いたときの位置（＝下にいるときの位置）。ここから上へ動く。</summary>
     private Vector3 basePosition;
+
+    /// <summary>いまの高さ（置いた位置からの m）。Update で決め、FixedUpdate で物理に反映する。</summary>
     private float currentHeight;
+
+    /// <summary>乗っている人を探すときの、当たり判定の入れ物（一度に 32 個まで。足りなければ増やす）。毎回作らないため。</summary>
     private readonly Collider[] overlapBuffer = new Collider[32];
 
     private void Awake()
@@ -58,11 +64,13 @@ public class SpaceJunkLiftFloor : MonoBehaviour
         currentHeight = 0f;
     }
 
+    /// <summary>時計から今の高さを決め、前のフレームからの差だけ乗っている人を上下させる。</summary>
     private void Update()
     {
         float target = TargetHeight();
         float delta = target - currentHeight;
 
+        // ほとんど動いていない（0.01mm 未満）フレームでは運ばない
         if (Mathf.Abs(delta) > 0.00001f)
         {
             CarryPlayers(delta);

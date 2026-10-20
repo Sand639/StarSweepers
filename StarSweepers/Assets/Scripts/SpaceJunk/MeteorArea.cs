@@ -3,6 +3,11 @@ using UnityEngine;
 /// <summary>
 /// 隕石を落としてよい床の範囲。
 /// BoxCollider の内側から、攻撃円全体がはみ出さない落下点を返す。
+///
+/// **床の子に置いて使う**（`Tools > StarSweepers > Space Junk > Meteor > Add To Current Scene` が自動で作る）。
+/// どの範囲に落とすかは <see cref="MeteorManager"/> の Active Areas に並べて決める。
+/// 床そのものの当たり判定は触らず、この部品の BoxCollider（トリガー）だけで範囲を決める。
+/// 機能の説明は `Documents/機能ドキュメント/隕石攻撃.md`。
 /// </summary>
 [RequireComponent(typeof(BoxCollider))]
 public class MeteorArea : MonoBehaviour
@@ -10,10 +15,12 @@ public class MeteorArea : MonoBehaviour
     [Tooltip("隕石を落としてよい範囲。空なら同じ物のBoxColliderを使う")]
     [SerializeField] private BoxCollider areaCollider;
 
+    /// <summary>いま落下先の候補にしてよいか（この部品と GameObject と範囲の当たり判定がすべて有効）。</summary>
     public bool IsAvailable =>
         isActiveAndEnabled && gameObject.activeInHierarchy &&
         AreaCollider != null && AreaCollider.enabled;
 
+    /// <summary>範囲の当たり判定。インスペクターで空のままでも、同じ物の BoxCollider を拾って使う。</summary>
     private BoxCollider AreaCollider
     {
         get
@@ -28,6 +35,7 @@ public class MeteorArea : MonoBehaviour
 
     private void Reset()
     {
+        // 範囲を決めるだけの判定で、物をさえぎらない（トリガー）
         areaCollider = GetComponent<BoxCollider>();
         areaCollider.isTrigger = true;
     }
@@ -53,6 +61,10 @@ public class MeteorArea : MonoBehaviour
 
     /// <summary>
     /// 0～1の座標を使って落下点を返す。テストや決まった位置を選びたい場合にも使える。
+    ///
+    /// <paramref name="radius"/> は攻撃円の半径（m・ワールド）。この半径ぶんだけ範囲の縁から内側に寄せるので、
+    /// 返す点を中心にした円が範囲からはみ出さない。範囲が円より小さければ false。
+    /// 0.5, 0.5 を渡すと範囲の中心。返す点の高さは範囲（BoxCollider）の上面。
     /// </summary>
     public bool TryGetPoint(
         float radius,
@@ -67,6 +79,9 @@ public class MeteorArea : MonoBehaviour
             return false;
         }
 
+        // 半径はワールドの長さなので、この物の拡大率で割ってローカルの長さに直す
+        // （親ごと2倍に拡大した床なら、ローカルでは半分の長さで済む）。
+        // 拡大率がほぼ0（つぶれている）なら割れないので使わない
         float worldPerLocalX = transform.TransformVector(Vector3.right).magnitude;
         float worldPerLocalZ = transform.TransformVector(Vector3.forward).magnitude;
         if (worldPerLocalX <= 0.0001f || worldPerLocalZ <= 0.0001f)
@@ -102,6 +117,7 @@ public class MeteorArea : MonoBehaviour
             return;
         }
 
+        // 落としてよい範囲を、シーン画面に赤橙の箱で出す（選んでいなくても見えるように）
         Gizmos.color = new Color(1f, 0.3f, 0.1f, 0.35f);
         Gizmos.matrix = transform.localToWorldMatrix;
         Gizmos.DrawCube(box.center, box.size);

@@ -69,6 +69,8 @@ public static class WorldGravity
     {
         IsControlled = false;
         Set(Standard);
+
+        // Set() の中で「いじっている」印が付くので、戻し終わったあとにもう一度外す
         IsControlled = false;
     }
 

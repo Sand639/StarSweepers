@@ -25,11 +25,15 @@ public class ScoreBoard : MonoBehaviour
     /// <summary>直前に起きたこと（「北のポケットに +1」など）。画面表示用。</summary>
     public string LastEvent { get; private set; } = string.Empty;
 
-    /// <summary>直前のことが起きた時刻。少しの間だけ表示するために使う。</summary>
+    /// <summary>
+    /// 直前のことが起きた時刻。少しの間だけ表示するために使う。
+    /// -999 は「まだ何も起きていない」の意味（十分に昔の時刻にしておけば、表示側は最初から消えたままになる）。
+    /// </summary>
     public float LastEventTime { get; private set; } = -999f;
 
     private void Awake()
     {
+        // インスペクターで 0 や負の数が入っていても、最低1人分は持つ
         scores = new int[Mathf.Max(1, playerCount)];
     }
 

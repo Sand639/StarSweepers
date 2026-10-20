@@ -5,19 +5,36 @@ using UnityEditor.SceneManagement;
 using UnityEngine;
 using UnityEngine.UI;
 
-/// <summary>タイマーのプレハブと単体確認用シーンを作成する。</summary>
+/// <summary>
+/// **タイマー（<see cref="GameTimerUI"/>）のプレハブと、単体確認用のシーンを作成するツール。**
+///
+/// Unityのメニューから実行する。
+/// ・`Tools > StarSweepers > タイマーUIの検証シーンを作る` … プレハブを更新し、検証シーンを作り直す
+/// ・`Tools > StarSweepers > タイマーUIプレハブを更新` … プレハブだけ更新する
+///
+/// 文字に TextMeshPro を使うので、その標準フォント（LiberationSans SDF）が無ければ先に取り込む。
+/// 取り込みは非同期なので、終わってから改めてシーンを作る（<see cref="OnTmpResourcesImported"/>）。
+///
+/// ※ Editor フォルダにあるため、ゲームのビルドには含まれない。
+/// </summary>
 public static class GameTimerUISetup
 {
+    // 画像素材の置き場（背景と、白いリングのゲージ）
     private const string AssetFolder = "Assets/Scenes/Test/shotaro";
     private const string BackdropPath = AssetFolder + "/UI_Timer_Back.png";
     private const string GaugePath = AssetFolder + "/UI_Timer_Radial.png";
     private const string PrefabPath = "Assets/Resources/GameTimerUI.prefab";
+
+    // TextMeshPro の標準の置き場
     private const string FontPath = "Assets/TextMesh Pro/Resources/Fonts & Materials/LiberationSans SDF.asset";
     private const string TmpSettingsPath = "Assets/TextMesh Pro/Resources/TMP Settings.asset";
+
+    // 以前に Resources の直下へ仮置きしていた場所。残っていれば標準の置き場へ戻す
     private const string TemporaryFontPath = "Assets/Resources/GameTimerFont.asset";
     private const string TemporarySettingsPath = "Assets/Resources/TMP Settings.asset";
     private const string ScenePath = "Assets/Scenes/Test/GameTimerUITest.unity";
 
+    /// <summary>プレハブを更新してから、それを置いただけの検証シーンを作って保存する。</summary>
     [MenuItem("Tools/StarSweepers/タイマーUIの検証シーンを作る")]
     public static void CreateTestScene()
     {
@@ -36,10 +53,12 @@ public static class GameTimerUISetup
         EditorSceneManager.SaveScene(scene, ScenePath);
         AssetDatabase.SaveAssets();
         Debug.Log($"タイマーUIのプレハブと検証シーンを作成しました: {PrefabPath} / {ScenePath}");
+        // コマンドラインから Unity を起動して実行したときは、終わったら Unity を閉じる
         if (Application.isBatchMode)
             EditorApplication.Exit(0);
     }
 
+    /// <summary>画像の設定とプレハブだけを更新する（検証シーンは作り直さない）。</summary>
     [MenuItem("Tools/StarSweepers/タイマーUIプレハブを更新")]
     public static void UpdateTimerPrefabOnly()
     {
@@ -52,6 +71,11 @@ public static class GameTimerUISetup
             EditorApplication.Exit(0);
     }
 
+    /// <summary>
+    /// TextMeshPro の標準フォントが使える状態にする。
+    /// すでにあれば true。無ければ標準の素材パッケージの取り込みを始めて false を返す
+    /// （取り込みが終わると <see cref="OnTmpResourcesImported"/> が呼ばれ、そこからシーン作成をやり直す）。
+    /// </summary>
     private static bool EnsureTmpFont()
     {
         RestoreTmpResourceLocation(TemporarySettingsPath, TmpSettingsPath);
@@ -86,6 +110,7 @@ public static class GameTimerUISetup
         return false;
     }
 
+    /// <summary>標準の素材パッケージの取り込みが終わったら、フォントがあることを確かめて、シーン作成をやり直す。</summary>
     private static void OnTmpResourcesImported(string packageName)
     {
         AssetDatabase.importPackageCompleted -= OnTmpResourcesImported;
@@ -102,6 +127,7 @@ public static class GameTimerUISetup
             CreateTestScene();
     }
 
+    /// <summary>プロジェクトの中から、その種類・その名前の素材を探してパスを返す。無ければ空文字。</summary>
     private static string FindTmpAsset(string filter, string assetName)
     {
         foreach (string guid in AssetDatabase.FindAssets(filter))
@@ -112,6 +138,7 @@ public static class GameTimerUISetup
         return string.Empty;
     }
 
+    /// <summary>仮置きの場所に素材が残っていて、標準の場所に無ければ、標準の場所へ移す（参照が外れないよう Unity の機能で移す）。</summary>
     private static void RestoreTmpResourceLocation(string temporaryPath, string standardPath)
     {
         if (AssetDatabase.LoadMainAssetAtPath(temporaryPath) == null || AssetDatabase.LoadMainAssetAtPath(standardPath) != null) return;
@@ -119,6 +146,11 @@ public static class GameTimerUISetup
         if (!string.IsNullOrEmpty(error)) Debug.LogError($"TextMeshPro素材を移動できませんでした: {error}");
     }
 
+    /// <summary>
+    /// 白いリングの画像（GameTimerGauge.png）を、無ければコードで描いて保存する。
+    /// 512×512 で、外側の半径は 46%、内側は 39%。ふちは ±1.5px なめらかにぼかす。
+    /// （いまのプレハブは提供された UI_Timer_Radial.png を使っているので、この画像は予備）
+    /// </summary>
     private static void CreateGaugeSpriteIfMissing()
     {
         if (File.Exists(Path.Combine(Application.dataPath, "Scenes", "Test", "shotaro", "GameTimerGauge.png"))) return;
@@ -132,6 +164,7 @@ public static class GameTimerUISetup
         for (int y = 0; y < resolution; y++)
         for (int x = 0; x < resolution; x++)
         {
+            // 中心からの距離が「内側の半径〜外側の半径」の間だけ不透明にする（リングの形）
             float distance = Vector2.Distance(new Vector2(x, y), new Vector2(center, center));
             float outer = 1f - Mathf.SmoothStep(outerRadius - 1.5f, outerRadius + 1.5f, distance);
             float inner = Mathf.SmoothStep(innerRadius - 1.5f, innerRadius + 1.5f, distance);
@@ -145,6 +178,7 @@ public static class GameTimerUISetup
         AssetDatabase.ImportAsset(GaugePath);
     }
 
+    /// <summary>画像を UI 用のスプライト（1枚絵・透過あり）として読み込む設定にする。</summary>
     private static void ConfigureSprite(string path)
     {
         var importer = AssetImporter.GetAtPath(path) as TextureImporter;
@@ -155,6 +189,7 @@ public static class GameTimerUISetup
         importer.SaveAndReimport();
     }
 
+    /// <summary>検証シーン用の Canvas を作る（1920×1080 を基準に、画面の大きさに合わせて伸び縮みする）。</summary>
     private static Canvas CreateCanvas()
     {
         var canvasObject = new GameObject("Canvas", typeof(RectTransform), typeof(Canvas), typeof(CanvasScaler), typeof(GraphicRaycaster));
@@ -166,11 +201,16 @@ public static class GameTimerUISetup
         return canvas;
     }
 
+    /// <summary>
+    /// 既存のプレハブ（Backdrop / Gauge / TimeText の3つの子を持つ）を開いて、画像・文字・部品のつなぎを設定し直して保存する。
+    /// 古い uGUI の Text が残っていれば、TextMeshPro の文字に置き換える。
+    /// </summary>
     private static GameObject UpdatePrefab()
     {
         GameObject root = PrefabUtility.LoadPrefabContents(PrefabPath);
         RectTransform rootRect = root.GetComponent<RectTransform>();
         root.name = "GameTimerUI";
+        // 画面の左上を基準にする
         rootRect.anchorMin = rootRect.anchorMax = new Vector2(0f, 1f);
         rootRect.pivot = new Vector2(0f, 1f);
 
@@ -188,11 +228,13 @@ public static class GameTimerUISetup
         }
         TMP_Text text = oldTmpText;
 
+        // 背景は 240px 角、ゲージはその内側に収まる 220px 角
         ConfigureImage(backdrop, BackdropPath, 240f);
         ConfigureImage(gauge, GaugePath, 220f);
         gauge.type = Image.Type.Filled;
         gauge.fillMethod = Image.FillMethod.Radial360;
         gauge.fillOrigin = (int)Image.Origin360.Top;
+        // 向き（時計回りか）は、再生したときに GameTimerUI.UpdateVisuals が決め直す
         gauge.fillClockwise = true;
         gauge.fillAmount = 1f;
         RectTransform textRect = textTransform.GetComponent<RectTransform>();
@@ -204,12 +246,14 @@ public static class GameTimerUISetup
         text.fontSize = 36f;
         text.color = Color.white;
         text.font = AssetDatabase.LoadAssetAtPath<TMP_FontAsset>(FontPath);
+        // 描く順番：背景 → ゲージ → 文字（後ろの物ほど手前に描かれる）
         backdropTransform.SetAsFirstSibling();
         gaugeTransform.SetSiblingIndex(1);
         textTransform.SetAsLastSibling();
 
         GameTimerUI timer = root.GetComponent<GameTimerUI>();
         if (timer == null) timer = root.AddComponent<GameTimerUI>();
+        // private な [SerializeField] にエディタから値を入れる。文字列はフィールド名そのもの
         var serialized = new SerializedObject(timer);
         serialized.FindProperty("backdropImage").objectReferenceValue = backdrop;
         serialized.FindProperty("gaugeImage").objectReferenceValue = gauge;
@@ -220,6 +264,7 @@ public static class GameTimerUISetup
         return saved;
     }
 
+    /// <summary>画像を差し替えて、親の中央に <paramref name="size"/> px 角で置く。</summary>
     private static void ConfigureImage(Image image, string spritePath, float size)
     {
         RectTransform rect = image.GetComponent<RectTransform>();

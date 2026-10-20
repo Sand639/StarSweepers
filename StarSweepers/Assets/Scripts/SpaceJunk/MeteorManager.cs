@@ -15,6 +15,11 @@ using UnityEngine;
 /// 同じMeteorAreaは1ラウンド内で重複しない。
 ///
 /// オンラインではServer / Hostだけが生成処理を行う。
+///
+/// シーンに1つ置く（`Tools > StarSweepers > Space Junk > Meteor > Add To Current Scene` が作る）。
+/// 生成した1発ごとの処理（予告・落下・爆風）は <see cref="MeteorStrikeEvent"/> に任せる。
+/// ラウンドが動いている間（<see cref="SpaceJunkRound.PlayAllowed"/>）だけ数える。
+/// 機能の説明は `Documents/機能ドキュメント/隕石攻撃.md`。
 /// </summary>
 public class MeteorManager : MonoBehaviour
 {
@@ -66,10 +71,12 @@ public class MeteorManager : MonoBehaviour
 
 	[Header("プレイヤーを飛ばす強さ")]
 
+	[Tooltip("プレイヤーを爆心の外側へ飛ばす速さ（m/s）")]
 	[Min(0f)]
 	[SerializeField]
 	private float playerKnockbackSpeed = 12f;
 
+	[Tooltip("プレイヤーを上へ飛ばす速さ（m/s）")]
 	[Min(0f)]
 	[SerializeField]
 	private float playerKnockbackLift = 6f;
@@ -84,34 +91,45 @@ public class MeteorManager : MonoBehaviour
 
 	[Header("素材・爆弾を飛ばす強さ")]
 
+	[Tooltip("素材・爆弾を爆心の外側へ飛ばす速さ（m/s）")]
 	[Min(0f)]
 	[SerializeField]
 	private float objectKnockbackSpeed = 14f;
 
+	[Tooltip("素材・爆弾を上へ飛ばす速さ（m/s）")]
 	[Min(0f)]
 	[SerializeField]
 	private float objectKnockbackLift = 7f;
 
 
+	/// <summary>まだ終わっていない（予告中・落下中・爆発の見た目が残っている）隕石。終わったら自分で抜ける。</summary>
 	private readonly List<MeteorStrikeEvent> activeStrikes =
 		new List<MeteorStrikeEvent>();
 
+	/// <summary>次のラウンドを始めるまでの残り秒数。</summary>
 	private float spawnTimer;
+
+	/// <summary>設定不足の警告をもう出したか（毎フレーム出してログを埋めないため）。</summary>
 	private bool warnedMissingSetup;
 
 
+	/// <summary>同じラウンドの落下点どうしが、これより近ければ「同じ場所」とみなしてやり直す（m）。</summary>
 	private const float DuplicatePositionDistance = 0.01f;
+
+	/// <summary>ランダムな落下点が他とかぶったときに、選び直す回数の上限。</summary>
 	private const int PositionRetryCount = 20;
 
 
 	private void OnEnable()
 	{
+		// 始まってすぐには落とさず、まず1回ぶんの間隔を待つ
 		spawnTimer = Mathf.Max(0f, intervalSeconds);
 	}
 
 
 	private void OnDestroy()
 	{
+		// 残っている隕石からの「終わった」の知らせを、消えた自分が受け取らないようにする
 		for (int i = 0; i < activeStrikes.Count; i++)
 		{
 			MeteorStrikeEvent strike = activeStrikes[i];
@@ -128,11 +146,13 @@ public class MeteorManager : MonoBehaviour
 
 	private void Update()
 	{
+		// 数えるのはホスト（または1人用）だけ。参加者のPCは、ホストが出した隕石を見るだけ
 		if (!CanRunOnThisPC())
 		{
 			return;
 		}
 
+		// ラウンドの前後（始まりの演出中・結果が出たあと）は落とさない
 		if (!SpaceJunkRound.PlayAllowed)
 		{
 			return;
@@ -151,6 +171,7 @@ public class MeteorManager : MonoBehaviour
 		}
 		else
 		{
+			// 出せなかった（Area が無い等）ときは、1秒後にもう一度試す
 			spawnTimer = 1f;
 		}
 	}
@@ -266,6 +287,7 @@ public class MeteorManager : MonoBehaviour
 				continue;
 			}
 
+			// 中心（0.5, 0.5）すら取れない Area（大きさが 0 など）は候補から外す
 			if (!area.TryGetPoint(
 					0f,
 					0.5f,
@@ -309,6 +331,9 @@ public class MeteorManager : MonoBehaviour
 
 	/// <summary>
 	/// Area内から落下位置を取得する。
+	///
+	/// 半径は 0 で渡している。つまり **Area は「爆心を決める範囲」で、爆風の円全体を Area の中に収める制限は
+	/// かけていない**（STAGE_03 の設置でそう決めた。`隕石攻撃.md` 参照）。円ごと収めたくなったら impactRadius を渡す。
 	/// </summary>
 	private bool TryGetUniquePoint(
 		MeteorArea area,
@@ -403,6 +428,10 @@ public class MeteorManager : MonoBehaviour
 
 	/// <summary>
 	/// 隕石を1つ生成する。
+	///
+	/// 順番が大事：**先に Spawn して全員の画面に出し、そのあと <see cref="MeteorStrikeEvent.InitializeServer"/> で
+	/// 条件（着弾の時刻など）を入れる。** 条件は NetworkVariable なので、Spawn 後に入れれば全員へ配られる。
+	/// 通信していない（1人用）ときは Spawn を飛ばして、そのまま条件を入れる。
 	/// </summary>
 	private bool SpawnStrike(
 		MeteorArea area,
@@ -463,6 +492,7 @@ public class MeteorManager : MonoBehaviour
 	}
 
 
+	/// <summary>隕石が終わった（ホストで消える直前）ときに呼ばれ、一覧から外す。</summary>
 	private void OnStrikeFinished(
 		MeteorStrikeEvent strike)
 	{
@@ -478,6 +508,7 @@ public class MeteorManager : MonoBehaviour
 	}
 
 
+	/// <summary>設定不足の警告を1回だけ出す（直ったら <see cref="warnedMissingSetup"/> を戻して、また出せるようにする）。</summary>
 	private void WarnMissingSetup(
 		string message)
 	{
@@ -494,6 +525,7 @@ public class MeteorManager : MonoBehaviour
 	}
 
 
+	/// <summary>このPCが隕石を出す役目か。1人用なら自分、通信中ならホストだけ。</summary>
 	private static bool CanRunOnThisPC()
 	{
 		NetworkManager network =
@@ -510,6 +542,10 @@ public class MeteorManager : MonoBehaviour
 	// Test互換用
 	// =========================================================
 
+	/// <summary>
+	/// 候補の Area から1つ選んで落下点を返す（0〜1 の値で決める。テストから使う）。
+	/// <paramref name="radius"/> は古い呼び方との互換のために残してあるだけで、**使っていない**。
+	/// </summary>
 	public static bool TryChoosePoint(
 		IReadOnlyList<MeteorArea> areas,
 		float radius,
@@ -529,6 +565,12 @@ public class MeteorManager : MonoBehaviour
 	}
 
 
+	/// <summary>
+	/// 候補の Area から1つ選んで落下点を返す。
+	/// <paramref name="normalizedArea"/>（0〜1）で「使える Area の何番目か」を、
+	/// <paramref name="normalizedX"/>・<paramref name="normalizedZ"/>（0〜1）で Area 内のどこかを決める。
+	/// 実際の試合では使っておらず（<see cref="TrySpawnRound"/> が別の決め方をする）、テストから呼ぶためのもの。
+	/// </summary>
 	public static bool TryChoosePoint(
 		IReadOnlyList<MeteorArea> areas,
 		float normalizedArea,
@@ -583,6 +625,7 @@ public class MeteorManager : MonoBehaviour
 		}
 
 
+		// 0〜1 を候補の番号に直す（1.0 がちょうど最後の番号を越えないように Min で抑える）
 		int index = Mathf.Min(
 			candidates.Count - 1,
 			Mathf.FloorToInt(

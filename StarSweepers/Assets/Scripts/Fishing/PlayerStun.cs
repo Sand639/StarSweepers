@@ -43,6 +43,7 @@ public class PlayerStun : MonoBehaviour
 
     private void Awake()
     {
+        // 入れ忘れでも、点滅の for 文が落ちないよう空の配列にしておく
         if (bodyRenderers == null)
         {
             bodyRenderers = new Renderer[0];
@@ -54,6 +55,7 @@ public class PlayerStun : MonoBehaviour
         }
     }
 
+    /// <summary>いまの体の色を控える。<see cref="Stun"/> の最初の1回で呼ばれる（理由は <see cref="originalColors"/> のコメント）。</summary>
     private void CaptureColors()
     {
         originalColors = new Color[bodyRenderers.Length];
@@ -94,6 +96,7 @@ public class PlayerStun : MonoBehaviour
 
         remaining -= Time.deltaTime;
 
+        // このフレームで解けた：色と印を元に戻して終わり
         if (remaining <= 0f)
         {
             remaining = 0f;
@@ -106,6 +109,7 @@ public class PlayerStun : MonoBehaviour
             return;
         }
 
+        // まだスタン中：体を点滅させ、頭の上の印を回す
         Blink();
 
         if (stunMarker != null)
@@ -114,8 +118,10 @@ public class PlayerStun : MonoBehaviour
         }
     }
 
+    /// <summary>体を赤と元の色で交互に塗る。</summary>
     private void Blink()
     {
+        // 1回の点滅（1 ÷ blinkPerSecond 秒）のうち、前半を赤、後半を元の色にする
         bool on = Mathf.Repeat(Time.time * blinkPerSecond, 1f) < 0.5f;
 
         for (int i = 0; i < bodyRenderers.Length; i++)

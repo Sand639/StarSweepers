@@ -131,6 +131,10 @@ public class HookAimAssist : MonoBehaviour
         farthestAction = MakeAction("AimFarthest", farthestBindings);
     }
 
+    /// <summary>
+    /// 割り当ての文字列（"&lt;Gamepad&gt;/dpad/left" など）から、押した瞬間を拾うボタンの InputAction を作る。
+    /// 空の文字列は飛ばす（インスペクターで空欄のまま残しても落ちないように）。
+    /// </summary>
     private static InputAction MakeAction(string actionName, string[] bindings)
     {
         InputAction action = new InputAction(actionName, InputActionType.Button);
@@ -170,6 +174,7 @@ public class HookAimAssist : MonoBehaviour
         farthestAction?.Dispose();
     }
 
+    /// <summary>毎フレーム、キーで狙い方を切り替え → 狙う物資を決め → オンラインなら他の人へ配る。</summary>
     private void Update()
     {
         // 他の人のプレイヤーは、送られてきた目印を出すだけ（OnGUI）
@@ -192,6 +197,7 @@ public class HookAimAssist : MonoBehaviour
         }
     }
 
+    /// <summary>キーボードの 1・2・3 ／ 十字キーで、狙い方を切り替える。</summary>
     private void ReadModeInput()
     {
         // 1台で複数人（席で読む）ときは、その席のキーボードの 1・2・3 とコントローラの十字キーだけを見る
@@ -339,6 +345,10 @@ public class HookAimAssist : MonoBehaviour
     private GUIStyle cellStyle;
     private GUIStyle tagStyle;
 
+    /// <summary>
+    /// 目印と、左下の狙い方の表示を描く。
+    /// 目印は他の人のぶんも（そのプレイヤーの OnGUI で）描かれるので、全員の目印が画面に出る。
+    /// </summary>
     private void OnGUI()
     {
         Matrix4x4 savedMatrix = GUI.matrix;
@@ -348,6 +358,7 @@ public class HookAimAssist : MonoBehaviour
 
         if (showMarker)
         {
+            // 目印の位置はピクセルで直接計算するので、画面の拡大率はかけない
             GUI.matrix = Matrix4x4.identity;
             DrawMarker();
         }
@@ -363,6 +374,7 @@ public class HookAimAssist : MonoBehaviour
         GUI.color = savedColor;
     }
 
+    /// <summary>文字のスタイルを初回だけ作る（`GUI.skin` は OnGUI の中でしか触れないため、Awake では作れない）。</summary>
     private void PrepareStyles()
     {
         if (titleStyle == null)
@@ -400,10 +412,10 @@ public class HookAimAssist : MonoBehaviour
         const float cellWidth = 70f;
         const float cellHeight = 24f;
         const float gap = 4f;
-        float panelWidth = cellWidth * 2f + gap * 3f + 10f;
-        float panelHeight = 20f + cellHeight * 2f + gap * 3f;
+        float panelWidth = cellWidth * 2f + gap * 3f + 10f; // マス2つ＋すき間＋左右の余白 10px
+        float panelHeight = 20f + cellHeight * 2f + gap * 3f; // 見出しの行 20px ＋ マス2段＋すき間
 
-        // 一番下の行は操作説明（FishingStatusUI）が使っているので、その上に出す
+        // 一番下の行は操作説明（FishingStatusUI）が使っているので、その上（34px あける）に出す
         float left = 10f;
         float top = viewHeight - 34f - panelHeight;
 
@@ -422,6 +434,7 @@ public class HookAimAssist : MonoBehaviour
         DrawCell(new Rect(centerX + gap * 0.5f, row2, cellWidth, cellHeight), "遠く →", Mode == AimMode.Farthest);
     }
 
+    /// <summary>狙い方のマスを1つ描く。選んでいるマスは黄緑地に黒文字、それ以外は灰色地に白文字。</summary>
     private void DrawCell(Rect rect, string text, bool selected)
     {
         GUI.color = selected ? MarkColor : new Color(0.25f, 0.25f, 0.25f, 0.9f);
@@ -463,10 +476,12 @@ public class HookAimAssist : MonoBehaviour
 
         float scale = DraggableGuiPanel.FitScale(uiScale);
         float width = markerSize * scale;
-        float height = width * 0.85f;
-        float bob = Mathf.Abs(Mathf.Sin(Time.time * 5f)) * 4f * scale;
+        float height = width * 0.85f; // 逆三角の高さは幅の 0.85 倍
+        float bob = Mathf.Abs(Mathf.Sin(Time.time * 5f)) * 4f * scale; // 上下にふわふわ揺らす（約 0.6 秒に1回、振れ幅 4px × 倍率）
         int stack = StackIndexOnTarget(target);
 
+        // GUI の座標は上が 0 なので、画面座標（下が 0）から上下を反転する。
+        // 何人かが同じ物資を狙っているときは、1段ごとに「目印の高さ＋3px × 倍率」ぶん上へ積む
         float x = screen.x - width * 0.5f;
         float y = Screen.height - screen.y - height - bob - stack * (height + 3f * scale);
 
@@ -558,7 +573,7 @@ public class HookAimAssist : MonoBehaviour
             {
                 filterMode = FilterMode.Bilinear,
                 wrapMode = TextureWrapMode.Clamp,
-                hideFlags = HideFlags.HideAndDontSave
+                hideFlags = HideFlags.HideAndDontSave // シーンに保存せず、シーンを移っても消さない（全員で1枚を使い回す）
             };
             markerTexture.SetPixels32(pixels);
             markerTexture.Apply();

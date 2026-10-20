@@ -105,6 +105,7 @@ public class SpaceJunkTrain : MonoBehaviour
         ApplySize();
     }
 
+    /// <summary>見た目（Body）の大きさを Train Size に合わせる。</summary>
     private void ApplySize()
     {
         if (body != null)
@@ -113,6 +114,10 @@ public class SpaceJunkTrain : MonoBehaviour
         }
     }
 
+    /// <summary>
+    /// 時計から「何回目の通過か」と「その回が始まってから何秒か」を出し、列車をその位置に置く。
+    /// 線路の端から端まで走り切ったら、次の回が始まるまで隠しておく。
+    /// </summary>
     private void Update()
     {
         if (body == null)
@@ -123,9 +128,11 @@ public class SpaceJunkTrain : MonoBehaviour
         double clock = SharedClock() - timeOffsetSeconds;
         float interval = Mathf.Max(1f, intervalSeconds);
 
+        // index＝何回目の通過か（時計を間隔で割った商）、sinceStart＝その回が始まってからの秒数（余り）
         long index = (long)System.Math.Floor(clock / interval);
         float sinceStart = (float)(clock - index * (double)interval);
 
+        // 片側の端から走り始めて、反対の端（2倍の距離）まで行ったら今回の通過は終わり
         float halfLength = Mathf.Max(1f, runHalfLength);
         float travelled = sinceStart * Mathf.Max(0.1f, Mathf.Abs(moveSpeed));
         bool running = travelled <= halfLength * 2f;
@@ -173,6 +180,9 @@ public class SpaceJunkTrain : MonoBehaviour
                 // 回の番号から決める（全員で同じ結果になる）
                 unchecked
                 {
+                    // 0x9E3779B97F4A7C15 は「黄金比」から作った、よく使われるかき混ぜ用の定数。
+                    // 番号が 1 ずつ増えても掛けた結果のビットがばらばらになるので、
+                    // 上のほうの 1 ビットを見れば偏りの少ないコイン投げになる
                     ulong hash = (ulong)index * 0x9E3779B97F4A7C15UL;
                     south = ((hash >> 32) & 1UL) == 0UL;
                 }

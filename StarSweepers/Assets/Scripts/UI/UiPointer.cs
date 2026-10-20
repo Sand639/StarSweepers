@@ -71,20 +71,29 @@ public class UiPointer : MonoBehaviour
     /// <summary>いま、コントローラーの右スティックでポインターを動かしているか。</summary>
     public static bool UsingStick => Current != null && Current.usingStick;
 
-    // 遊びの照準（地面のスコープレンズ）が出ていたフレーム。出ている間は画面のポインターを出さない
+    // 遊びの照準（地面のスコープレンズ）が出ていたフレーム。出ている間は画面のポインターを出さない。
+    // -10 は「まだ一度も無い」。いまのフレームから 1〜2 引いた数と比べるので、0 より十分小さければよい
     private static int gameplayAimFrame = -10;
 
     // OnGUI の小さな枠（DraggableGuiPanel）の上にマウスがあったフレーム
     private static int panelHoverFrame = -10;
 
+    /// <summary>右スティックでポインターを動かしている最中か。マウスを触ると false に戻る。</summary>
     private bool usingStick;
 
     // 左スティック・十字キーで選択肢を選んでいるか（その間はポインターを隠す）
     private bool navigating;
+
+    /// <summary>前のフレームで左スティックが倒れていたか。「倒した瞬間」を知るために覚えておく。</summary>
     private bool leftStickWasOut;
+
+    /// <summary>右スティックで動かしているポインターの位置（Screen 座標、ピクセル）。</summary>
     private Vector2 stickPosition;
 
+    /// <summary>コントローラー用の見えないマウス。画面が開いている間だけ存在する。</summary>
     private Mouse virtualMouse;
+
+    /// <summary>見えないマウスに最後に送った位置・左ボタン。同じ内容を毎フレーム送らないために覚えておく。</summary>
     private Vector2 lastSentPosition;
     private bool lastSentLeft;
 
@@ -233,7 +242,8 @@ public class UiPointer : MonoBehaviour
 
         bool menu = MenuActive;
 
-        // カーソルを画面の真ん中に閉じ込めている（一人称視点の検証シーンなど）間も、遊びの照準とみなす
+        // カーソルを画面の真ん中に閉じ込めている（一人称視点の検証シーンなど）間も、遊びの照準とみなす。
+        // 照準の知らせは前のフレームの分まで有効にする（呼ぶ側との順番で1フレームずれても途切れないように）
         bool gameplayAim = !menu &&
                            (gameplayAimFrame >= Time.frameCount - 1 || Cursor.lockState == CursorLockMode.Locked);
 
@@ -274,13 +284,15 @@ public class UiPointer : MonoBehaviour
 
         Vector2 position = usingStick ? stickPosition : RealMousePosition(realMouse);
 
-        // 遊んでいる間でも、マウスが OnGUI の小さな枠（カメラの切り替えなど）の上にあるときは出す
+        // 遊んでいる間でも、マウスが OnGUI の小さな枠（カメラの切り替えなど）の上にあるときは出す。
+        // 枠からの知らせは描画（Repaint）のときにしか来ないので、2フレーム前の分まで有効にする
         bool overPanel = !usingStick && panelHoverFrame >= Time.frameCount - 2;
         bool show = pointerSprite != null && !navigating && (!gameplayAim || overPanel);
 
         pointerImage.enabled = show;
         if (show)
         {
+            // 画面の大きさに合わせて Canvas が拡大縮小されているので、ピクセルの位置をその倍率で割って置く
             float scale = canvas.scaleFactor > 0f ? canvas.scaleFactor : 1f;
             pointerRect.anchoredPosition = position / scale;
             pointerRect.sizeDelta = new Vector2(pointerSize, pointerSize);
@@ -361,6 +373,7 @@ public class UiPointer : MonoBehaviour
             return;
         }
 
+        // 左スティックは半分以上倒したら「倒した」とみなし、倒した瞬間だけを十字キーの1押しと同じに扱う
         bool stickOut = pad.leftStick.ReadValue().magnitude >= 0.5f;
         bool pressed = (stickOut && !leftStickWasOut) ||
                        pad.dpad.up.wasPressedThisFrame || pad.dpad.down.wasPressedThisFrame ||
@@ -400,6 +413,7 @@ public class UiPointer : MonoBehaviour
             virtualMouse = InputSystem.AddDevice<Mouse>("ScopePointerMouse");
         }
 
+        // 画面のずっと外（どの部品にも重ならない所）
         Vector2 outside = new Vector2(-10000f, -10000f);
         InputSystem.QueueStateEvent(virtualMouse, new MouseState { position = outside });
         lastSentPosition = outside;
@@ -450,6 +464,7 @@ public class UiPointer : MonoBehaviour
             Camera camera = canvas.renderMode == RenderMode.ScreenSpaceOverlay ? null : canvas.worldCamera;
             Vector2 position = RectTransformUtility.WorldToScreenPoint(camera, rect.TransformPoint(rect.rect.center));
 
+            // 1ピクセル以内の差は「同じ高さ」とみなし、そのときは左にあるほうを選ぶ
             bool higher = best == null ||
                           position.y > bestPosition.y + 1f ||
                           (Mathf.Abs(position.y - bestPosition.y) <= 1f && position.x < bestPosition.x);
@@ -496,6 +511,7 @@ public class UiPointer : MonoBehaviour
             shift = bounds.min.y - view.yMin;      // 下にはみ出している → 一覧を上げる
         }
 
+        // 0.5ピクセル以下のずれは動かさない（毎フレーム細かく揺れないように）
         if (Mathf.Abs(shift) > 0.5f)
         {
             scroll.StopMovement();
@@ -508,6 +524,7 @@ public class UiPointer : MonoBehaviour
     {
         if (virtualMouse == null)
         {
+            // 何も押していない・動かしてもいないのに、わざわざ見えないマウスを作らない
             if (!left && scroll == 0f && !usingStick)
             {
                 return;
@@ -530,6 +547,7 @@ public class UiPointer : MonoBehaviour
         lastSentLeft = left;
     }
 
+    /// <summary>見えないマウスを片付ける（遊びの操作がマウスの位置を読み違えないように）。</summary>
     private void RemoveVirtualMouse()
     {
         if (virtualMouse != null)
@@ -591,6 +609,7 @@ public class UiPointer : MonoBehaviour
         return null;
     }
 
+    /// <summary>このフレームに本物のマウスが触られたか（1ピクセルより大きく動いた・クリック・ホイール）。</summary>
     private static bool RealMouseWasUsed(Mouse mouse)
     {
         return mouse != null &&
@@ -600,6 +619,7 @@ public class UiPointer : MonoBehaviour
                 mouse.scroll.ReadValue().sqrMagnitude > 0f);
     }
 
+    /// <summary>本物のマウスの位置。マウスが無ければ画面の中央。</summary>
     private static Vector2 RealMousePosition(Mouse mouse)
     {
         return mouse != null ? mouse.position.ReadValue() : new Vector2(Screen.width * 0.5f, Screen.height * 0.5f);

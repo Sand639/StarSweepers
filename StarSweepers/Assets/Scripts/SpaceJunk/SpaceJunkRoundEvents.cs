@@ -268,6 +268,7 @@ public partial class SpaceJunkRound
         return team >= 0 && team < setsCompleted.Count ? setsCompleted[team] : 0;
     }
 
+    /// <summary><see cref="setRequired"/> / <see cref="setProgress"/> の中での、そのチーム・その種類の位置。チームが範囲外なら -1。</summary>
     private static int SetIndex(int team, SpaceJunkMaterialKind kind)
     {
         if (team < 0 || team >= SpaceJunkTeams.MaxTeams)
@@ -301,6 +302,9 @@ public partial class SpaceJunkRound
     // ------------------------------------------------------------
     // 特殊デブリ（重いデブリ）の状態
     // ------------------------------------------------------------
+
+    /// <summary>重いデブリの重さの下限。設定で 0 以下にしても、0 で割るような計算にならないようにする。</summary>
+    private const float MinHeavyWeight = 0.1f;
 
     /// <summary>重いデブリの、通信の番号（NetworkObjectId）の一覧。</summary>
     private readonly NetworkList<ulong> heavyIds = new NetworkList<ulong>();

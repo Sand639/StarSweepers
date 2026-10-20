@@ -63,10 +63,20 @@ public class SpaceJunkConveyor : MonoBehaviour
     public Vector3 FlowDirection { get; private set; }
 
     private BoxCollider box;
+
+    /// <summary>見た目の帯（横の筋）。Awake で Belt Size に合わせた数だけ作る。</summary>
     private readonly List<Transform> slats = new List<Transform>();
+
+    /// <summary>帯の色を変えるための、帯だけのマテリアル（土台のものを複製。予告の点滅で色を変える）。</summary>
     private Material slatMaterial;
+
+    /// <summary>帯がどれだけ流れたか（m）。帯の間隔で折り返す。</summary>
     private float slatScroll;
+
+    /// <summary>ベルトの上の当たり判定の入れ物（一度に 64 個まで。足りなければ増やす）。毎回作らないため。</summary>
     private readonly Collider[] overlapBuffer = new Collider[64];
+
+    /// <summary>この物理の更新で、もう押した物（当たり判定が複数ある物を二重に押さないため）。</summary>
     private readonly HashSet<Rigidbody> pushedThisStep = new HashSet<Rigidbody>();
 
     private void Awake()
@@ -224,9 +234,11 @@ public class SpaceJunkConveyor : MonoBehaviour
     /// <summary>帯（横の筋）を、ベルトの長さに合わせて並べる。当たり判定は付けない。</summary>
     private void BuildSlats()
     {
+        // 間隔は最低 30cm（帯が多くなりすぎないように）
         float spacing = Mathf.Max(0.3f, slatSpacing);
         int count = Mathf.Max(1, Mathf.FloorToInt(beltSize.z / spacing));
 
+        // 土台のマテリアルを複製して帯に使う（色を変えても土台や他のベルトに影響しないように）
         Renderer baseRenderer = baseVisual != null ? baseVisual.GetComponent<Renderer>() : null;
         slatMaterial = baseRenderer != null ? new Material(baseRenderer.sharedMaterial) : null;
 
@@ -236,6 +248,7 @@ public class SpaceJunkConveyor : MonoBehaviour
             slat.name = $"Slat_{i + 1}";
             Destroy(slat.GetComponent<Collider>());
             slat.transform.SetParent(transform, false);
+            // 幅はベルトの 92%（両端に土台を少し見せる）、厚みは 4cm、奥行きは間隔の 1/4
             slat.transform.localScale = new Vector3(beltSize.x * 0.92f, 0.04f, spacing * 0.25f);
 
             if (slatMaterial != null)
@@ -247,6 +260,7 @@ public class SpaceJunkConveyor : MonoBehaviour
         }
     }
 
+    /// <summary>帯を流れる向きへ動かし、予告中なら色を点滅させる。毎フレーム呼ぶ。</summary>
     private void UpdateSlats(float sign, bool warning)
     {
         if (slats.Count == 0)
@@ -261,6 +275,7 @@ public class SpaceJunkConveyor : MonoBehaviour
         for (int i = 0; i < slats.Count; i++)
         {
             float z = -beltSize.z * 0.5f + Mathf.Repeat(i * spacing + slatScroll + spacing * 0.5f, beltSize.z);
+            // 上面から 2cm 浮かせて、土台と重なってちらつかないようにする
             slats[i].localPosition = new Vector3(0f, 0.02f, z);
         }
 

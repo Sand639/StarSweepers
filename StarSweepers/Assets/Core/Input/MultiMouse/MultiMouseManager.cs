@@ -14,14 +14,22 @@ namespace ProjectEL4S.MultiMouse
     ///
     /// Raw Input を登録すると Unity の Mouse.current.delta が止まるので、受け取った移動量を
     /// <see cref="UnityMouseBridge"/> で Unity へ流し直す（既存のスクリプトがそのまま動く）。
+    ///
+    /// ## 1 フレームの流れ
+    ///
+    /// 受信スレッド（<see cref="RawInputMouse"/>）がデバイスごとに合計した移動量・ボタンを、Input System の更新直前（onBeforeUpdate）に
+    /// <see cref="ProcessRawInput"/> で取り出し、①Unity へ流し直す ②台ごとの仮想ポインタを動かす、の 2 つを同時に行う。
     /// </summary>
+    // 席（InputSeatManager = -90）やふつうのスクリプト（0）が読む前に、ポインタの値をそろえておくための順番
     [DefaultExecutionOrder(-100)]
     public sealed class MultiMouseManager : MonoBehaviour
     {
         [Header("ポインタ")]
+        [Tooltip("分けて読むマウスの台数（＝ポインタの数）。これを超えた台の入力は無視される")]
         [SerializeField] private int _maxPointers = 2;
         [Tooltip("生の移動量に掛ける倍率（1 でだいたい 1 カウント = 1 ピクセル）")]
         [SerializeField] private float _sensitivity = 1f;
+        [Tooltip("番号ごとの表示色（台数のほうが多ければ繰り返す）")]
         [SerializeField] private Color[] _pointerColors =
         {
             new Color(0.2f, 0.8f, 1f),
@@ -52,7 +60,9 @@ namespace ProjectEL4S.MultiMouse
         [Tooltip("Raw Input が使えない環境では 1 本目のポインタを通常のマウスに追従させる")]
         [SerializeField] private bool _fallbackToSystemMouse = true;
 
+        // 受信スレッドから 1 フレームぶん（デバイスごとに 1 件）を受け取る入れ物（毎フレーム作らないよう使い回す）
         private readonly List<RawMouseFrame> _frames = new List<RawMouseFrame>();
+        // デバイスのハンドル → ポインタの番号
         private readonly Dictionary<IntPtr, int> _deviceToPointer = new Dictionary<IntPtr, int>();
         private readonly UnityMouseBridge _bridge = new UnityMouseBridge();
         private MultiMousePointer[] _pointers;
@@ -60,8 +70,10 @@ namespace ProjectEL4S.MultiMouse
         private string[] _fixedDevices = Array.Empty<string>();
         // 名前を取るのは Windows への問い合わせになるので、ハンドルごとに覚えておく
         private readonly Dictionary<IntPtr, string> _deviceNames = new Dictionary<IntPtr, string>();
+        // 今つながっているデバイスの一覧を受け取る入れ物（BindFixedDevices 用の使い回し）
         private readonly List<IntPtr> _connected = new List<IntPtr>();
         private RawInputMouse _reader;
+        // 前のフレームまでに見た「登録を取り戻した回数」。増えていたら取られていた間の離しを取りこぼしている
         private int _seenRestoreCount;
         // onBeforeUpdate と Update の両方から呼ばれるので、1 フレームに 1 回だけ処理するための印
         private bool _processedThisFrame;
@@ -228,6 +240,7 @@ namespace ProjectEL4S.MultiMouse
             if (Instance == this) Instance = null;
         }
 
+        /// <summary>受信役（Windows から読む側）が無ければ作って始める。失敗した理由は <see cref="StatusMessage"/> に残す。</summary>
         private void EnsureReader()
         {
             if (_reader != null) return;
@@ -246,10 +259,12 @@ namespace ProjectEL4S.MultiMouse
             }
         }
 
+        /// <summary>受信役を止めて片付ける。無効化・破棄・再コンパイル前・終了時のどこから呼ばれてもよい（何度呼んでも安全）。</summary>
         private void StopReader()
         {
             if (_reader == null) return;
 
+            // 先に _reader を空にしてから止める（止めている最中に Update などが来ても、止まった受信役を触らないように）
             var reader = _reader;
             _reader = null;
             reader.Dispose();
@@ -294,9 +309,11 @@ namespace ProjectEL4S.MultiMouse
 
         private void LateUpdate()
         {
+            // 次のフレームの onBeforeUpdate でまた処理できるように印を戻す
             _processedThisFrame = false;
         }
 
+        /// <summary>溜まった入力を取り出して、Unity へ流し直しつつ台ごとの仮想ポインタを動かす（1 フレームに 1 回）。</summary>
         private void ProcessRawInput()
         {
             _processedThisFrame = true;
@@ -336,6 +353,7 @@ namespace ProjectEL4S.MultiMouse
             else _bridge.Clear();
         }
 
+        /// <summary>Raw Input が使えない環境（Windows 以外・開始に失敗）用。台ごとには分けられないので、0 番だけを Unity のマウスに追従させる。</summary>
         private void ProcessFallback()
         {
             for (int i = 0; i < _pointers.Length; i++)
@@ -355,6 +373,7 @@ namespace ProjectEL4S.MultiMouse
                 pointer.ScreenPosition = Clamp(pos);
                 pointer.Wheel = Mouse.current.scroll.ReadValue().y;
 
+                // ボタンは RawMouseFrame と同じビット並び（bit0:左 bit1:右 bit2:中）に詰めて渡す
                 int down = 0, up = 0;
                 if (Mouse.current.leftButton.wasPressedThisFrame) down |= 1 << 0;
                 if (Mouse.current.leftButton.wasReleasedThisFrame) up |= 1 << 0;
@@ -382,6 +401,10 @@ namespace ProjectEL4S.MultiMouse
             Debug.Log($"[MultiMouse] Raw Input の登録を {_reader.LastRegistrationThief} に取られていたので取り戻しました（{restored} 回目）");
         }
 
+        /// <summary>
+        /// デバイスのハンドルから、どのポインタかを引く。初めて見たデバイスは、assignIfNew のときだけ
+        /// 空いている番号（固定登録があればその番号）に割り当てる。入れる番号が無ければ null。
+        /// </summary>
         private MultiMousePointer Resolve(IntPtr device, bool assignIfNew)
         {
             if (_deviceToPointer.TryGetValue(device, out int index))
@@ -445,6 +468,7 @@ namespace ProjectEL4S.MultiMouse
             return -1;
         }
 
+        /// <summary>デバイスを番号に結び付ける（ログの文言だけ、固定登録かどうかで変える）。</summary>
         private void Assign(int slot, IntPtr device, string name, bool isFixed)
         {
             _deviceToPointer.Add(device, slot);
@@ -466,6 +490,7 @@ namespace ProjectEL4S.MultiMouse
             return name;
         }
 
+        /// <summary>1 フレームぶんの生入力をポインタに反映する（位置・移動量・ホイール・ボタン）。</summary>
         private void Apply(MultiMousePointer pointer, in RawMouseFrame frame)
         {
             Vector2 position = pointer.ScreenPosition;
@@ -487,6 +512,7 @@ namespace ProjectEL4S.MultiMouse
             }
 
             pointer.ScreenPosition = Clamp(position);
+            // Windows のホイールは 1 目盛り = 120（WHEEL_DELTA）で届くので、1 目盛り = 1.0 に直す
             pointer.Wheel += frame.Wheel / 120f;
             pointer.ApplyButtons(frame.ButtonDown, frame.ButtonUp);
         }
@@ -498,6 +524,7 @@ namespace ProjectEL4S.MultiMouse
                 Mathf.Clamp(position.y, 0f, Screen.height));
         }
 
+        /// <summary>まだ動かしていないポインタの最初の置き場所。画面の中央の高さに、番号順で横に並べる（間隔は画面の幅の 15%）。</summary>
         private static Vector2 DefaultPosition(int index)
         {
             float step = Screen.width * 0.15f;

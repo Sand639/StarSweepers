@@ -52,13 +52,26 @@ public class SteamFriendRoom
 /// </summary>
 public class SteamFriendsService : MonoBehaviour
 {
-    /// <summary>リッチプレゼンスの鍵（フレンドのPCで読む）。</summary>
+    /// <summary>
+    /// リッチプレゼンスの鍵（フレンドのPCで読む）。
+    /// 自分のPCで <see cref="UpdatePresence"/> が書き、フレンドのPCで <see cref="FindFriendRooms"/> が同じ鍵で読む。
+    /// **鍵の文字を変えると、古いビルドのフレンドとは部屋が見えなくなる。**
+    /// </summary>
     private const string CodeKey = "ss_code";
+
+    /// <summary>部屋の名前。</summary>
     private const string RoomKey = "ss_room";
+
+    /// <summary>「2/8」のような、いまの人数／最大人数。</summary>
     private const string PlayersKey = "ss_players";
+
+    /// <summary>パスワードが付いているか（"1"＝あり、"0"＝なし）。</summary>
     private const string PasswordKey = "ss_password";
 
-    /// <summary>Steam が「ゲームに参加」で渡してくる文字（"+join 参加コード"）。</summary>
+    /// <summary>
+    /// Steam が「ゲームに参加」で渡してくる文字（"+join 参加コード"）。
+    /// `connect` は Steam が決めている特別な鍵で、これを書いておくとフレンド一覧に「ゲームに参加」が出る。
+    /// </summary>
     private const string ConnectKey = "connect";
     private const string JoinPrefix = "+join ";
 
@@ -84,13 +97,21 @@ public class SteamFriendsService : MonoBehaviour
     /// </summary>
     public static string PendingJoinCode { get; private set; } = string.Empty;
 
+    /// <summary>次にリッチプレゼンスを書き直すまでの残り秒数。</summary>
     private float presenceTimer;
+
+    /// <summary>前回 Steam に書いた内容。同じなら書き直さない（Steam への書き込みを減らす）。</summary>
     private string lastPresence = string.Empty;
 
 #if STARSWEEPERS_STEAM
+    /// <summary>
+    /// Steam の「ゲームに参加」が押されたときの知らせの受け口。
+    /// **フィールドに持っておかないと、ガベージコレクションで消えて知らせが届かなくなる**（Steamworks.NET の決まり）。
+    /// </summary>
     private Callback<GameRichPresenceJoinRequested_t> joinRequested;
 #endif
 
+    /// <summary>シーンに置かなくても動くよう、再生が始まったら自分で1つ作る（すでにあれば作らない）。</summary>
     [RuntimeInitializeOnLoadMethod(RuntimeInitializeLoadType.AfterSceneLoad)]
     private static void AutoCreate()
     {

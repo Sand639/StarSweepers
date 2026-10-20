@@ -17,11 +17,13 @@ public class TitleSceneFlow : MonoBehaviour
     /// <summary>ロビーを直接開いたときに、つながっていなければタイトルへ移るまで待つ秒数。</summary>
     private const float IdleLobbySeconds = 0.5f;
 
+    /// <summary>ロビーにいるのにどこにもつながっていない状態が、何秒続いているか。つながるか、ロビーを離れると 0 に戻る。</summary>
     private float notConnectedInLobbyTime;
 
     /// <summary>ホストがロビーへ移す指示を、このタイトルのシーンでもう出したか。</summary>
     private bool lobbyLoadRequested;
 
+    /// <summary>ゲームが始まったとき、シーンに置かれていなければ自分で1つ作る（シーンをまたいで残す）。</summary>
     [RuntimeInitializeOnLoadMethod(RuntimeInitializeLoadType.AfterSceneLoad)]
     private static void AutoCreate()
     {
@@ -82,25 +84,49 @@ public class TitleSceneFlow : MonoBehaviour
         string activeScene = SceneManager.GetActiveScene().name;
         NetworkManager manager = NetworkManager.Singleton;
 
+        MoveEveryoneToLobbyIfHosting(activeScene, manager);
+        ReturnToTitleIfIdleInLobby(activeScene, manager);
+    }
+
+    /// <summary>
+    /// タイトルでホストになっていたら、**全員でロビーへ移る**指示を1回だけ出す。
+    /// 参加者はホストのシーンに自動でついてくるので、ホスト（サーバー）だけが出せばよい。
+    /// </summary>
+    private void MoveEveryoneToLobbyIfHosting(string activeScene, NetworkManager manager)
+    {
         if (activeScene != TitleScreen.TitleSceneName)
         {
+            // タイトルを離れたら印を戻す。次にタイトルへ戻ってきたとき、また指示を出せるように
+            lobbyLoadRequested = false;
+            return;
+        }
+
+        if (manager == null || !manager.IsServer || lobbyLoadRequested || manager.SceneManager == null)
+        {
+            return;
+        }
+
+        lobbyLoadRequested = true;
+        SceneEventProgressStatus status = manager.SceneManager.LoadScene(TitleScreen.LobbySceneName, LoadSceneMode.Single);
+        if (status != SceneEventProgressStatus.Started)
+        {
+            Debug.LogError($"[UI] ロビー（{TitleScreen.LobbySceneName}）へ移れませんでした（{status}）。" +
+                           "ビルドのシーン一覧に入っているか確かめてください。");
+
+            // 失敗したら印を戻し、次のフレームでもう一度試す
             lobbyLoadRequested = false;
         }
+    }
 
-        if (activeScene == TitleScreen.TitleSceneName && manager != null && manager.IsServer && !lobbyLoadRequested &&
-            manager.SceneManager != null)
-        {
-            lobbyLoadRequested = true;
-            SceneEventProgressStatus status = manager.SceneManager.LoadScene(TitleScreen.LobbySceneName, LoadSceneMode.Single);
-            if (status != SceneEventProgressStatus.Started)
-            {
-                Debug.LogError($"[UI] ロビー（{TitleScreen.LobbySceneName}）へ移れませんでした（{status}）。" +
-                               "ビルドのシーン一覧に入っているか確かめてください。");
-                lobbyLoadRequested = false;
-            }
-        }
-
+    /// <summary>
+    /// ロビーにいるのにどこにもつながっていない状態が <see cref="IdleLobbySeconds"/> 続いたら、タイトルへ移る。
+    /// ロビーのシーンを直接再生したときや、つながりが切れたときに通る。
+    /// </summary>
+    private void ReturnToTitleIfIdleInLobby(string activeScene, NetworkManager manager)
+    {
         bool idleInLobby = activeScene == TitleScreen.LobbySceneName && (manager == null || !manager.IsListening);
+
+        // 止まっていても進む時間で数える（ポーズ中に数えなくなると、戻れなくなる）
         notConnectedInLobbyTime = idleInLobby ? notConnectedInLobbyTime + Time.unscaledDeltaTime : 0f;
 
         if (notConnectedInLobbyTime > IdleLobbySeconds)

@@ -16,14 +16,19 @@ public class HookLine : MonoBehaviour
     private void Awake()
     {
         line = GetComponent<LineRenderer>();
+
+        // 手元とフックの先の2点をまっすぐ結ぶだけ。両端はワールド座標で渡される
         line.positionCount = 2;
         line.useWorldSpace = true;
+
+        // 投げるまでは見せない（出し入れは HookController / FishingNetPlayer が毎フレーム決める）
         Show(false);
     }
 
     /// <summary>糸の両端を決める。a＝手元、b＝フックの先。</summary>
     public void SetEnds(Vector3 a, Vector3 b)
     {
+        // インスペクターなどで点の数を変えられていても、2点に戻してから入れる
         if (line.positionCount != 2)
         {
             line.positionCount = 2;

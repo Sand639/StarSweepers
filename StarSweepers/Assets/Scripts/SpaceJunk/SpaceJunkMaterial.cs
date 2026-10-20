@@ -105,6 +105,7 @@ public static class SpaceJunkMaterials
             return Random.Range(0, Count);
         }
 
+        // 「使う種類の中で pick 番目」を、先頭から数え直して探す
         int pick = Random.Range(0, usedCount);
         for (int i = 0; i < Count; i++)
         {

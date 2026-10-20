@@ -30,8 +30,18 @@ public class FishingNetSupply : NetworkBehaviour
     private readonly NetworkVariable<int> lastThrownByPlayerIndex = new NetworkVariable<int>(-1);
 
     // 爆発前の「まだ届いていなかった鉤・投げ・解除」の指示を、爆発後に採用しない。
+
+    /// <summary>
+    /// **この物資が「爆風などで強制的に外された」回数。ホストが増やして全員に配る。**
+    /// 引っ掛け・投げ・離すの指示には、頼んだ時点のこの値を添えてもらい、
+    /// ホストは**いまの値と違う指示は古いものとして捨てる**（爆発の前に出されて遅れて届いた指示を、爆発後に採用しないため）。
+    /// </summary>
     private readonly NetworkVariable<uint> explosionRevision = new NetworkVariable<uint>(0);
+
+    /// <summary>自分が最後に引っ掛けを頼んだときの <see cref="explosionRevision"/>（このPCの控え）。投げ・離すの指示に添える。</summary>
     private uint localClaimRevision;
+
+    /// <summary>このPCから引っ掛けを頼んだ回数。断りの返事が「どの依頼へのものか」を見分けるのに使う。</summary>
     private uint localClaimAttempt;
 
     // 最後に引っ掛けを頼んだ人の参加番号（1台で複数人のとき、断りをその人のフックへ返すため）
@@ -54,6 +64,8 @@ public class FishingNetSupply : NetworkBehaviour
         hookable = GetComponent<HookableObject>();
         body = GetComponent<Rigidbody>();
     }
+
+    // 生まれたときと、持ち主が移るたびに「物理を回すのは誰か」を決め直す
 
     public override void OnNetworkSpawn()
     {
@@ -130,12 +142,20 @@ public class FishingNetSupply : NetworkBehaviour
             return;
         }
 
+        ServerGrantClaim(playerIndex, rpcParams.Receive.SenderClientId);
+    }
+
+    /// <summary>
+    /// **引っ掛けをその人のものにする**（ホストだけが呼ぶ）。記録を更新し、持ち主もその人のPCへ移す。
+    /// 頼んできたのがホスト自身なら、持ち主はもうホストなので移さない。
+    /// </summary>
+    private void ServerGrantClaim(int playerIndex, ulong senderClientId)
+    {
         hookedByPlayerIndex.Value = playerIndex;
 
-        ulong sender = rpcParams.Receive.SenderClientId;
-        if (sender != NetworkManager.ServerClientId)
+        if (senderClientId != NetworkManager.ServerClientId)
         {
-            NetworkObject.ChangeOwnership(sender);
+            NetworkObject.ChangeOwnership(senderClientId);
         }
     }
 
@@ -172,13 +192,16 @@ public class FishingNetSupply : NetworkBehaviour
             preserveVelocity, inheritedVelocity, inheritedAngularVelocity, hasReleasePosition, releasePosition);
     }
 
+    /// <summary>
+    /// ホスト側の受け口。持ち主を取り戻し、離した位置に置き直してから、ホストの物理で力を加える。
+    /// </summary>
     [ServerRpc(RequireOwnership = false)]
     private void RequestThrowServerRpc(Vector3 direction, float force, float lift,
         int playerIndex, uint claimRevision, bool preserveVelocity, Vector3 inheritedVelocity,
         Vector3 inheritedAngularVelocity, bool hasReleasePosition, Vector3 releasePosition,
         ServerRpcParams rpcParams = default)
     {
-        // 掛けている本人からの指示だけを受け付ける
+        // 掛けている本人からの指示だけを受け付ける（爆発をまたいだ古い指示も捨てる）
         if (claimRevision != explosionRevision.Value || hookedByPlayerIndex.Value != playerIndex)
         {
             return;
@@ -227,10 +250,12 @@ public class FishingNetSupply : NetworkBehaviour
         RequestReleaseServerRpc(direction, pullForce, playerIndex, localClaimRevision);
     }
 
+    /// <summary>ホスト側の受け口。持ち主を取り戻して記録を消し、頼まれた力があればプレイヤーのほうへ引く。</summary>
     [ServerRpc(RequireOwnership = false)]
     private void RequestReleaseServerRpc(Vector3 direction, float pullForce,
         int playerIndex, uint claimRevision, ServerRpcParams rpcParams = default)
     {
+        // 掛けている本人からの指示だけを受け付ける（爆発をまたいだ古い指示も捨てる）
         if (claimRevision != explosionRevision.Value || hookedByPlayerIndex.Value != playerIndex)
         {
             return;
@@ -247,11 +272,6 @@ public class FishingNetSupply : NetworkBehaviour
         }
     }
 
-    /// <summary>
-    /// **ほかの人のフックが当たったので、つかんでいる人の引っ掛けを外してほしい**とホストへ頼む。
-    /// 宇宙ごみ式（<see cref="ThrowStyle.TwoButtons"/>）の <see cref="HookController"/> だけが呼ぶ（2026/9/22）。
-    /// 釣りでは呼ばれないので、釣りの動きは変わらない。
-    /// </summary>
     // ------------------------------------------------------------
     // 横取り（宇宙ごみ式。2026/10/13・大槻さん）
     // ------------------------------------------------------------
@@ -286,12 +306,7 @@ public class FishingNetSupply : NetworkBehaviour
         ServerApplyExplosion(Vector3.zero);
 
         // 頼んだ人のものにする
-        hookedByPlayerIndex.Value = playerIndex;
-        ulong sender = rpcParams.Receive.SenderClientId;
-        if (sender != NetworkManager.ServerClientId)
-        {
-            NetworkObject.ChangeOwnership(sender);
-        }
+        ServerGrantClaim(playerIndex, rpcParams.Receive.SenderClientId);
 
         StealResultClientRpc(playerIndex, true, explosionRevision.Value, RpcToSender(rpcParams));
     }
@@ -314,11 +329,17 @@ public class FishingNetSupply : NetworkBehaviour
         }
     }
 
+    /// <summary>
+    /// **ほかの人のフックが当たったので、つかんでいる人の引っ掛けを外してほしい**とホストへ頼む。
+    /// 宇宙ごみ式（<see cref="ThrowStyle.TwoButtons"/>）の <see cref="HookController"/> だけが呼ぶ（2026/9/22）。
+    /// 釣りでは呼ばれないので、釣りの動きは変わらない。
+    /// </summary>
     public void RequestInterfere(int playerIndex)
     {
         RequestInterfereServerRpc(playerIndex);
     }
 
+    /// <summary>ホスト側の受け口。ほかの人がつかんでいれば、爆風と同じ外し方（力 0）で外す。</summary>
     [ServerRpc(RequireOwnership = false)]
     private void RequestInterfereServerRpc(int playerIndex)
     {
@@ -346,6 +367,7 @@ public class FishingNetSupply : NetworkBehaviour
             return;
         }
 
+        // 「強制的に外した回数」を進める。これより前の番号を添えて届く指示は、古いものとして捨てられる
         explosionRevision.Value += 1;
         ReleaseForExplosionClientRpc(explosionRevision.Value);
         // ホストと専用サーバーはここで手元の状態を戻す。
@@ -355,6 +377,7 @@ public class FishingNetSupply : NetworkBehaviour
         body.AddForce(velocity, ForceMode.VelocityChange);
     }
 
+    /// <summary>参加者の画面で、つかんでいた人の引き寄せを止める（ホストは <see cref="ServerApplyExplosion"/> の中で直接止めている）。</summary>
     [ClientRpc]
     private void ReleaseForExplosionClientRpc(uint releasedRevision)
     {
@@ -365,7 +388,6 @@ public class FishingNetSupply : NetworkBehaviour
         }
     }
 
-    /// <summary>ホストが持ち主を取り戻し、物理を自分で回せる状態にする。</summary>
     /// <summary>参加番号 <paramref name="playerIndex"/> の人の体（CharacterController）。見つからなければ null。</summary>
     private static Collider FindThrowerCollider(int playerIndex)
     {
@@ -380,6 +402,7 @@ public class FishingNetSupply : NetworkBehaviour
         return null;
     }
 
+    /// <summary>ホストが持ち主を取り戻し、物理を自分で回せる状態にする。</summary>
     private void TakeBackOwnership()
     {
         if (NetworkObject.OwnerClientId != NetworkManager.ServerClientId)
@@ -404,6 +427,7 @@ public class FishingNetSupply : NetworkBehaviour
         RequestReconcileReleaseServerRpc(playerIndex);
     }
 
+    /// <summary>ホスト側の受け口。頼んできた人が本当にその参加番号の人なら、記録を消して持ち主を取り戻す。</summary>
     [ServerRpc(RequireOwnership = false)]
     private void RequestReconcileReleaseServerRpc(int playerIndex, ServerRpcParams rpcParams = default)
     {
@@ -430,11 +454,16 @@ public class FishingNetSupply : NetworkBehaviour
     /// <summary>ホストが答え合わせをする間隔（秒）。</summary>
     private const float ServerCheckInterval = 1f;
 
+    /// <summary>前回の答え合わせからの経過秒数。</summary>
     private float serverCheckTimer;
 
     /// <summary>「持ち主と引っ掛けた人が食い違う」が何回続いたか。</summary>
     private int ownerMismatchCount;
 
+    /// <summary>
+    /// ホストだけが動かす。誰かが引っ掛けている間、<see cref="ServerCheckInterval"/> 秒ごとに答え合わせをする。
+    /// ポーズ中も数えるよう、時間は unscaledDeltaTime で測る。
+    /// </summary>
     private void Update()
     {
         if (!IsSpawned || !IsServer || !IsClaimed || despawnScheduled)
@@ -491,6 +520,7 @@ public class FishingNetSupply : NetworkBehaviour
         ownerMismatchCount = 0;
     }
 
+    /// <summary>参加番号 <paramref name="playerIndex"/> の人。いなければ null。</summary>
     private static FishingNetPlayer FindPlayerByIndex(int playerIndex)
     {
         foreach (FishingNetPlayer player in FishingNetPlayer.All)
@@ -516,6 +546,7 @@ public class FishingNetSupply : NetworkBehaviour
     /// </summary>
     private const float DespawnDelaySeconds = 1f;
 
+    /// <summary>もう削除の予約をしたか（二重に予約しないため）。</summary>
     private bool despawnScheduled;
 
     /// <summary>
@@ -535,6 +566,7 @@ public class FishingNetSupply : NetworkBehaviour
         StartCoroutine(DespawnLater());
     }
 
+    /// <summary><see cref="DespawnDelaySeconds"/> 秒待ってから、全員の画面から削除する。待っている間に消えていたら何もしない。</summary>
     private System.Collections.IEnumerator DespawnLater()
     {
         yield return new WaitForSeconds(DespawnDelaySeconds);
@@ -568,6 +600,7 @@ public class FishingNetSupply : NetworkBehaviour
     // 補助
     // ------------------------------------------------------------
 
+    /// <summary>ClientRpc の宛先を「頼んできた人のPCだけ」にするための設定を作る（全員に配らないため）。</summary>
     private static ClientRpcParams RpcToSender(ServerRpcParams rpcParams)
     {
         return new ClientRpcParams

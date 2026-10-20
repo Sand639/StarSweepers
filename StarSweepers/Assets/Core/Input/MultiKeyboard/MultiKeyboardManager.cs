@@ -15,12 +15,20 @@ namespace ProjectEL4S.MultiKeyboard
     ///
     /// Raw Input を登録すると Unity の Keyboard.current が止まるので、受け取った入力を
     /// <see cref="UnityKeyboardBridge"/> で Unity へ流し直す（既存のスクリプトがそのまま動く）。
+    ///
+    /// ## 1 フレームの流れ
+    ///
+    /// 受信スレッド（<see cref="RawInputKeyboard"/>）が溜めたイベントを、Input System の更新直前（onBeforeUpdate）に
+    /// <see cref="ProcessRawInput"/> で取り出し、①Unity へ流し直す ②台ごとに振り分ける、の 2 つを同時に行う。
     /// </summary>
+    // 席（InputSeatManager = -90）やふつうのスクリプト（0）が読む前に、キーボードの値をそろえておくための順番
     [DefaultExecutionOrder(-100)]
     public sealed class MultiKeyboardManager : MonoBehaviour
     {
         [Header("キーボード")]
+        [Tooltip("分けて読むキーボードの台数（＝番号の数）。これを超えた台のキーは無視される")]
         [SerializeField] private int _maxKeyboards = 2;
+        [Tooltip("番号ごとの表示色（台数のほうが多ければ繰り返す）")]
         [SerializeField] private Color[] _keyboardColors =
         {
             new Color(0.2f, 0.8f, 1f),
@@ -42,7 +50,9 @@ namespace ProjectEL4S.MultiKeyboard
         [Tooltip("Raw Input が使えない環境では 1 台目を通常のキーボードに追従させる")]
         [SerializeField] private bool _fallbackToSystemKeyboard = true;
 
+        // 受信スレッドから 1 フレームぶんのイベントを受け取る入れ物（毎フレーム作らないよう使い回す）
         private readonly List<RawKeyEvent> _events = new List<RawKeyEvent>();
+        // デバイスのハンドル → キーボードの番号
         private readonly Dictionary<IntPtr, int> _deviceToKeyboard = new Dictionary<IntPtr, int>();
         private readonly UnityKeyboardBridge _bridge = new UnityKeyboardBridge();
         private MultiKeyboardDevice[] _keyboards;
@@ -50,8 +60,10 @@ namespace ProjectEL4S.MultiKeyboard
         private string[] _fixedDevices = Array.Empty<string>();
         // 名前を取るのは Windows への問い合わせになるので、ハンドルごとに覚えておく
         private readonly Dictionary<IntPtr, string> _deviceNames = new Dictionary<IntPtr, string>();
+        // 今つながっているデバイスの一覧を受け取る入れ物（BindFixedDevices 用の使い回し）
         private readonly List<IntPtr> _connected = new List<IntPtr>();
         private RawInputKeyboard _reader;
+        // 前のフレームまでに見た「登録を取り戻した回数」。増えていたら取られていた間の離しを取りこぼしている
         private int _seenRestoreCount;
         // onBeforeUpdate と Update の両方から呼ばれるので、1 フレームに 1 回だけ処理するための印
         private bool _processedThisFrame;
@@ -200,6 +212,7 @@ namespace ProjectEL4S.MultiKeyboard
             if (Instance == this) Instance = null;
         }
 
+        /// <summary>受信役（Windows から読む側）が無ければ作って始める。失敗した理由は <see cref="StatusMessage"/> に残す。</summary>
         private void EnsureReader()
         {
             if (_reader != null) return;
@@ -218,10 +231,12 @@ namespace ProjectEL4S.MultiKeyboard
             }
         }
 
+        /// <summary>受信役を止めて片付ける。無効化・破棄・再コンパイル前・終了時のどこから呼ばれてもよい（何度呼んでも安全）。</summary>
         private void StopReader()
         {
             if (_reader == null) return;
 
+            // 先に _reader を空にしてから止める（止めている最中に Update などが来ても、止まった受信役を触らないように）
             var reader = _reader;
             _reader = null;
             reader.Dispose();
@@ -269,9 +284,11 @@ namespace ProjectEL4S.MultiKeyboard
 
         private void LateUpdate()
         {
+            // 次のフレームの onBeforeUpdate でまた処理できるように印を戻す
             _processedThisFrame = false;
         }
 
+        /// <summary>溜まったイベントを取り出して、Unity へ流し直しつつ台ごとに振り分ける（1 フレームに 1 回）。</summary>
         private void ProcessRawInput()
         {
             _processedThisFrame = true;
@@ -316,6 +333,7 @@ namespace ProjectEL4S.MultiKeyboard
             if (_forwardToUnityInput) _bridge.Flush();
         }
 
+        /// <summary>Raw Input が使えない環境（Windows 以外・開始に失敗）用。台ごとには分けられないので、0 番だけを Unity のキーボードで動かす。</summary>
         private void ProcessFallback()
         {
             for (int i = 0; i < _keyboards.Length; i++)
@@ -355,6 +373,10 @@ namespace ProjectEL4S.MultiKeyboard
             Debug.Log($"[MultiKeyboard] Raw Input の登録を {_reader.LastRegistrationThief} に取られていたので取り戻しました（{restored} 回目）");
         }
 
+        /// <summary>
+        /// デバイスのハンドルから、どのキーボードかを引く。初めて見たデバイスは、assignIfNew のときだけ
+        /// 空いている番号（固定登録があればその番号）に割り当てる。入れる番号が無ければ null。
+        /// </summary>
         private MultiKeyboardDevice Resolve(IntPtr device, bool assignIfNew)
         {
             if (_deviceToKeyboard.TryGetValue(device, out int index))
@@ -418,6 +440,7 @@ namespace ProjectEL4S.MultiKeyboard
             return -1;
         }
 
+        /// <summary>デバイスを番号に結び付ける（ログの文言だけ、固定登録かどうかで変える）。</summary>
         private void Assign(int slot, IntPtr device, string name, bool isFixed)
         {
             _deviceToKeyboard.Add(device, slot);

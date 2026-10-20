@@ -45,6 +45,10 @@ public class FishingNetBomb : NetworkBehaviour
         lit.OnValueChanged -= OnLitChanged;
     }
 
+    /// <summary>
+    /// ホストが <see cref="lit"/> を変えると、**ホスト自身も含めた全員のPC**で呼ばれる。
+    /// 火がついたときだけ各PCの導火線を燃やし始める（消えたときは <see cref="ExplosiveObject"/> が自分で片付けている）。
+    /// </summary>
     private void OnLitChanged(bool before, bool after)
     {
         if (after)
@@ -62,9 +66,12 @@ public class FishingNetBomb : NetworkBehaviour
         RequestLightFuseServerRpc();
     }
 
+    // 爆弾の持ち主（Owner）はホストだが、火をつけるのは引っ掛けた参加者なので、
+    // 持ち主でなくても呼べるように RequireOwnership = false にしてある
     [ServerRpc(RequireOwnership = false)]
     private void RequestLightFuseServerRpc()
     {
+        // すでに燃えていれば何もしない（同じ値を入れ直すと無駄な通知が飛ぶ）
         if (!lit.Value)
         {
             lit.Value = true;

@@ -37,6 +37,13 @@ using UnityEngine;
 /// </summary>
 public static class AimCheck
 {
+    /// <summary>
+    /// 「ほぼ同じ位置」とみなす距離の2乗（0.01m = 1cm の2乗）。
+    /// これより近いと向きが決まらないので、角度の計算をしない。
+    /// </summary>
+    private const float SameSpotSqrDistance = 0.0001f;
+
+    /// <summary>一度見つけたカメラを覚えておく（毎フレーム `Camera.main` で探すと重いため）。</summary>
     private static Camera cachedCamera;
 
     /// <summary>
@@ -110,7 +117,8 @@ public static class AimCheck
 
         Vector3 toTarget = target - camera.transform.position;
 
-        if (toTarget.sqrMagnitude < 0.0001f)
+        // カメラとほぼ同じ位置にある物は「真正面」扱い
+        if (toTarget.sqrMagnitude < SameSpotSqrDistance)
         {
             return 0f;
         }
@@ -175,7 +183,10 @@ public static class AimCheck
         return true;
     }
 
-    /// <summary>間に何があるかを調べるときの入れ物。毎回作り直さないよう使い回している。</summary>
+    /// <summary>
+    /// 間に何があるかを調べるときの入れ物。毎回作り直さないよう使い回している。
+    /// 一度に数えるのは16個まで（それ以上の物が一直線に重なることはまず無い）。
+    /// </summary>
     private static readonly RaycastHit[] pathHits = new RaycastHit[16];
 
     /// <summary>
@@ -188,12 +199,13 @@ public static class AimCheck
         Vector3 toTarget = target - origin;
 
         // 頭とほぼ同じ位置にあるものは、向きが決まらないので狙えている扱いにする
-        if (toTarget.sqrMagnitude < 0.0001f)
+        if (toTarget.sqrMagnitude < SameSpotSqrDistance)
         {
             return true;
         }
 
-        if (look.sqrMagnitude < 0.0001f)
+        // 向きそのものが無い（長さ0）なら、判断のしようがない
+        if (look.sqrMagnitude < SameSpotSqrDistance)
         {
             return false;
         }
@@ -208,10 +220,12 @@ public static class AimCheck
             return false;
         }
 
+        // 上下の傾きを外した「水平の向き」でも調べる
         Vector3 flat = look;
         flat.y = 0f;
 
-        if (flat.sqrMagnitude < 0.0001f)
+        // 真上・真下を向いているときは水平の向きが無いので、こちらでは判断しない
+        if (flat.sqrMagnitude < SameSpotSqrDistance)
         {
             return false;
         }

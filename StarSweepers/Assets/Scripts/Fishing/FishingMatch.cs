@@ -2,19 +2,6 @@ using Unity.Collections;
 using Unity.Netcode;
 using UnityEngine;
 
-/// <summary>
-/// **オンラインの試合のまとめ役。** 釣りのオンラインシーンに1つ置く。
-///
-/// ホストだけが中身を決めて、結果を全員へ配る
-/// （`ネットワークの制作工程.md` の「動きは本人、勝敗と点数はホスト」の形）。
-///
-/// 持っているもの：
-///   ・**チーム数**（人数から自動で決まる。<see cref="FishingTeams"/> のルール）
-///   ・**チームごとの点数**
-///   ・**4つのゴールを、どのチームのものにするか**（人数が変わると割り当て直す）
-///
-/// 点を足すのは <see cref="FishingNetPocket"/> から。表示は <see cref="FishingStatusUI"/>。
-/// </summary>
 /// <summary>試合がどう終わるか。**片方に差し替えられるように enum にしている。**</summary>
 public enum MatchEndRule
 {
@@ -35,6 +22,19 @@ public enum MatchPhase
     Result
 }
 
+/// <summary>
+/// **オンラインの試合のまとめ役。** 釣りのオンラインシーンに1つ置く。
+///
+/// ホストだけが中身を決めて、結果を全員へ配る
+/// （`ネットワークの制作工程.md` の「動きは本人、勝敗と点数はホスト」の形）。
+///
+/// 持っているもの：
+///   ・**チーム数**（人数から自動で決まる。<see cref="FishingTeams"/> のルール）
+///   ・**チームごとの点数**
+///   ・**4つのゴールを、どのチームのものにするか**（人数が変わると割り当て直す）
+///
+/// 点を足すのは <see cref="FishingNetPocket"/> から。表示は <see cref="FishingStatusUI"/>。
+/// </summary>
 public class FishingMatch : NetworkBehaviour
 {
     /// <summary>シーンにある試合のまとめ役。ゴールや表示から探すために持っている。</summary>
@@ -125,11 +125,19 @@ public class FishingMatch : NetworkBehaviour
     /// <summary>直前に起きたことの文章。</summary>
     public string LastEvent => lastEvent.Value.ToString();
 
-    /// <summary>直前のことが起きた時刻（このPCの時計）。少しの間だけ表示するために使う。</summary>
+    /// <summary>
+    /// 直前のことが起きた時刻（このPCの時計）。少しの間だけ表示するために使う。
+    /// 始まった直後に表示されないよう、はじめは「ずっと前」（-999 秒）にしておく。
+    /// </summary>
     public float LastEventTime { get; private set; } = -999f;
 
+    /// <summary>前回チーム分けをしたときの人数。人の出入りに気づくために控える。-1 はまだ一度も分けていない。</summary>
     private int lastKnownPlayerCount = -1;
 
+    /// <summary>
+    /// 全員のPCで呼ばれる。ホストはここで点数の枠とゴールの割り当てを用意して試合を始める。
+    /// 参加者もホストも、「ゴールの持ち主が変わったら色を塗り直す」ための購読をする。
+    /// </summary>
     public override void OnNetworkSpawn()
     {
         Current = this;
@@ -143,6 +151,7 @@ public class FishingMatch : NetworkBehaviour
                 teamScores.Add(0);
             }
 
+            // ゴールの持ち主の枠。いったん仮に 0 番チームで埋め、すぐ下の RebuildTeams で正しい持ち主に差し替える
             pocketOwners.Clear();
             for (int i = 0; i < FishingTeams.PocketCount; i++)
             {
@@ -174,6 +183,7 @@ public class FishingMatch : NetworkBehaviour
         }
     }
 
+    /// <summary>ホストだけが動かす。人数の変化を見張り、決着がついたかを毎フレーム確かめる。</summary>
     private void Update()
     {
         if (!IsServer)
@@ -236,6 +246,8 @@ public class FishingMatch : NetworkBehaviour
         int bestScore = int.MinValue;
         bool tied = false;
 
+        // 一番多い点を探す。同じ点が並んだら tied にするが、そのあと更に多い点が出たら引き分けでなくなる
+        // （1位どうしが同点のときだけ引き分け。2位以下の同点は関係ない）
         for (int team = 0; team < teamCount.Value; team++)
         {
             int score = ScoreOf(team);
@@ -283,6 +295,7 @@ public class FishingMatch : NetworkBehaviour
                   $"ゴールの持ち主：{string.Join(" / ", owners)}");
     }
 
+    /// <summary>ホストが割り当てを変えると全員のPCで呼ばれる。参加者の画面でもゴールの色が変わるように。</summary>
     private void OnPocketOwnersChanged(NetworkListEvent<int> changeEvent)
     {
         ApplyPocketOwnersToScene();
@@ -337,6 +350,7 @@ public class FishingMatch : NetworkBehaviour
         LastEventTime = Time.time;
     }
 
+    /// <summary>ホストが文章を変えると全員のPCで呼ばれる（ホスト自身も含む）。</summary>
     private void OnLastEventChanged(FixedString128Bytes before, FixedString128Bytes after)
     {
         // 参加者側でも「いま入った」と分かるように、受け取った時刻を控える

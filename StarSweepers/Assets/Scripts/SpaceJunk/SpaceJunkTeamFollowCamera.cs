@@ -42,6 +42,11 @@ public class SpaceJunkTeamFollowCamera : SpaceJunkCameraMode
 
     protected override string DefaultName => "自分";
 
+    /// <summary>
+    /// この種類が求めた、いまのカメラの位置。なめらかに寄せるために前のフレームの値を持ち越す。
+    /// `transform.position` ではなくこちらを正とするのは、切り替えのつなぎ中は
+    /// カメラ本体（transform）が前の種類との中間にあって、ここから見た「いま」ではないため。
+    /// </summary>
     private Vector3 position;
 
     public override bool TryGetPose(float deltaTime, out Vector3 outPosition, out Quaternion outRotation)
@@ -75,6 +80,7 @@ public class SpaceJunkTeamFollowCamera : SpaceJunkCameraMode
         return true;
     }
 
+    /// <summary>カメラを置きたい場所。相手の位置から、いまの向き（Yaw）に回した offset だけ離れた所。</summary>
     private Vector3 Goal(Transform self)
     {
         return self.position + Quaternion.Euler(0f, Yaw, 0f) * offset;

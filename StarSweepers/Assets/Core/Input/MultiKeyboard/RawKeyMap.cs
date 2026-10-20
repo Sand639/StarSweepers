@@ -10,8 +10,11 @@ namespace ProjectEL4S.MultiKeyboard
     /// </summary>
     public static class RawKeyMap
     {
+        // Pause キーの Windows の仮想キーコード
         private const ushort VK_PAUSE = 0x13;
 
+        // スキャンコードは 1 バイト（0x00..0x7F。最上位ビットは「離した」の印で、Raw Input では別のフラグに分かれている）なので、
+        // 表は 128 個で足りる。E0 なしと E0 付きで別の表を持つ
         // E0 なしのスキャンコード（0x00..0x7F）
         private static readonly Key[] s_normal = new Key[0x80];
         // E0 付きのスキャンコード（0x00..0x7F）
@@ -64,12 +67,14 @@ namespace ProjectEL4S.MultiKeyboard
             s_extended[0x5D] = Key.ContextMenu;
         }
 
+        /// <summary>表に 1 行足す。同じスキャンコードを E0 付きで使う別のキー（例：テンキーの 8 と ↑）があれば extended に渡す。</summary>
         private static void Set(int scanCode, Key normal, Key extended = Key.None)
         {
             s_normal[scanCode] = normal;
             s_extended[scanCode] = extended;
         }
 
+        /// <summary>受け取ったイベントを Input System の <see cref="Key"/> にする。表に無ければ Key.None。</summary>
         public static Key ToKey(in RawKeyEvent e)
         {
             // Pause は E1 付きの特殊な並びで届くので、仮想キーで判定する

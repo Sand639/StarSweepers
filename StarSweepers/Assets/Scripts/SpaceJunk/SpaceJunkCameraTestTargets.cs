@@ -35,7 +35,10 @@ public class SpaceJunkCameraTestTargets : MonoBehaviour
     /// <summary>自陣が手前に来る向き（度）。</summary>
     public float Yaw => yaw;
 
+    /// <summary>いま「自分」にしている人の番号（players の添字。Tab で 1 つずつ進む）。</summary>
     private int selfIndex;
+
+    /// <summary>案内の箱の見た目。OnGUI の中でしか GUI.skin が使えないので、最初の描画で作る。</summary>
     private GUIStyle style;
 
     private void OnEnable()
@@ -96,10 +99,12 @@ public class SpaceJunkCameraTestTargets : MonoBehaviour
         }
 
         string camera = SpaceJunkCameraModeSwitch.LocalModeSummary;
+        // 毎フレーム探しているが、検証シーン専用の部品なので重さは気にしない
         SpaceJunkTeamGroupCamera team = FindFirstObjectByType<SpaceJunkTeamGroupCamera>();
         string distance = team != null ? $"チームカメラの距離：{team.Distance:0.0} m" : string.Empty;
         string selfName = Self != null ? Self.name : "なし";
 
+        // 画面の左上（12px, 12px）に、430×210 px の案内の箱
         GUI.Box(new Rect(12f, 12f, 430f, 210f),
             "チームカメラの検証\n" +
             "WASD：A を動かす　矢印キー：B を動かす　Space：A がジャンプ\n" +

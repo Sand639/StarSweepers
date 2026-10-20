@@ -42,7 +42,7 @@ public class HookChargeStrip : MonoBehaviour
     private const int TextureSize = 32;
     private const int EdgePixels = 4;
     private const float PixelsPerMeter = 64f; // 縁の太さ ＝ 4 / 64 ＝ 約 6 cm
-    private const float InsideAlpha = 0.35f;
+    private const float InsideAlpha = 0.35f; // 中の濃さ（0〜1。縁は 1 で、中はこれだけ薄い）
 
     // 白い四角の絵は全員で1枚を使い回す
     private static Sprite sharedSprite;
@@ -61,6 +61,11 @@ public class HookChargeStrip : MonoBehaviour
         body = GetComponent<CharacterController>();
     }
 
+    /// <summary>
+    /// 毎フレーム、長方形の向き・長さ・位置を決め直す。
+    /// 描画の直前（LateUpdate）にやるのは、**そのフレームの移動と溜めが終わったあとの値**で出すため
+    /// （Update だと、プレイヤーが動く前の位置に1フレーム遅れて出ることがある）。
+    /// </summary>
     private void LateUpdate()
     {
         if (!ShouldShow())
@@ -83,6 +88,7 @@ public class HookChargeStrip : MonoBehaviour
         {
             Vector3 toTarget = HookAimAssist.AimPointOf(target) - origin;
             toTarget.y = 0f;
+            // 物資が手元と同じ場所にあって向きが決まらないときは、元の向き・長さのままにする
             if (toTarget.sqrMagnitude > 0.0001f)
             {
                 direction = toTarget.normalized;
@@ -99,6 +105,7 @@ public class HookChargeStrip : MonoBehaviour
 
         strip.enabled = true;
         strip.color = color;
+        // 溜め始めで届く距離が短くても、最低でも幅と同じ長さ（正方形）は出して、消えたように見せない
         strip.size = new Vector2(width, Mathf.Max(width, length));
 
         // 地面に寝かせて、絵の上（長さの向き）を狙う方向へ向ける。絵の根もとは下の端なので、足元から前へ伸びる
@@ -106,6 +113,7 @@ public class HookChargeStrip : MonoBehaviour
         strip.transform.SetPositionAndRotation(origin, Quaternion.Euler(90f, yaw, 0f));
     }
 
+    /// <summary>いま長方形を出してよいか。溜めている間だけ、しかも設定がタイプBのときだけ。</summary>
     private bool ShouldShow()
     {
         return hook != null
@@ -115,6 +123,7 @@ public class HookChargeStrip : MonoBehaviour
             && !GamePause.BlocksInput;
     }
 
+    /// <summary>長方形を消す。部品そのものは残しておき、次に溜めたときにまた使う（毎回作り直さない）。</summary>
     private void Hide()
     {
         if (strip != null)
@@ -143,6 +152,9 @@ public class HookChargeStrip : MonoBehaviour
     private float FindGroundHeight(Vector3 from)
     {
         float feet = body != null && body.enabled ? body.bounds.min.y : transform.position.y;
+
+        // 探し始めは足の裏の 30 cm 上（足の裏ぴったりから始めると、少し沈んでいる地面を取りこぼすため）。
+        // 上にずらしたぶん、探す長さにも同じ 30 cm を足して、設定どおりの深さまで探す
         Vector3 start = new Vector3(from.x, feet + 0.3f, from.z);
 
         int count = Physics.RaycastNonAlloc(start, Vector3.down, groundHits,
@@ -167,6 +179,10 @@ public class HookChargeStrip : MonoBehaviour
         return float.IsNegativeInfinity(best) ? feet : best;
     }
 
+    /// <summary>
+    /// 長方形の部品を作る（最初に溜めたときに1回だけ）。
+    /// 9スライス（Sliced）で伸ばすので、長さを変えても縁の太さは変わらない。地面の飾りなので影は付けない。
+    /// </summary>
     private SpriteRenderer CreateStrip()
     {
         GameObject created = new GameObject($"{name} の溜めの長方形");
