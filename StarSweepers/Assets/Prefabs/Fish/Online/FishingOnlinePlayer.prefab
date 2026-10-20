@@ -539,6 +539,8 @@ MonoBehaviour:
   m_Script: {fileID: 11500000, guid: b2b0c898db17c8042a9016b1cf057031, type: 3}
   m_Name: 
   m_EditorClassIdentifier: Assembly-CSharp::HookLine
+  useLiquid: 1
+  liquidPrefab: {fileID: 7095729999162572078, guid: f5118ee0fd85e7b43ba48e5ae83d7077, type: 3}
 --- !u!1 &6480434627021926450
 GameObject:
   m_ObjectHideFlags: 0

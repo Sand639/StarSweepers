@@ -195,6 +195,12 @@ public class HookController : MonoBehaviour
     public HookableObject AttachedItem => attached;
 
     /// <summary>
+    /// **いま何かをつかんでいるか**（物資か、大型の引っ張れる物）。糸の色を濃くするのに使う。
+    /// ほかの人がつかんでいる物資にくっついて待っている間（横取りの待ち）は、まだつかんでいない扱い。
+    /// </summary>
+    public bool IsGrabbing => phase == HookPhase.Attached && (attached != null || attachedPullable != null);
+
+    /// <summary>
     /// **オンラインとして動いているか。**
     /// 通信部品が入っていて、実際に同期が始まっているときだけ true。
     /// 1人用のシーンでは常に false になり、これまでどおり手元で完結する。
@@ -251,6 +257,12 @@ public class HookController : MonoBehaviour
         if (GetComponent<HookChargeStrip>() == null)
         {
             gameObject.AddComponent<HookChargeStrip>();
+        }
+
+        // 糸が液体のときは、フックの先の球を隠す（流れの先端がフックの代わり。2026/10/20）
+        if (line != null && hook != null)
+        {
+            line.HideTip(hook.gameObject);
         }
 
         if (inputActions == null)
@@ -865,6 +877,7 @@ public class HookController : MonoBehaviour
                      || phase == HookPhase.Returning
                      || phase == HookPhase.Attached;
 
+        line.SetGrabbing(IsGrabbing);
         line.Show(showLine);
         if (showLine)
         {
