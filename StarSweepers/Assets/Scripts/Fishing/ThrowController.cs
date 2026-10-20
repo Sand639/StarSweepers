@@ -496,7 +496,9 @@ public class ThrowController : MonoBehaviour
         if (target != null)
         {
             distancePullElapsed = 0f;
-            if (style != ThrowStyle.SweepOnce || distanceBasedPullActive)
+            bool waitForTwoButtonsPullInput = style == ThrowStyle.TwoButtons &&
+                !distanceBasedPullActive && !heavyTwoButtons && !UsesOneButton && !nextIsThrow;
+            if ((style != ThrowStyle.SweepOnce && !waitForTwoButtonsPullInput) || distanceBasedPullActive)
             {
                 // **持っている間は、自分の体に当たらないようにする**（2026/9/30）。
                 // タイプAはクリックするまで物理・座標に触れないため、ここでは実行しない。
@@ -1404,6 +1406,7 @@ public class ThrowController : MonoBehaviour
                 {
                     // 強さを覚えて、釣り式と同じく**頭上を越えて後ろへ抜ける**動きを始める
                     pullAccuracy = Accuracy(BarPosition());
+                    PrepareTwoButtonsPullAtInput();
                     stage = TwoButtonStage.PullTravel;
                     liftTimer = 0f;
 
@@ -1480,6 +1483,27 @@ public class ThrowController : MonoBehaviour
                 UpdateForwardSwing();
                 break;
         }
+    }
+
+    /// <summary>宇宙ごみ式の引っ張り待機中は動的物理を保ち、入力された時点でレール移動へ切り替える。</summary>
+    private void PrepareTwoButtonsPullAtInput()
+    {
+        if (target == null)
+        {
+            return;
+        }
+
+        Rigidbody body = target.Body;
+        reelStart = target.transform.position;
+        targetGravityWas = body.useGravity;
+        targetKinematicWas = body.isKinematic;
+
+        ThrowPassThrough.Hold(target.gameObject, hook.PlayerRoot.GetComponent<CharacterController>());
+        body.position = reelStart;
+        body.linearVelocity = Vector3.zero;
+        body.angularVelocity = Vector3.zero;
+        body.useGravity = false;
+        body.isKinematic = true;
     }
 
     // ------------------------------------------------------------
