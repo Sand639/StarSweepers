@@ -86,6 +86,9 @@ public class SpaceJunkPlayerSetup : MonoBehaviour
     private HookController hookController;
     private PlayerInputSource input;
 
+    /// <summary>フックの糸（液体）。チームの色を渡す。</summary>
+    private HookLine hookLine;
+
     /// <summary>復活までの残り秒数（自分のぶんだけ使う）。</summary>
     private float respawnRemaining;
 
@@ -107,6 +110,7 @@ public class SpaceJunkPlayerSetup : MonoBehaviour
         characterController = GetComponent<CharacterController>();
         mover = GetComponent<FishingPlayerController>();
         hookController = GetComponent<HookController>();
+        hookLine = GetComponentInChildren<HookLine>(true);
         input = PlayerInputSource.Get(this);
     }
 
@@ -546,6 +550,11 @@ public class SpaceJunkPlayerSetup : MonoBehaviour
 
         lastAppliedTeam = team;
         Color color = SpaceJunkTeams.TeamColor(team);
+
+        if (hookLine != null)
+        {
+            hookLine.SetTeamColor(color);
+        }
 
         foreach (Renderer renderer in teamRenderers)
         {

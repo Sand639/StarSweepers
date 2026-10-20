@@ -67,6 +67,10 @@ public class FishingNetPlayer : NetworkBehaviour
     private readonly NetworkVariable<bool> lineVisible = new NetworkVariable<bool>(
         false, NetworkVariableReadPermission.Everyone, NetworkVariableWritePermission.Owner);
 
+    /// <summary>物資をつかんでいるか（糸の色を濃くする）。**本人が送る。**</summary>
+    private readonly NetworkVariable<bool> lineGrabbing = new NetworkVariable<bool>(
+        false, NetworkVariableReadPermission.Everyone, NetworkVariableWritePermission.Owner);
+
     /// <summary>「狙っている物資が無い」を表す値。</summary>
     private const ulong NoAimTarget = ulong.MaxValue;
 
@@ -298,6 +302,7 @@ public class FishingNetPlayer : NetworkBehaviour
         hookPosition.Value = hookVisual.position;
         lineVisible.Value = hookController.Phase != HookController.HookPhase.Idle
                          && hookController.Phase != HookController.HookPhase.Charging;
+        lineGrabbing.Value = hookController.IsGrabbing;
     }
 
     /// <summary>他の人のフックと糸を、送られてきた値で再現する。</summary>
@@ -310,6 +315,7 @@ public class FishingNetPlayer : NetworkBehaviour
 
         if (line != null && handPoint != null)
         {
+            line.SetGrabbing(lineGrabbing.Value);
             line.Show(lineVisible.Value);
             if (lineVisible.Value)
             {
@@ -386,6 +392,11 @@ public class FishingNetPlayer : NetworkBehaviour
         }
 
         Color color = FishingTeams.TeamColor(TeamIndex);
+
+        if (line != null)
+        {
+            line.SetTeamColor(color);
+        }
 
         foreach (Renderer renderer in teamRenderers)
         {

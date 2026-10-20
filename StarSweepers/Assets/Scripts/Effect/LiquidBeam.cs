@@ -145,6 +145,7 @@ public class LiquidBeam : MonoBehaviour
         Firing,
         Holding,
         Fading,
+        Following,  // 外から両端を決めてもらっている（フックの糸の代わり。Follow()）
     }
 
     /// <summary>流れの芯の点の数。</summary>
@@ -179,6 +180,9 @@ public class LiquidBeam : MonoBehaviour
     private float headSplashCarry;
     private float dripCarry;
 
+    /// <summary>Follow() で、先端が前のフレームより先へ伸びたか（しぶきを前へ飛ばすかどうか）。</summary>
+    private bool followGrowing;
+
     private LiquidLine body;
     private LiquidLine highlight;
     private LiquidLine preview;
@@ -197,7 +201,7 @@ public class LiquidBeam : MonoBehaviour
     public bool IsCharging => state == State.Charging;
 
     /// <summary>流れが出ている（発射〜消えるまで）か。この間は次の溜めを始められない。</summary>
-    public bool IsFiring => state == State.Firing || state == State.Holding || state == State.Fading;
+    public bool IsFiring => state == State.Firing || state == State.Holding || state == State.Fading || state == State.Following;
 
     /// <summary>先端が届ききって、出たままになっているか。</summary>
     public bool IsHolding => state == State.Holding;
@@ -260,10 +264,44 @@ public class LiquidBeam : MonoBehaviour
             return;
         }
 
-        if (state == State.Firing || state == State.Holding)
+        if (state == State.Firing || state == State.Holding || state == State.Following)
         {
             BeginFade();
         }
+    }
+
+    /// <summary>
+    /// **両端を外から決めて、流れを出し続ける**（フックの糸の代わりに使うとき。<c>HookLine</c> が毎フレーム呼ぶ）。
+    /// 溜めや距離の計算はせず、<paramref name="start"/>（根元）から <paramref name="end"/>（先端）まで流れを描く。
+    /// やめるときは <see cref="Stop"/>（根元から切れて消える）。
+    /// </summary>
+    public void Follow(Vector3 start, Vector3 end)
+    {
+        Vector3 toEnd = end - start;
+        float length = toEnd.magnitude;
+
+        transform.position = start;
+
+        if (length > 0.001f)
+        {
+            Vector3 direction = toEnd / length;
+
+            // 真上・真下を向くとき（物資を頭の上へ引き抜くときなど）は、上の向きの基準を変える
+            Vector3 up = Mathf.Abs(Vector3.Dot(direction, Vector3.up)) > 0.99f ? Vector3.forward : Vector3.up;
+            transform.rotation = Quaternion.LookRotation(direction, up);
+        }
+
+        if (state != State.Following)
+        {
+            preview.SetVisible(false);
+            nozzleBlob.SetVisible(false);
+            state = State.Following;
+            headDistance = 0f;
+        }
+
+        followGrowing = length > headDistance + 0.001f;
+        headDistance = length;
+        tailDistance = 0f;
     }
 
     /// <summary>
@@ -343,7 +381,9 @@ public class LiquidBeam : MonoBehaviour
         }
     }
 
-    private void Update()
+    // LateUpdate にしているのは、Follow() で両端を決めてもらったあとに描くため
+    // （Update だと、呼ばれる順番しだいで先端が1フレーム遅れる）
+    private void LateUpdate()
     {
         Tick(Time.deltaTime);
     }
@@ -423,6 +463,12 @@ public class LiquidBeam : MonoBehaviour
 
                 DrawStream(Mathf.Sqrt(fade), deltaTime);
                 EmitDrips(deltaTime, dripsPerMeter * 8f);
+                break;
+
+            case State.Following:
+                DrawStream(1f, deltaTime);
+                EmitHeadSpray(deltaTime, followGrowing ? headSplashRate : headSplashRate * 0.35f, followGrowing);
+                EmitDrips(deltaTime, dripsPerMeter);
                 break;
         }
     }
