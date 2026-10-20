@@ -110,7 +110,14 @@ public partial class SpaceJunkRound : NetworkBehaviour
     [SerializeField] private float introTeamOrbitSeconds = 1.5f;
 
     [Tooltip("④ チームの中央を中心に回る角度（度）。マイナスにすると逆向きに回る")]
-    [SerializeField] private float introTeamOrbitDegrees = -110f;
+    [SerializeField] private float introTeamOrbitDegrees = -120f;
+
+    [Tooltip("④ 回り終わったときの、チームの中央からの距離（水平）。② の距離から少しずつ離れる")]
+    [Min(0f)]
+    [SerializeField] private float introOrbitEndDistance = 10f;
+
+    [Tooltip("④ 回り終わったときの高さ。② の高さから少しずつ上がり、上からチームを映す")]
+    [SerializeField] private float introOrbitEndHeight = 10f;
 
     [Tooltip("⑤ 回ったあと、止まっている秒数")]
     [Min(0f)]
@@ -138,6 +145,8 @@ public partial class SpaceJunkRound : NetworkBehaviour
     public float IntroHoldBeforeOrbitSeconds => introHoldBeforeOrbitSeconds;
     public float IntroTeamOrbitSeconds => introTeamOrbitSeconds;
     public float IntroTeamOrbitDegrees => introTeamOrbitDegrees;
+    public float IntroOrbitEndDistance => introOrbitEndDistance;
+    public float IntroOrbitEndHeight => introOrbitEndHeight;
     public float IntroHoldAfterOrbitSeconds => introHoldAfterOrbitSeconds;
     public float IntroReturnSeconds => introReturnSeconds;
     public float IntroCountdownDelaySeconds => introCountdownDelaySeconds;

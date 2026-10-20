@@ -15,7 +15,7 @@ using UnityEngine.UI;
 /// | ① マップの紹介 | マップの中央（0,0,0）を向いたまま、真上から 45 度傾けた所を 180 度回る | 3 秒 |
 /// | ② 自分のチームに寄る | 自分のチームの後ろ（マップの外側、少し上）へ寄る | 1 秒 |
 /// | ③ 止まる | ② の位置で止まる | 0.5 秒 |
-/// | ④ チームの周りを回る | ② と同じ距離・高さのまま、チームの中央を中心に -110 度回る（マイナスは逆向き） | 1.5 秒 |
+/// | ④ チームの周りを回る | チームの中央を中心に -120 度回りながら、少しずつ離れて上がり、最後は上からチームを映す | 1.5 秒 |
 /// | ⑤ 止まる | 回り終わった位置で止まる | 1 秒 |
 /// | ⑥ 全体カメラへ移る | ふだんのカメラ（全体カメラ）の位置へ移る | 1 秒 |
 ///
@@ -258,27 +258,42 @@ public class SpaceJunkRoundIntro : MonoBehaviour
 
     /// <summary>
     /// ④ チームの中央を中心に回るカメラの位置（0〜1）。② で寄った位置から回り始め、
-    /// **距離と高さは ② のまま、回る角度だけ変える。**
+    /// **回りながら少しずつ離れ・上がって、最後は上からチームを映す**（<see cref="SpaceJunkRound.IntroOrbitEndDistance"/>・
+    /// <see cref="SpaceJunkRound.IntroOrbitEndHeight"/>）。
     /// </summary>
     private void GetOrbitPose(float progress, Vector3 team, float spread, out Vector3 position, out Quaternion rotation)
     {
         Vector3 outward = Outward(team);
+        float k = Mathf.SmoothStep(0f, 1f, Mathf.Clamp01(progress));
 
         float startAngle = Mathf.Atan2(outward.z, outward.x) * Mathf.Rad2Deg;
-        float angle = startAngle + round.IntroTeamOrbitDegrees * Mathf.SmoothStep(0f, 1f, Mathf.Clamp01(progress));
+        float angle = startAngle + round.IntroTeamOrbitDegrees * k;
         Vector3 direction = new Vector3(Mathf.Cos(angle * Mathf.Deg2Rad), 0f, Mathf.Sin(angle * Mathf.Deg2Rad));
 
-        GetTeamViewPose(team, spread, direction, out position, out rotation);
+        float distance = Mathf.Lerp(round.IntroCloseDistance, round.IntroOrbitEndDistance, k);
+        float height = Mathf.Lerp(round.IntroCloseHeight, round.IntroOrbitEndHeight, k);
+
+        // 見る所も、チームの少し奥から、チームの中央そのものへ移す（上から見下ろす形になる）
+        float lookAhead = Mathf.Lerp(2f, 0f, k);
+        GetTeamViewPose(team, spread, direction, distance, height, lookAhead, out position, out rotation);
+    }
+
+    /// <summary>② 寄った位置（チームの後ろ、少し上から、チームの少し奥を見る）。</summary>
+    private void GetTeamViewPose(Vector3 team, float spread, Vector3 direction, out Vector3 position, out Quaternion rotation)
+    {
+        GetTeamViewPose(team, spread, direction, round.IntroCloseDistance, round.IntroCloseHeight, 2f,
+            out position, out rotation);
     }
 
     /// <summary>
-    /// チームの中央から <paramref name="direction"/>（水平）の向きへ離れ、少し上からチームを見る位置。
-    /// 見る所は、チームの中央より少し奥（カメラと反対側）。
+    /// チームの中央から <paramref name="direction"/>（水平）の向きへ <paramref name="distance"/> 離れ、
+    /// <paramref name="height"/> の高さからチームを見る位置。見る所は、チームの中央から <paramref name="lookAhead"/> だけ奥（カメラと反対側）。
     /// </summary>
-    private void GetTeamViewPose(Vector3 team, float spread, Vector3 direction, out Vector3 position, out Quaternion rotation)
+    private static void GetTeamViewPose(Vector3 team, float spread, Vector3 direction, float distance, float height,
+        float lookAhead, out Vector3 position, out Quaternion rotation)
     {
-        Vector3 focus = team + Vector3.up * 1f - direction * 2f;
-        position = team + direction * (round.IntroCloseDistance + spread) + Vector3.up * round.IntroCloseHeight;
+        Vector3 focus = team + Vector3.up * 1f - direction * lookAhead;
+        position = team + direction * (distance + spread) + Vector3.up * height;
         rotation = Quaternion.LookRotation(focus - position, Vector3.up);
     }
 
