@@ -25,11 +25,15 @@ using UnityEngine.SceneManagement;
 /// </summary>
 public static class SpaceJunkMapListSetup
 {
+    /// <summary>マップの一覧のファイルの置き場所（1つだけ。ロビー・ビルド・各ツールがここを見る）。</summary>
     public const string ListPath = SpaceJunkSetup.MapSceneFolder + "/SpaceJunkMapList.asset";
 
-    /// <summary>最初に一覧を作るとき、ロビーに出さずに入れるマップ（作りかけのもの）。</summary>
+    /// <summary>最初に一覧を作るとき、ロビーに出さずに入れるマップ（作りかけのもの）。拡張子なしのシーン名で書く。</summary>
     private static readonly string[] HiddenAtFirst = { "SpaceJunkMap03", "SpaceJunkMap04" };
 
+    /// <summary>
+    /// メニューから一覧を開く。無ければ作り、ロビーに結びつけ、ゴールの方角を控え直してから、インスペクターに出す。
+    /// </summary>
     [MenuItem("Tools/StarSweepers/宇宙ごみのマップの一覧を開く")]
     public static void Open()
     {
@@ -104,6 +108,7 @@ public static class SpaceJunkMapListSetup
     /// </summary>
     private static bool DefaultShow(string scenePath)
     {
+        // HiddenAtFirst に名前が無ければ（IndexOf が -1 なら）出す
         return System.Array.IndexOf(HiddenAtFirst, Path.GetFileNameWithoutExtension(scenePath)) < 0;
     }
 
@@ -135,7 +140,10 @@ public static class SpaceJunkMapListSetup
         }
     }
 
-    /// <summary>一覧に入っているシーンの置き場所（ビルドに入れるため）。</summary>
+    /// <summary>
+    /// 一覧に入っているシーンの置き場所（ビルドに入れるため）。一覧の順のまま、消えたシーンと重複は除く。
+    /// 呼ぶたびに新しいリストを作って返すので、受け取った側で足したり消したりしてよい。
+    /// </summary>
     public static List<string> ScenePaths()
     {
         List<string> paths = new List<string>();
@@ -219,6 +227,7 @@ public static class SpaceJunkMapListSetup
         {
             foreach (SpaceJunkGoal goal in root.GetComponentsInChildren<SpaceJunkGoal>(true))
             {
+                // 番号が範囲の外のゴールは数えない（点検 SpaceJunkSetup.VerifyMap がエラーで知らせる）
                 if (goal.GoalIndex >= 0 && goal.GoalIndex < SpaceJunkTeams.GoalCount)
                 {
                     mask |= 1 << goal.GoalIndex;
@@ -257,6 +266,9 @@ public static class SpaceJunkMapListSetup
     /// **ロビーのシーンの画面に、一覧を結びつける。**
     ///
     /// ロビーが開いていなければ、裏で開いて書き換えてから閉じる（いま開いているシーンは変えない）。
+    ///
+    /// ⚠ 結びつける先を **`SpaceJunkLobbyUI` のフィールド名 `mapList`（文字）** で指定している。
+    /// そのフィールドを改名すると、警告が出るだけで結びつかなくなる（ロビーが一覧を使えない）。
     /// </summary>
     public static void WireLobby(SpaceJunkMapList list)
     {

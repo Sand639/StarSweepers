@@ -59,16 +59,7 @@ public static class SpaceJunkSetup
     {
         get
         {
-            foreach (string guid in AssetDatabase.FindAssets(LobbySceneName + " t:Scene"))
-            {
-                string path = AssetDatabase.GUIDToAssetPath(guid);
-                if (System.IO.Path.GetFileNameWithoutExtension(path) == LobbySceneName)
-                {
-                    return path;
-                }
-            }
-
-            return DefaultLobbyScenePath;
+            return FindScenePathByName(LobbySceneName) ?? DefaultLobbyScenePath;
         }
     }
 
@@ -82,20 +73,33 @@ public static class SpaceJunkSetup
     {
         get
         {
-            foreach (string guid in AssetDatabase.FindAssets(TitleSceneName + " t:Scene"))
-            {
-                string path = AssetDatabase.GUIDToAssetPath(guid);
-                if (System.IO.Path.GetFileNameWithoutExtension(path) == TitleSceneName)
-                {
-                    return path;
-                }
-            }
-
-            return null;
+            return FindScenePathByName(TitleSceneName);
         }
     }
 
-    /// <summary>コピー元の釣りマップと、コピー先の宇宙ごみマップ。</summary>
+    /// <summary>
+    /// **名前がぴったり同じシーンを、プロジェクト全体から探す。** 見つからなければ null。
+    /// `FindAssets` は名前の一部が合うものも返すことがある（`SpaceJunkLobby` で `SpaceJunkLobbyOld` も拾う、など）ので、
+    /// ファイル名を見比べて、ぴったり同じものだけを返す。同じ名前が2つあれば、先に見つかった方。
+    /// </summary>
+    private static string FindScenePathByName(string sceneName)
+    {
+        foreach (string guid in AssetDatabase.FindAssets(sceneName + " t:Scene"))
+        {
+            string path = AssetDatabase.GUIDToAssetPath(guid);
+            if (System.IO.Path.GetFileNameWithoutExtension(path) == sceneName)
+            {
+                return path;
+            }
+        }
+
+        return null;
+    }
+
+    /// <summary>
+    /// コピー元の釣りマップと、コピー先の宇宙ごみマップ。
+    /// 1行が1マップで、`[i, 0]` がコピー元、`[i, 1]` がコピー先。上から順に作る。
+    /// </summary>
     private static readonly string[,] MapSources =
     {
         { "Assets/Scenes/Test/FishingMap01.unity", MapSceneFolder + "/SpaceJunkMap01.unity" },
@@ -104,6 +108,10 @@ public static class SpaceJunkSetup
         { "Assets/Scenes/Test/FishingOnline.unity", MapSceneFolder + "/SpaceJunkMap04.unity" }
     };
 
+    /// <summary>
+    /// **プレハブ・ロビー・マップをまとめて作る。** 何をするかはクラスの説明を参照。
+    /// 作る順番に意味がある：プレハブ → ロビー（プレイヤーと試合の係のプレハブを使う）→ マップ（素材のプレハブを使う）。
+    /// </summary>
     [MenuItem("Tools/StarSweepers/宇宙ごみ集めのシーンを作る（ロビー＋マップ）")]
     public static void CreateAll()
     {
@@ -137,6 +145,7 @@ public static class SpaceJunkSetup
         AssetDatabase.SaveAssets();
         AssetDatabase.Refresh();
 
+        // 2行目からの頭の全角の空白は、ログの「マップ　: 」の後ろに文字の位置を揃えるため
         string mapList = madeMaps.Count > 0 ? string.Join("\n　　　　　", madeMaps) : "（1つも作れませんでした）";
         string skipped = skippedMaps.Count > 0
             ? "\n\n※ すでにあったので作り直さなかったマップ：\n　　　　　" + string.Join("\n　　　　　", skippedMaps) +
@@ -179,6 +188,7 @@ public static class SpaceJunkSetup
         // （一覧には、どんな名前のマップでも入れられるため）
         List<string> paths = SpaceJunkMapListSetup.ScenePaths();
 
+        // ツールで作るマップ（MapSources のコピー先）のうち、一覧に無いものを後ろに足す
         for (int i = 0; i < MapSources.GetLength(0); i++)
         {
             if (!paths.Contains(MapSources[i, 1]))
@@ -225,16 +235,35 @@ public static class SpaceJunkSetup
     {
         Scene scene = EditorSceneManager.NewScene(NewSceneSetup.EmptyScene, NewSceneMode.Single);
 
+        // 作る順番がそのままシーンの中の並び順になるので、
+        // 「光 → 地面 → カメラ → 設定端末 → 通信のまとめ役」の順は変えない
         FishingSceneBuilder.CreateLight();
+        CreateLobbyGround();
+        CreateLobbyCamera();
+        CreateSettingsTerminal();
+        CreateLobbyNetworkManager(playerPrefab, sessionPrefab);
 
+        EditorSceneManager.MarkSceneDirty(scene);
+        EditorSceneManager.SaveScene(scene, LobbyScenePath);
+    }
+
+    /// <summary>歩き回れる地面。Unity の板（Plane）は 10m 四方なので、2倍にして 20m 四方にしている。</summary>
+    private static void CreateLobbyGround()
+    {
         Material groundMaterial = FishingSceneBuilder.GetOrCreateMaterial(
             FishingSceneBuilder.MaterialFolder + "/TestGround.mat", new Color(0.72f, 0.72f, 0.72f));
         GameObject ground = GameObject.CreatePrimitive(PrimitiveType.Plane);
         ground.name = "Ground";
         ground.transform.localScale = new Vector3(2f, 1f, 2f);
         ground.GetComponent<MeshRenderer>().sharedMaterial = groundMaterial;
+    }
 
-        // ロビーのカメラ。**追従は付けない**（ロビーでは全体が見えていればよい）
+    /// <summary>
+    /// ロビーのカメラ。**追従は付けない**（ロビーでは全体が見えていればよい）。
+    /// 手前（南）14m・高さ 14m から、45 度で見下ろす。
+    /// </summary>
+    private static void CreateLobbyCamera()
+    {
         GameObject cameraObject = new GameObject("Main Camera");
         cameraObject.tag = "MainCamera";
         cameraObject.transform.position = new Vector3(0f, 14f, -14f);
@@ -242,14 +271,21 @@ public static class SpaceJunkSetup
         Camera camera = cameraObject.AddComponent<Camera>();
         camera.nearClipPlane = 0.1f;
         cameraObject.AddComponent<AudioListener>();
+    }
 
-        CreateSettingsTerminal();
-
-        // ---- 通信のまとめ役 ----
+    /// <summary>
+    /// **通信のまとめ役（NetworkManager）と、ロビーで使う部品をまとめて1つのオブジェクトに付ける。**
+    ///
+    /// ⚠ 部品の中身を `FishingSceneBuilder.SetInt` / `SetRef` で**フィールドの名前（文字）を指定して**書き込んでいる。
+    /// 書き込む先のフィールド名を変えると、エラーも出ずに値が入らなくなる（`SetInt` は何も言わない）ので、
+    /// 名前を変えるときはここも合わせて直すこと。
+    /// </summary>
+    private static void CreateLobbyNetworkManager(GameObject playerPrefab, GameObject sessionPrefab)
+    {
         GameObject managerObject = new GameObject("NetworkManager");
         NetworkManager manager = managerObject.AddComponent<NetworkManager>();
         UnityTransport transport = managerObject.AddComponent<UnityTransport>();
-        transport.SetConnectionData("127.0.0.1", 7777);
+        transport.SetConnectionData("127.0.0.1", 7777); // 初期値は「同じPCの中・7777番」。実際のつなぎ先は接続画面で変わる
 
         // ⚠ **AddComponent した直後の NetworkManager は NetworkConfig が null。**
         //   インスペクターから足したときは Reset() が呼ばれて作られるが、
@@ -288,12 +324,14 @@ public static class SpaceJunkSetup
         FishingSceneBuilder.SetRef(spawner, "sessionPrefab", sessionPrefab);
 
         EditorUtility.SetDirty(manager);
-
-        EditorSceneManager.MarkSceneDirty(scene);
-        EditorSceneManager.SaveScene(scene, LobbyScenePath);
     }
 
-    /// <summary>ホストだけが使える設定端末を置く。</summary>
+    /// <summary>
+    /// ホストだけが使える設定端末を置く。ロビーの奥（北）5m に置く、高さ 1.5m の箱
+    /// （箱の真ん中を高さ 0.75m に置いて、底を床に付けている）。
+    /// 中身はフィールドの名前（文字）で書き込んでいるので、<see cref="SpaceJunkLobbyTerminal"/> の
+    /// フィールド名を変えると静かに値が入らなくなる。
+    /// </summary>
     private static void CreateSettingsTerminal()
     {
         Material terminalMaterial = FishingSceneBuilder.GetOrCreateMaterial(
@@ -320,6 +358,14 @@ public static class SpaceJunkSetup
     // マップ（釣りのマップをコピーして差し替える）
     // ------------------------------------------------------------
 
+    /// <summary>
+    /// <see cref="MapSources"/> の釣りマップを順にコピーして、宇宙ごみのマップにする。
+    /// </summary>
+    /// <param name="made">
+    /// 使えるマップの置き場所を書き足す。**作り直さずにとばしたマップも入る**
+    /// （ビルドの一覧とマップの一覧には、とばしたマップも入れたいため）。
+    /// </param>
+    /// <param name="skipped">すでにあったので作り直さなかったマップの置き場所を書き足す（最後の知らせ用）。</param>
     private static void ConvertMaps(GameObject[] materialPrefabs, List<string> made, List<string> skipped)
     {
         for (int i = 0; i < MapSources.GetLength(0); i++)
@@ -389,10 +435,11 @@ public static class SpaceJunkSetup
     internal static void VerifyMap(string scenePath)
     {
         string name = System.IO.Path.GetFileNameWithoutExtension(scenePath);
+
+        // 見つけた問題を、この順に並べて最後にまとめて出す（進行役 → ゴール → スポナー → 画面）
         List<string> problems = new List<string>();
 
-        int rounds = Object.FindObjectsByType<SpaceJunkRound>(
-            FindObjectsInactive.Include, FindObjectsSortMode.None).Length;
+        int rounds = FindAllInScene<SpaceJunkRound>().Length;
 
         if (rounds != 1)
         {
@@ -400,8 +447,7 @@ public static class SpaceJunkSetup
                          "（コピー元に FishingMatch が無かった可能性があります）");
         }
 
-        SpaceJunkGoal[] goals = Object.FindObjectsByType<SpaceJunkGoal>(
-            FindObjectsInactive.Include, FindObjectsSortMode.None);
+        SpaceJunkGoal[] goals = FindAllInScene<SpaceJunkGoal>();
 
         // **ゴールは4つでなくてもよい**（1対1のマップは2つ。2026/9/30）。
         // 何チームまで遊べるかは、どの方角にゴールがあるかで決まり、ロビーはそれに合わせて候補を絞る
@@ -411,49 +457,20 @@ public static class SpaceJunkSetup
         }
 
         // ゴールの番号（北=0/東=1/南=2/西=3）が重複していないか
-        bool[] used = new bool[SpaceJunkTeams.GoalCount];
+        int goalMask = CheckGoalIndices(goals, problems);
 
-        foreach (SpaceJunkGoal goal in goals)
-        {
-            int index = goal.GoalIndex;
-
-            if (index < 0 || index >= used.Length)
-            {
-                problems.Add($"ゴール「{goal.name}」の Goal Index が {index} です（0〜{used.Length - 1} のはず）");
-                continue;
-            }
-
-            if (used[index])
-            {
-                problems.Add($"ゴールの Goal Index {index}（{SpaceJunkTeams.GoalPlaceName(index)}）が重複しています");
-            }
-
-            used[index] = true;
-        }
-
-        int spawners = Object.FindObjectsByType<SpaceJunkSpawner>(
-            FindObjectsInactive.Include, FindObjectsSortMode.None).Length;
+        int spawners = FindAllInScene<SpaceJunkSpawner>().Length;
 
         if (spawners != 1)
         {
             problems.Add($"素材のスポナー（SpaceJunkSpawner）が {spawners} 個です。**1個必要**");
         }
 
-        int uis = Object.FindObjectsByType<SpaceJunkMatchUI>(
-            FindObjectsInactive.Include, FindObjectsSortMode.None).Length;
+        int uis = FindAllInScene<SpaceJunkMatchUI>().Length;
 
         if (uis != 1)
         {
             problems.Add($"プレイ中の画面（SpaceJunkMatchUI）が {uis} 個です。**1個必要**");
-        }
-
-        int goalMask = 0;
-        for (int i = 0; i < used.Length; i++)
-        {
-            if (used[i])
-            {
-                goalMask |= 1 << i;
-            }
         }
 
         if (goals.Length > 0 && SpaceJunkTeams.MaxPlayableTeams(goalMask) < 2)
@@ -480,11 +497,58 @@ public static class SpaceJunkSetup
             "`Tools > StarSweepers > 開いているマップの釣りのゴールを宇宙ごみのゴールに直す` を実行してください。");
     }
 
+    /// <summary>
+    /// ゴールの番号（北=0/東=1/南=2/西=3）が、範囲の外になっていないか・重複していないかを調べ、
+    /// 見つけた問題を problems に書き足す。
+    /// 戻り値は、使われている番号をまとめた数（北=1 / 東=2 / 南=4 / 西=8 を足したもの。範囲の外の番号は入れない）。
+    /// </summary>
+    private static int CheckGoalIndices(SpaceJunkGoal[] goals, List<string> problems)
+    {
+        bool[] used = new bool[SpaceJunkTeams.GoalCount];
+
+        foreach (SpaceJunkGoal goal in goals)
+        {
+            int index = goal.GoalIndex;
+
+            if (index < 0 || index >= used.Length)
+            {
+                problems.Add($"ゴール「{goal.name}」の Goal Index が {index} です（0〜{used.Length - 1} のはず）");
+                continue;
+            }
+
+            if (used[index])
+            {
+                problems.Add($"ゴールの Goal Index {index}（{SpaceJunkTeams.GoalPlaceName(index)}）が重複しています");
+            }
+
+            used[index] = true;
+        }
+
+        int goalMask = 0;
+        for (int i = 0; i < used.Length; i++)
+        {
+            if (used[i])
+            {
+                goalMask |= 1 << i;
+            }
+        }
+
+        return goalMask;
+    }
+
+    /// <summary>
+    /// 開いているシーンから、その部品を**隠れている物も含めて**全部探す（並び順は決まっていない）。
+    /// 隠れている物も含めるのは、差し替え・点検に漏れを出さないため。
+    /// </summary>
+    private static T[] FindAllInScene<T>() where T : Object
+    {
+        return Object.FindObjectsByType<T>(FindObjectsInactive.Include, FindObjectsSortMode.None);
+    }
+
     /// <summary>試合のまとめ役 → 1ラウンドの進行役。**NetworkObject はそのまま使い回す。**</summary>
     private static void ReplaceMatch()
     {
-        FishingMatch[] matches = Object.FindObjectsByType<FishingMatch>(
-            FindObjectsInactive.Include, FindObjectsSortMode.None);
+        FishingMatch[] matches = FindAllInScene<FishingMatch>();
 
         foreach (FishingMatch match in matches)
         {
@@ -509,8 +573,7 @@ public static class SpaceJunkSetup
     /// <summary>釣りの画面表示 → 宇宙ごみの画面表示。</summary>
     private static void ReplaceHud()
     {
-        FishingMatchUI[] matchUis = Object.FindObjectsByType<FishingMatchUI>(
-            FindObjectsInactive.Include, FindObjectsSortMode.None);
+        FishingMatchUI[] matchUis = FindAllInScene<FishingMatchUI>();
 
         foreach (FishingMatchUI matchUi in matchUis)
         {
@@ -534,17 +597,21 @@ public static class SpaceJunkSetup
         }
     }
 
-    /// <summary>釣りのゴール → 自陣ゴール。**並び順の番号と床の見た目は引き継ぐ。**</summary>
+    /// <summary>
+    /// 釣りのゴール → 自陣ゴール。**並び順の番号と床の見た目は引き継ぐ。**
+    /// 読む側（`FishingNetPocket`）も書く側（`SpaceJunkGoal`）も**フィールドの名前（文字）で指定している**ので、
+    /// どちらかのフィールド名を変えると、エラーも出ずに番号が 0 になる・床の見た目が外れる。
+    /// </summary>
     private static void ReplaceGoals()
     {
-        FishingNetPocket[] pockets = Object.FindObjectsByType<FishingNetPocket>(
-            FindObjectsInactive.Include, FindObjectsSortMode.None);
+        FishingNetPocket[] pockets = FindAllInScene<FishingNetPocket>();
 
         foreach (FishingNetPocket pocket in pockets)
         {
             GameObject host = pocket.gameObject;
             UnpackIfPrefabInstance(host);
 
+            // 部品を外す前に、引き継ぐ値を控えておく
             int index = GetInt(pocket, "pocketIndex");
             Object padRenderer = GetRef(pocket, "padRenderer");
 
@@ -563,11 +630,17 @@ public static class SpaceJunkSetup
         }
     }
 
-    /// <summary>釣りのスポナー → 素材3種類のスポナー。**出す範囲と高さは引き継ぐ。**</summary>
+    /// <summary>
+    /// 釣りのスポナー → 素材3種類のスポナー。**出す範囲と高さは引き継ぐ。**
+    /// 値はフィールドの名前（文字）で読み書きしているので、名前を変えるとエラーも出ずに 0 や空になる。
+    /// </summary>
+    /// <param name="materialPrefabs">
+    /// 素材のプレハブ。<see cref="SpaceJunkPrefabBuilder.CreateMaterialPrefabs"/> の戻り値で、
+    /// 装甲板・回路基板・燃料タンク の順に並んでいる前提。
+    /// </param>
     private static void ReplaceSpawner(GameObject[] materialPrefabs)
     {
-        FishingObjectSpawner[] spawners = Object.FindObjectsByType<FishingObjectSpawner>(
-            FindObjectsInactive.Include, FindObjectsSortMode.None);
+        FishingObjectSpawner[] spawners = FindAllInScene<FishingObjectSpawner>();
 
         foreach (FishingObjectSpawner spawner in spawners)
         {
@@ -575,6 +648,7 @@ public static class SpaceJunkSetup
             UnpackIfPrefabInstance(host);
             host.name = "SpaceJunkSpawner";
 
+            // 部品を外す前に、引き継ぐ値を控えておく
             Vector2 area = GetVector2(spawner, "areaHalfSize");
             float dropHeight = GetFloat(spawner, "dropHeight");
 
@@ -604,11 +678,11 @@ public static class SpaceJunkSetup
     /// </summary>
     private static void RemovePlacedItems()
     {
-        HookableObject[] items = Object.FindObjectsByType<HookableObject>(
-            FindObjectsInactive.Include, FindObjectsSortMode.None);
+        HookableObject[] items = FindAllInScene<HookableObject>();
 
         foreach (HookableObject item in items)
         {
+            // 親ごと先に消えた物は null になっているので、とばす
             if (item != null)
             {
                 Object.DestroyImmediate(item.gameObject);
@@ -708,6 +782,11 @@ public static class SpaceJunkSetup
     // ------------------------------------------------------------
     // 値を読む道具（FishingSceneBuilder には書き込む側しか無いため）
     // ------------------------------------------------------------
+    //
+    // ⚠ どれも**フィールドの名前を文字で指定して**読み書きする（private のフィールドにも届くため）。
+    //   その名前のフィールドが無いときは、エラーを出さずに 0・null を返す／何もしない。
+    //   つまり**読む先・書く先のフィールドを改名すると、静かに値が引き継がれなくなる。**
+    //   改名するときは、このファイルの中の "フィールド名" の文字も合わせて直すこと。
 
     private static int GetInt(Object owner, string field)
     {

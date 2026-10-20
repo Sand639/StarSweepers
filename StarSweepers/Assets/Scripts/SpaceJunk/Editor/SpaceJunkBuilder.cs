@@ -48,6 +48,7 @@ public static class SpaceJunkBuilder
     /// <summary>シーンを探す場所。</summary>
     private const string SceneSearchFolder = "Assets/Scenes";
 
+    /// <summary>出力先。プロジェクトのフォルダ（`StarSweepers/`）から見た場所。</summary>
     private const string OutputFolder = "Build/SpaceJunkTest";
     private const string ExeName = "SpaceJunkTest.exe";
 
@@ -68,6 +69,10 @@ public static class SpaceJunkBuilder
     /// </summary>
     private const string WindowArgs8 = "-screen-fullscreen 0 -screen-width 640 -screen-height 360";
 
+    /// <summary>
+    /// ビルドを作り、隣に起動用の `.bat` を置く。
+    /// 入れるシーンの順番は **タイトル → ロビー → マップ（一覧の順）**。先頭のシーンが起動したときに開く。
+    /// </summary>
     [MenuItem("Tools/StarSweepers/宇宙ごみ集めの検証用のビルドを作る")]
     public static void BuildFromMenu()
     {
@@ -134,10 +139,10 @@ public static class SpaceJunkBuilder
         }
 
         string mapList = string.Join("\n　　", maps);
-        string full = Path.GetFullPath(OutputFolder);
+        string fullOutputPath = Path.GetFullPath(OutputFolder);
 
         Debug.Log(
-            "宇宙ごみ集めの検証用のビルドができました。\n" + full + "\n\n" +
+            "宇宙ごみ集めの検証用のビルドができました。\n" + fullOutputPath + "\n\n" +
             $"入れたマップ（{maps.Count} 個）：\n　　{mapList}\n\n" +
             "■ 4人で試す手順\n" +
             "　1. この中の「4人で自動接続.bat」を実行する\n" +
@@ -213,6 +218,11 @@ public static class SpaceJunkBuilder
     ///
     /// ホストを先に立ち上げ、**少し待ってから**参加者を起動する。
     /// 待たないと、ホストの準備が終わる前につなぎに行って失敗する。
+    /// 待つ時間は、ホストのあとに 4 秒、参加者どうしの間に 2 秒（`timeout /t 秒`）。
+    ///
+    /// `-host` / `-client 127.0.0.1` は、起動したゲームが読んで自動でつなぐための合図
+    /// （同じPCの中でつなぐので、つなぎ先は 127.0.0.1）。
+    /// 改行は Windows の書き方（\r\n）にしてある。`%~dp0` は「この .bat が置いてあるフォルダ」。
     /// </summary>
     private static string AutoConnectScript(int playerCount, string windowArgs)
     {
@@ -224,6 +234,7 @@ public static class SpaceJunkBuilder
         text.Append($"start \"HOST\" \"%~dp0{ExeName}\" -host {windowArgs}\r\n");
         text.Append("timeout /t 4 /nobreak >nul\r\n");
 
+        // 1人目はホストなので、参加者は 2 人目から数える（窓の名前が CLIENT 2, CLIENT 3… になる）
         for (int i = 2; i <= playerCount; i++)
         {
             text.Append($"start \"CLIENT {i}\" \"%~dp0{ExeName}\" -client 127.0.0.1 {windowArgs}\r\n");
@@ -245,7 +256,7 @@ public static class SpaceJunkBuilder
         return text.ToString();
     }
 
-    /// <summary>画面のボタンで自分でつなぐ `.bat`（本番と同じ手順を試すとき）。</summary>
+    /// <summary>画面のボタンで自分でつなぐ `.bat`（本番と同じ手順を試すとき）。起動の間は 3 秒ずつ空ける。</summary>
     private static string ManualScript(int playerCount, string windowArgs)
     {
         System.Text.StringBuilder text = new System.Text.StringBuilder();

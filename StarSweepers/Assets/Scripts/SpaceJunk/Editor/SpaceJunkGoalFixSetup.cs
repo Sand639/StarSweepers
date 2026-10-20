@@ -26,6 +26,10 @@ using UnityEngine.SceneManagement;
 /// </summary>
 public static class SpaceJunkGoalFixSetup
 {
+    /// <summary>
+    /// いま開いているシーン（アクティブなシーン）の釣りのゴールを直して保存する。
+    /// 保存していないシーンと、宇宙ごみのマップでないシーン（SpaceJunkRound が無い）では何もしない。
+    /// </summary>
     [MenuItem("Tools/StarSweepers/開いているマップの釣りのゴールを宇宙ごみのゴールに直す")]
     public static void FixOpenScene()
     {
@@ -64,30 +68,7 @@ public static class SpaceJunkGoalFixSetup
                 continue;
             }
 
-            GameObject host = pocket.gameObject;
-
-            // プレハブの一部のままだと部品を外せないので、先に切り離す（釣りの GoalArea.prefab 自体は変わらない）
-            GameObject prefabRoot = PrefabUtility.GetOutermostPrefabInstanceRoot(host);
-            if (prefabRoot != null)
-            {
-                PrefabUtility.UnpackPrefabInstance(prefabRoot, PrefabUnpackMode.Completely, InteractionMode.AutomatedAction);
-            }
-
-            // 床の見た目（チームの色に塗る板）を引き継ぐ
-            Object padRenderer = new SerializedObject(pocket).FindProperty("padRenderer")?.objectReferenceValue;
-
-            Object.DestroyImmediate(pocket);
-
-            SpaceJunkGoal goal = host.GetComponent<SpaceJunkGoal>();
-            if (goal == null)
-            {
-                goal = host.AddComponent<SpaceJunkGoal>();
-            }
-
-            SerializedObject serialized = new SerializedObject(goal);
-            serialized.FindProperty("padRenderer").objectReferenceValue = padRenderer;
-            serialized.ApplyModifiedPropertiesWithoutUndo();
-
+            ConvertToSpaceJunkGoal(pocket);
             converted++;
         }
 
@@ -110,6 +91,41 @@ public static class SpaceJunkGoalFixSetup
     }
 
     /// <summary>
+    /// **釣りのゴール1つを、宇宙ごみのゴールに付け替える。** 床の見た目（チームの色に塗る板）は引き継ぐ。
+    /// 番号はここでは決めない（あとで <see cref="RenumberClockwise"/> がまとめて振る）。
+    ///
+    /// ⚠ 引き継ぐ値を**フィールドの名前 `padRenderer`（文字）**で読み書きしている。
+    /// `FishingNetPocket` 側を改名すると床の見た目が引き継がれなくなり、
+    /// `SpaceJunkGoal` 側を改名するとここでエラーになって止まる。
+    /// </summary>
+    private static void ConvertToSpaceJunkGoal(FishingNetPocket pocket)
+    {
+        GameObject host = pocket.gameObject;
+
+        // プレハブの一部のままだと部品を外せないので、先に切り離す（釣りの GoalArea.prefab 自体は変わらない）
+        GameObject prefabRoot = PrefabUtility.GetOutermostPrefabInstanceRoot(host);
+        if (prefabRoot != null)
+        {
+            PrefabUtility.UnpackPrefabInstance(prefabRoot, PrefabUnpackMode.Completely, InteractionMode.AutomatedAction);
+        }
+
+        // 床の見た目（チームの色に塗る板）を引き継ぐ。部品を外す前に控えておく
+        Object padRenderer = new SerializedObject(pocket).FindProperty("padRenderer")?.objectReferenceValue;
+
+        Object.DestroyImmediate(pocket);
+
+        SpaceJunkGoal goal = host.GetComponent<SpaceJunkGoal>();
+        if (goal == null)
+        {
+            goal = host.AddComponent<SpaceJunkGoal>();
+        }
+
+        SerializedObject serialized = new SerializedObject(goal);
+        serialized.FindProperty("padRenderer").objectReferenceValue = padRenderer;
+        serialized.ApplyModifiedPropertiesWithoutUndo();
+    }
+
+    /// <summary>
     /// **シーンのゴールを全部、中心（原点）から見て北（+Z）から時計回りの順に並べ、0 から番号を振り直す。**
     /// 4つを北・東・南・西に置けば 0・1・2・3 になり、120度ずつ3つ置けば 0・1・2 になる（2026/10/1）。
     /// </summary>
@@ -124,8 +140,10 @@ public static class SpaceJunkGoalFixSetup
 
         for (int i = 0; i < goals.Count; i++)
         {
+            // ゴールが多すぎるときは、はみ出た分を最後の番号に寄せる（範囲の外の番号にしない。多すぎることは下で知らせる）
             int index = Mathf.Min(i, SpaceJunkTeams.GoalCount - 1);
 
+            // ⚠ フィールドの名前 goalIndex（文字）で書き込む。SpaceJunkGoal 側を改名すると、ここでエラーになる
             SerializedObject serialized = new SerializedObject(goals[i]);
             serialized.FindProperty("goalIndex").intValue = index;
             serialized.ApplyModifiedPropertiesWithoutUndo();
@@ -144,6 +162,7 @@ public static class SpaceJunkGoalFixSetup
     /// <summary>中心（原点）から見た向き。北（+Z）を 0 度として、時計回り（東＝90、南＝180、西＝270）。</summary>
     private static float ClockwiseAngle(Vector3 position)
     {
+        // Atan2(x, z) の順にすると、+Z（北）が 0 度・+X（東）が 90 度になる。結果は -180〜180 なので、マイナスは 360 を足す
         float angle = Mathf.Atan2(position.x, position.z) * Mathf.Rad2Deg;
         return angle < 0f ? angle + 360f : angle;
     }

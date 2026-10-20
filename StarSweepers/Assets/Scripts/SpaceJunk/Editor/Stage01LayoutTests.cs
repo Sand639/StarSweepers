@@ -8,6 +8,13 @@ using UnityEngine.SceneManagement;
 /// <summary>
 /// STAGE_01（土台と上下する床。2026/10/8・大槻さんの設計図）の、**数値を調整しても崩れてはいけない関係**を確かめる。
 /// 大きさや高さそのものは調整で変わるので見ない。
+///
+/// Unity の Test Runner（EditMode）から動かす。シーンが開いていなければ、テストの間だけ裏で開いて、終わったら閉じる。
+///
+/// ⚠ 部品の値を**フィールドの名前（`riseHeight` / `spawnOnRaisedFloor` / `dropHeight` / `makeHeavy`）を文字で指定して**読んでいる。
+/// その部品の側でフィールドを改名すると、このテストが（中身は正しくても）エラーで落ちる。
+/// また、土台・床の高さは「箱（Cube）の中心の高さ ± 大きさの半分」で計算しているので、
+/// 1m 四方の箱の形を、大きさ（Scale）で伸ばして作っている前提。
 /// </summary>
 public class Stage01LayoutTests
 {
@@ -17,12 +24,7 @@ public class Stage01LayoutTests
     [Test]
     public void Stage01_LiftFloorsConnectTheGroundAndTheTopOfTheBase()
     {
-        Scene scene = SceneManager.GetSceneByPath(ScenePath);
-        bool openedByTest = !scene.IsValid() || !scene.isLoaded;
-        if (openedByTest)
-        {
-            scene = EditorSceneManager.OpenScene(ScenePath, OpenSceneMode.Additive);
-        }
+        Scene scene = OpenStageScene(out bool openedByTest);
         try
         {
             Transform ground = FindByName(scene, "Ground");
@@ -33,19 +35,22 @@ public class Stage01LayoutTests
             Assert.That(stageBase, Is.Not.Null, "土台（Base）が見つからない");
             Assert.That(lifts, Has.Count.EqualTo(4), "上下する床は土台の4辺に1つずつ");
 
+            // 高さはどれも m
             float groundY = ground.position.y;
-            float baseTop = stageBase.position.y + stageBase.lossyScale.y * 0.5f;
+            float baseTop = TopY(stageBase);
             Assert.That(baseTop, Is.GreaterThan(groundY + 0.3f),
                 "土台は、歩いて登れない高さ（段差 0.3m より上）にする");
 
             foreach (SpaceJunkLiftFloor lift in lifts)
             {
-                Transform t = lift.transform;
+                Transform liftTransform = lift.transform;
                 float rise = new SerializedObject(lift).FindProperty("riseHeight").floatValue;
-                float halfHeight = t.lossyScale.y * 0.5f;
-                float lowTop = t.position.y + halfHeight;
+                float halfHeight = liftTransform.lossyScale.y * 0.5f;
+
+                // 下にいるときの上面・上がりきったときの上面・上がりきったときの底面
+                float lowTop = liftTransform.position.y + halfHeight;
                 float highTop = lowTop + rise;
-                float highBottom = t.position.y - halfHeight + rise;
+                float highBottom = liftTransform.position.y - halfHeight + rise;
 
                 // ぴったり同じ高さだと、地面と床の面が重なってちらつく（Zファイティング。2026/10/8 大槻さんの報告）
                 Assert.That(lowTop - groundY, Is.GreaterThan(0.001f).And.LessThanOrEqualTo(0.05f),
@@ -56,6 +61,7 @@ public class Stage01LayoutTests
                     $"{lift.name}: 上がりきっても、下にすき間ができない（柱の高さが足りない）");
             }
 
+            // スポナーは1つの前提で、最初に見つかったものだけを見る
             SpaceJunkSpawner spawner = FindInScene<SpaceJunkSpawner>(scene)[0];
             SerializedObject spawnerObject = new SerializedObject(spawner);
             Assert.That(spawnerObject.FindProperty("spawnOnRaisedFloor").boolValue, Is.True,
@@ -66,26 +72,18 @@ public class Stage01LayoutTests
         }
         finally
         {
-            if (openedByTest)
-            {
-                EditorSceneManager.CloseScene(scene, true);
-            }
+            CloseIfOpenedByTest(scene, openedByTest);
         }
     }
 
     [Test]
     public void Stage01_HasOneHeavyDebrisPointOnTheBase()
     {
-        Scene scene = SceneManager.GetSceneByPath(ScenePath);
-        bool openedByTest = !scene.IsValid() || !scene.isLoaded;
-        if (openedByTest)
-        {
-            scene = EditorSceneManager.OpenScene(ScenePath, OpenSceneMode.Additive);
-        }
+        Scene scene = OpenStageScene(out bool openedByTest);
         try
         {
             Transform stageBase = FindByName(scene, "Base");
-            float baseTop = stageBase.position.y + stageBase.lossyScale.y * 0.5f;
+            float baseTop = TopY(stageBase);
 
             int heavyPoints = 0;
             foreach (SpaceJunkBombPoints points in FindInScene<SpaceJunkBombPoints>(scene))
@@ -95,6 +93,7 @@ public class Stage01LayoutTests
                     continue;
                 }
 
+                // 置き場所は、SpaceJunkBombPoints の子1つ1つ
                 heavyPoints++;
                 foreach (Transform place in points.transform)
                 {
@@ -107,13 +106,41 @@ public class Stage01LayoutTests
         }
         finally
         {
-            if (openedByTest)
-            {
-                EditorSceneManager.CloseScene(scene, true);
-            }
+            CloseIfOpenedByTest(scene, openedByTest);
         }
     }
 
+    /// <summary>
+    /// STAGE_01 のシーンを返す。もう開いていればそれを使い、開いていなければ裏で（今のシーンに足して）開く。
+    /// openedByTest は「このテストが開いたか」。true なら、終わったら <see cref="CloseIfOpenedByTest"/> で閉じる。
+    /// </summary>
+    private static Scene OpenStageScene(out bool openedByTest)
+    {
+        Scene scene = SceneManager.GetSceneByPath(ScenePath);
+        openedByTest = !scene.IsValid() || !scene.isLoaded;
+        if (openedByTest)
+        {
+            scene = EditorSceneManager.OpenScene(ScenePath, OpenSceneMode.Additive);
+        }
+        return scene;
+    }
+
+    /// <summary>テストが開いたシーンだけを閉じる（人が開いていたシーンは閉じない）。</summary>
+    private static void CloseIfOpenedByTest(Scene scene, bool openedByTest)
+    {
+        if (openedByTest)
+        {
+            EditorSceneManager.CloseScene(scene, true);
+        }
+    }
+
+    /// <summary>箱の上面の高さ（m）。中心の高さに、大きさの半分を足す（1m 四方の箱を Scale で伸ばしている前提）。</summary>
+    private static float TopY(Transform box)
+    {
+        return box.position.y + box.lossyScale.y * 0.5f;
+    }
+
+    /// <summary>シーンの中から、その名前の物を1つ探す（隠れている物も含める）。同じ名前が複数あれば、先に見つかった方。</summary>
     private static Transform FindByName(Scene scene, string objectName)
     {
         foreach (GameObject root in scene.GetRootGameObjects())
@@ -129,6 +156,7 @@ public class Stage01LayoutTests
         return null;
     }
 
+    /// <summary>シーンの中から、その部品を全部集める（隠れている物も含める）。</summary>
     private static List<T> FindInScene<T>(Scene scene) where T : Component
     {
         List<T> result = new List<T>();

@@ -8,6 +8,8 @@ using UnityEngine.SceneManagement;
 /// **自分の陣地が画面の手前に来るカメラ（ワイルドリフト風）のマップを作るツール。**
 ///
 /// Unityのメニュー「Tools &gt; StarSweepers &gt; 宇宙ごみの自陣向きカメラのマップを作る（Map01を複製）」から実行する。
+/// （※ いまはアーカイブに移してあり、メニューの場所は
+/// 「Tools &gt; StarSweepers &gt; アーカイブ &gt; 宇宙ごみ &gt; 自陣向きカメラのマップを作る（Map01を複製）」）
 ///
 /// `SpaceJunkMap01` を複製して `SpaceJunkMap01TeamCam` を作り、**カメラだけ**を変える
 /// （2026/9/22・大槻さんの依頼）。
@@ -31,6 +33,10 @@ public static class SpaceJunkTeamCameraSetup
     private const string SourcePath = SpaceJunkSetup.MapSceneFolder + "/SpaceJunkMap01.unity";
     private const string DestinationPath = SpaceJunkSetup.MapSceneFolder + "/SpaceJunkMap01TeamCam.unity";
 
+    /// <summary>
+    /// Map01 を複製してカメラを差し替え、ビルドの一覧・マップの一覧に入れて点検する。
+    /// 複製元が無いとき・もう作ってあるときは何もしない。カメラが見つからなければ、作りかけのシーンを消してやめる。
+    /// </summary>
     [MenuItem("Tools/StarSweepers/アーカイブ/宇宙ごみ/自陣向きカメラのマップを作る（Map01を複製）")]
     public static void Create()
     {
@@ -94,6 +100,10 @@ public static class SpaceJunkTeamCameraSetup
     /// <summary>
     /// **追いかけるカメラを、自陣向きに回るカメラに差し替える。**
     /// 高さ・距離・見下ろす角度・なめらかさは、元のカメラの値を引き継ぐ。
+    /// カメラが見つからなければ false。
+    ///
+    /// ⚠ 値は**フィールドの名前（`offset` / `followSharpness` / `pitch`）を文字で指定して**読み書きしている。
+    /// `TopDownCameraFollow` か `SpaceJunkTeamFollowCamera` のどちらかでこの名前を変えると、ここでエラーになって止まる。
     /// </summary>
     private static bool SwapCamera()
     {
@@ -107,11 +117,13 @@ public static class SpaceJunkTeamCameraSetup
 
         GameObject cameraObject = follow.gameObject;
 
-        // 釣りのプレハブから切り離す（釣り側を変えないため）
+        // 釣りのプレハブから切り離す（釣り側を変えないため）。
+        // 切り離すと部品の参照が変わることがあるので、取り直す
         SpaceJunkSetup.UnpackIfPrefabInstance(cameraObject);
         follow = cameraObject.GetComponent<TopDownCameraFollow>();
 
-        // 元の値を控えてから、部品を差し替える
+        // 元の値を控えてから、部品を差し替える。
+        // offset は追いかける相手から見たカメラの位置（高さと後ろへの距離、m）、pitch は見下ろす角度（度）
         SerializedObject old = new SerializedObject(follow);
         Vector3 offset = old.FindProperty("offset").vector3Value;
         float sharpness = old.FindProperty("followSharpness").floatValue;
