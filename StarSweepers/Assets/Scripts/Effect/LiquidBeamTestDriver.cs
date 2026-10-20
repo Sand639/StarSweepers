@@ -9,6 +9,7 @@ using UnityEngine.InputSystem;
 /// | F（長押し） | 溜める。**離すと撃つ。長く押すほど遠くまで届く** |
 /// | F（流れが出ている間） | 止める（出しっぱなしのとき用） |
 /// | C | **先端に物資がついた想定。**先端から根元へ、次の色に染まっていく |
+/// | G | **先端に箱をくっつけて、液体の枠で囲う**（<see cref="LiquidWrap"/>）。もう一度押すと、はなす（枠がはじける） |
 /// | R | 最初の色に戻す |
 /// | H | 出しっぱなし（Stop を呼ぶまで消えない）の切り替え |
 /// | 2 | キャラクターを円を描いて動かす／止める（しぶきが置いていかれるかの確認） |
@@ -33,15 +34,24 @@ public class LiquidBeamTestDriver : MonoBehaviour
     [SerializeField] private float moveRadius = 3f;
     [SerializeField] private float moveSpeed = 0.6f;
 
+    [Tooltip("G でくっつける箱の大きさ（メートル）")]
+    [SerializeField] private Vector3 boxSize = new Vector3(0.9f, 0.6f, 0.6f);
+
     private int colorIndex;
     private bool moving;
     private float moveAngle;
+
+    private LiquidWrap wrap;
+    private GameObject box;
 
     private void Start()
     {
         if (beam != null)
         {
             beam.HoldUntilStopped = holdUntilStopped;
+
+            // 枠はシーンに置かず、ここで作る（シーンを作り直さなくても試せるように）
+            wrap = LiquidWrap.Create(transform, beam.LineMaterial);
         }
     }
 
@@ -89,6 +99,30 @@ public class LiquidBeamTestDriver : MonoBehaviour
             {
                 beam.HoldUntilStopped = !beam.HoldUntilStopped;
             }
+
+            if (keyboard.gKey.wasPressedThisFrame)
+            {
+                if (box != null)
+                {
+                    ReleaseBox();
+                }
+                else if (beam.IsHolding)
+                {
+                    AttachBox();
+                }
+            }
+
+            // 流れが消えたら、箱もはなす
+            if (box != null && !beam.IsFiring)
+            {
+                ReleaseBox();
+            }
+        }
+
+        if (box != null)
+        {
+            // くるくる回して、枠が物の形に合わせて変わるかを見る
+            box.transform.Rotate(new Vector3(20f, 45f, 10f) * Time.deltaTime, Space.Self);
         }
 
         if (keyboard.digit2Key.wasPressedThisFrame)
@@ -104,19 +138,48 @@ public class LiquidBeamTestDriver : MonoBehaviour
         }
     }
 
+    /// <summary>先端に箱をくっつけて（物資をつかんだ想定）、色を変え、枠で囲う。</summary>
+    private void AttachBox()
+    {
+        Color color = cargoColors.Length > 0 ? cargoColors[colorIndex] : Color.white;
+        colorIndex = cargoColors.Length > 0 ? (colorIndex + 1) % cargoColors.Length : 0;
+
+        box = GameObject.CreatePrimitive(PrimitiveType.Cube);
+        box.name = "WrapTestBox";
+        Destroy(box.GetComponent<Collider>());
+
+        // 箱のふちが先端に触れる位置に置き、流れについていくよう子にする
+        box.transform.SetParent(beam.transform, true);
+        box.transform.position = beam.HeadPosition + beam.transform.forward * boxSize.z * 0.5f;
+        box.transform.rotation = beam.transform.rotation * Quaternion.Euler(0f, 25f, 15f);
+        box.transform.localScale = boxSize;
+
+        beam.ChangeColorFromTip(color);
+        wrap.Play(box.transform, beam.HeadPosition, color);
+    }
+
+    private void ReleaseBox()
+    {
+        wrap.Release();
+        Destroy(box);
+        box = null;
+        beam.ResetColor();
+    }
+
     private void OnGUI()
     {
         string hold = beam != null && beam.HoldUntilStopped ? "オン（F でとめる）" : "オフ（少しで消える）";
 
-        GUI.Label(new Rect(16, 16, 700, 120),
+        GUI.Label(new Rect(16, 16, 700, 140),
             "F（長押し）：溜める → 離すと撃つ（長く押すほど遠くへ）\n" +
             "C：先端に物資がついた想定（先端から色が変わる）　R：最初の色に戻す\n" +
+            "G：先端に箱をくっつけて、液体の枠で囲う／はなす（流れが届いているときだけ）\n" +
             $"H：出しっぱなし … {hold}\n" +
             "2：キャラクターを動かす／止める");
 
         if (beam != null && beam.IsCharging)
         {
-            GUI.Label(new Rect(16, 110, 600, 24),
+            GUI.Label(new Rect(16, 130, 600, 24),
                 $"溜め {beam.Charge01 * 100f:0}%　→　{beam.CurrentLength:0.0} m");
         }
     }
