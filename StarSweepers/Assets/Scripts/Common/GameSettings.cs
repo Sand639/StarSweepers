@@ -1,9 +1,18 @@
 using UnityEngine;
 
-/// <summary>コントローラーの操作方法。</summary>
+/// <summary>
+/// コントローラーの操作方法。数字は保存（<c>PlayerPrefs</c>）に使うので、変えない。
+/// </summary>
 public enum ControllerOperationType
 {
+    /// <summary>今までどおり。左スティックで移動、右スティックで向き。引っ掛けたあとはゲージで投げる。</summary>
     TypeA = 0,
+
+    /// <summary>
+    /// 左スティックの方向へ移動して向く（LT を押している間は向きだけ）。右スティックは使わない。
+    /// 引っ掛けたあとはゲージを出さず、物理で引き寄せる（<see cref="ThrowController"/>。重い物と ZRワンボタンのときは除く）。
+    /// 移動・向きの切り替えは**コントローラーがつながっているときだけ**効く（FishingPlayerController・PlayerAimController）。
+    /// </summary>
     TypeB = 1
 }
 
@@ -38,10 +47,23 @@ public enum ThrowOperationType
 /// 音量・マウス感度・コントローラー操作方法・レティクル・投げ方を保存する。
 ///
 /// | 設定 | 効く場所 |
+/// | --- | --- |
 /// | **音量** | ゲーム全体（`AudioListener.volume`） |
 /// | **マウス感度** | 視点を回す速さ。カメラ側がこの値を掛けて使う |
+/// | **操作タイプ**（<see cref="ControllerOperation"/>） | コントローラーの移動・向き、フックの引き寄せ方 |
+/// | **レティクル**（<see cref="AimReticle"/>） | 溜めている間の狙いの見せ方（HookChargeStrip） |
+/// | **投げ方**（<see cref="ThrowOperation"/>） | 宇宙ごみ式のフックの撃ち方・投げ方（HookController・ThrowController） |
+/// | **名前・フレームレート・垂直同期・画質** | タイトル画面で変える（下のほうにまとめてある。2026/10/6） |
+///
+/// 上の5つはポーズ画面（<see cref="PauseMenu"/>）の設定で変える（音量・マウス感度・操作タイプは、タイトル画面でも変えられる）。
 ///
 /// **値は次に遊ぶときも残る**（`PlayerPrefs` に保存している）。
+/// 保存の名前（`StarSweepers.〜` のキー）を変えると、今までの保存が読めなくなるので変えないこと。
+///
+/// ## 読み込みのしかた
+///
+/// 音量〜投げ方の5つは、**最初に読まれたときに1回だけ** <c>PlayerPrefs</c> から読み、あとは手元の値を返す（<see cref="Load"/>）。
+/// 名前〜画質は、毎回 <c>PlayerPrefs</c> を直接読む。
 ///
 /// ## 足したいとき
 ///
@@ -50,14 +72,18 @@ public enum ThrowOperationType
 /// </summary>
 public static class GameSettings
 {
+    // 保存の名前（PlayerPrefs のキー）。変えると、今までの保存が読めなくなる
     private const string VolumeKey = "StarSweepers.Volume";
     private const string SensitivityKey = "StarSweepers.MouseSensitivity";
     private const string ControllerOperationKey = "StarSweepers.ControllerOperationType";
     private const string AimReticleKey = "StarSweepers.AimReticleType";
     private const string ThrowOperationKey = "StarSweepers.ThrowOperationType";
 
+    // 読み込んだ値の控え（Load のあとはこちらを返す）
     private static float volume = 1f;
     private static float mouseSensitivity = 1f;
+
+    /// <summary>もう <see cref="Load"/> で読み込んだか。</summary>
     private static bool loaded;
     private static ControllerOperationType controllerOperationType = ControllerOperationType.TypeA;
     private static AimReticleType aimReticleType = AimReticleType.TypeA;
@@ -74,6 +100,8 @@ public static class GameSettings
         set
         {
             Load();
+
+            // 知らない数字が来ても、2つのどちらかに丸めて保存する（ほかの切り替えの設定も同じ）
             throwOperationType = value == ThrowOperationType.OneButton
                 ? ThrowOperationType.OneButton
                 : ThrowOperationType.TwoButtons;
@@ -82,7 +110,7 @@ public static class GameSettings
         }
     }
 
-    /// <summary>コントローラーの操作方法。タイプAが従来の操作。</summary>
+    /// <summary>コントローラーの操作方法。タイプAが従来の操作。変えたらすぐ保存する（<c>PlayerPrefs.Save</c>）。</summary>
     public static ControllerOperationType ControllerOperation
     {
         get
@@ -118,7 +146,10 @@ public static class GameSettings
         }
     }
 
-    /// <summary>音の大きさ（0で無音、1でそのまま）。</summary>
+    /// <summary>
+    /// 音の大きさ（0で無音、1でそのまま）。変えたらすぐ <c>AudioListener.volume</c> にも入れる。
+    /// ほかの設定と違い、ここでは <c>PlayerPrefs.Save</c> を呼ばない（ファイルへの書き込みは、Unity が終了するときに行われる）。
+    /// </summary>
     public static float Volume
     {
         get
@@ -139,6 +170,7 @@ public static class GameSettings
     /// <summary>
     /// マウスで視点を回す速さの倍率（1でそのまま、2で2倍）。
     /// **カメラ側が、自分の感度にこの値を掛けて使う。**
+    /// 0.1〜3倍の間に収める。音量と同じく、ここでは <c>PlayerPrefs.Save</c> を呼ばない。
     /// </summary>
     public static float MouseSensitivity
     {
@@ -156,7 +188,11 @@ public static class GameSettings
         }
     }
 
-    /// <summary>保存された値を読み込む。**最初に使われたときに1回だけ**動く。</summary>
+    /// <summary>
+    /// 保存された値を読み込む。**最初に使われたときに1回だけ**動く。
+    /// 保存が無いときは初期値（音量 1・感度 1・どれもタイプA／左右で使い分け）になる。
+    /// 切り替えの設定は「1 ならもう片方、それ以外は今までどおり」として読む。
+    /// </summary>
     private static void Load()
     {
         if (loaded)
@@ -181,7 +217,11 @@ public static class GameSettings
         AudioListener.volume = volume;
     }
 
-    /// <summary>再生を始めるたびに読み直す（値がひとつしかないため）。</summary>
+    /// <summary>
+    /// 再生を始めるたびに読み直す（値がひとつしかないため）。
+    /// エディタの設定によっては、前の再生で読んだ値（static の変数）が次の再生まで残るので、
+    /// 「読み込み済み」の印を毎回消してから読み直す。
+    /// </summary>
     [RuntimeInitializeOnLoadMethod(RuntimeInitializeLoadType.SubsystemRegistration)]
     private static void ResetOnStart()
     {
@@ -219,7 +259,7 @@ public static class GameSettings
         }
     }
 
-    /// <summary>フレームレートの上限（fps）。垂直同期が ON のときは、画面の更新に合わせるので効かない。</summary>
+    /// <summary>フレームレートの上限（fps。30〜240、保存が無ければ 60）。垂直同期が ON のときは、画面の更新に合わせるので効かない。</summary>
     public static int FrameRateLimit
     {
         get => PlayerPrefs.GetInt(FrameRateKey, 60);

@@ -8,6 +8,8 @@ using UnityEngine.SceneManagement;
 /// **東と西のゴールだけの、1対1（2チーム）用のマップを作るツール**（2026/9/30・大槻さんの依頼）。
 ///
 /// Unityのメニュー「Tools &gt; StarSweepers &gt; 宇宙ごみの東西1対1のマップを作る（Map01を複製）」から使う。
+/// （※ いまはアーカイブに移してあり、メニューの場所は
+/// 「Tools &gt; StarSweepers &gt; アーカイブ &gt; 宇宙ごみ &gt; 東西1対1のマップを作る（Map01を複製）」）
 ///
 /// ## やること
 ///
@@ -27,15 +29,22 @@ using UnityEngine.SceneManagement;
 /// </summary>
 public static class SpaceJunkDuelMapSetup
 {
+    /// <summary>複製元のマップ。</summary>
     private const string SourcePath = SpaceJunkSetup.MapSceneFolder + "/SpaceJunkMap01.unity";
+
+    /// <summary>作るマップの置き場所。</summary>
     public const string DestinationPath = SpaceJunkSetup.MapSceneFolder + "/SpaceJunkMapDuelEW.unity";
 
     /// <summary>ロビーに出す名前。</summary>
     private const string DisplayName = "1対1（東西）";
 
-    /// <summary>残すゴールの番号（1=東、3=西）。</summary>
+    /// <summary>残すゴールの番号（1=東、3=西）。番号の決まりは北=0・東=1・南=2・西=3。</summary>
     private static readonly int[] KeepGoals = { 1, 3 };
 
+    /// <summary>
+    /// Map01 を複製して東西だけのマップを作り、ビルドの一覧・マップの一覧に入れて点検する。
+    /// 複製元が無いとき・もう作ってあるときは何もしない。
+    /// </summary>
     [MenuItem("Tools/StarSweepers/アーカイブ/宇宙ごみ/東西1対1のマップを作る（Map01を複製）")]
     public static void Create()
     {
@@ -71,6 +80,7 @@ public static class SpaceJunkDuelMapSetup
 
         List<string> removed = RemoveGoalsExcept(KeepGoals);
 
+        // 複製元と同じ番号のままだと通信で同期しないので、新しいシーン用に付け直す
         SpaceJunkFixedCameraSetup.RefreshNetworkIds();
 
         EditorSceneManager.MarkSceneDirty(scene);
@@ -78,7 +88,7 @@ public static class SpaceJunkDuelMapSetup
 
         SpaceJunkSetup.RegisterScenesInBuildSettings(new List<string> { DestinationPath });
 
-        // マップの一覧に入れ、ロビーでの名前を付ける
+        // マップの一覧に入れ、ロビーでの名前を付ける（名前は一覧に入ってからでないと付けられないので、この順）
         SpaceJunkMapListSetup.AddMap(DestinationPath, true);
         SetDisplayName(DestinationPath, DisplayName);
         SpaceJunkMapListSetup.RefreshGoalInfo();
@@ -113,6 +123,7 @@ public static class SpaceJunkDuelMapSetup
             removed.Add(SpaceJunkTeams.GoalPlaceName(goal.GoalIndex));
 
             // ゴールはプレハブとして置かれていることがある。**プレハブの一部だと消せないので、先に切り離す**
+            // （ゴール自身がプレハブのいちばん外側なら、まるごと消せるので切り離さない）
             GameObject target = goal.gameObject;
             GameObject prefabRoot = PrefabUtility.GetOutermostPrefabInstanceRoot(target);
 

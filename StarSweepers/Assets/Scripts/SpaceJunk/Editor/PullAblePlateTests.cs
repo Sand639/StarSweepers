@@ -10,21 +10,47 @@ using UnityEditor.SceneManagement;
 using UnityEngine;
 using UnityEngine.SceneManagement;
 
+/// <summary>
+/// 引っ張れる移動床（<see cref="PullAblePlate"/>）と、その柱・場外のアンカーを確かめる EditMode のテスト。
+/// 仕組みは `PullAblePlate.cs` の説明と `引っ張れる移動床の再設計案.md` を参照。
+///
+/// 大きく4種類に分かれる。
+/// ・オンラインの作り … 通信用の部品・ServerRpc の設定・同期する値があるか（型を調べるだけ）
+/// ・計算 … 誰を動かすか・どれだけ動いたか・柱の向き（static の関数を直接呼ぶ）
+/// ・動き … 仮の床とプレイヤーを作り、引っ張る → 床と乗客が動く／壁の手前で止まる、など
+/// ・素材 … 床とアンカーのプレハブ、STAGE_05 に置いた床の作りが決めたとおりか
+///
+/// ## EditMode ならではの前提
+///
+/// ・再生していないので、`AddComponent` しても Awake・OnEnable は呼ばれない。
+///   必要な準備（Rigidbody の控えなど）は、テストの中でリフレクションを使って済ませている。
+/// ・再生していないとき、床は時間をかけずに**その場で一瞬で動く**（`PullAblePlate.StartMove` の決まり）。
+///   そのため、引っ張った直後に位置を比べられる。
+/// ・`RegisterPassenger` を呼ぶと、床が「有効な床の一覧」にも入る。OnEnable が来なくてもアンカーが床を見つけられるのはこのため。
+///
+/// ※ 本体の private メンバーを、**名前の文字列で指定して**呼んでいる所が多い。
+///   本体の名前を変えるとコンパイルは通るのにテストが壊れるので、変えるときはこのファイルも直すこと。
+/// </summary>
 public class PullAblePlateTests
 {
     private const string PlatePrefabPath = "Assets/Prefabs/SpaceJunk/Gimmick/PullAblePlate.prefab";
     private const string AnchorPrefabPath = "Assets/Prefabs/SpaceJunk/Gimmick/PullAblePlateAnchor.prefab";
     private const string Stage05ScenePath = "Assets/Scenes/Prototype/SpaceJunk/Stage/STAGE_05.unity";
 
+    /// <summary>床は通信に対応した部品（NetworkBehaviour）であるはず。オンラインで床の位置をホストが決めるため。</summary>
     [Test]
     public void PlateIsANetworkBehaviour()
     {
         Assert.That(typeof(NetworkBehaviour).IsAssignableFrom(typeof(PullAblePlate)), Is.True);
     }
 
+    /// <summary>
+    /// 床を付けると NetworkObject と Rigidbody も必ず付く（[RequireComponent] で指定されている）はず。
+    /// </summary>
     [Test]
     public void PlateRequiresNetworkObjectAndRigidbody()
     {
+        // [RequireComponent] は1つにつき最大3つの型を持てるので、全部を集めてから空きを除く
         Type[] requiredTypes = typeof(PullAblePlate)
             .GetCustomAttributes<RequireComponent>()
             .SelectMany(attribute => new[]
@@ -40,6 +66,11 @@ public class PullAblePlateTests
         Assert.That(requiredTypes, Does.Contain(typeof(Rigidbody)));
     }
 
+    /// <summary>
+    /// 参加者がホストに「床を引っ張って」と頼む2つの ServerRpc は、床の持ち主でなくても呼べる
+    /// （RequireOwnership = false）はず。床の持ち主はホストで、引っ張るのは別のプレイヤーだから。
+    /// ※ メソッド名を文字列で指定しているので、本体の名前を変えるとこのテストが壊れる
+    /// </summary>
     [TestCase("RequestPullServerRpc")]
     [TestCase("RequestPullTowardServerRpc")]
     public void PullRequestRpcAllowsNonOwnerClients(string methodName)
@@ -55,6 +86,10 @@ public class PullAblePlateTests
             "場外または別 Plate の Player も要求できるため、所有権を要求してはいけない");
     }
 
+    /// <summary>
+    /// 「動いている最中か」を全員のPCにそろえる値（NetworkVariable&lt;bool&gt;）を持っているはず。
+    /// 参加者のPCでも、動いている最中の床の柱を引っ掛けられないようにするため。名前は問わない。
+    /// </summary>
     [Test]
     public void MovingStateHasANetworkSynchronizedValue()
     {
@@ -65,6 +100,12 @@ public class PullAblePlateTests
         Assert.That(hasSynchronizedMovingState, Is.True);
     }
 
+    /// <summary>
+    /// このPCで乗客を動かしてよいかの決まり。並びは（床が通信中か, 乗客が通信中か, 乗客が自分のプレイヤーか → 動かすか）。
+    /// 1人用・自分のプレイヤー・通信していない乗客なら動かし、**他の人のプレイヤーだけは動かさない**はず
+    /// （その人のPCが動かし、位置は通信で届くので、二重に動かさないため）。
+    /// ※ メソッド名を文字列で指定しているので、本体の名前を変えるとこのテストが壊れる
+    /// </summary>
     [TestCase(false, false, false, true, TestName = "OfflinePassengerMoves")]
     [TestCase(true, true, true, true, TestName = "OnlineOwnedPassengerMoves")]
     [TestCase(true, true, false, false, TestName = "OnlineRemotePassengerDoesNotMove")]
@@ -86,6 +127,10 @@ public class PullAblePlateTests
         Assert.That(actual, Is.EqualTo(expected));
     }
 
+    /// <summary>
+    /// オンラインで床の位置を初めて見たフレームは、前の位置が控えていない（false）ので →
+    /// 前の位置がどれだけ離れていても、乗客を動かす量は 0 のはず（出現時のワープを乗客に渡さないため）。
+    /// </summary>
     [Test]
     public void FirstObservedOnlinePositionProducesNoPassengerDelta()
     {
@@ -106,6 +151,9 @@ public class PullAblePlateTests
         Assert.That(actual, Is.EqualTo(Vector3.zero));
     }
 
+    /// <summary>
+    /// 前の位置を控えている2フレーム目以降は → 今の位置 − 前の位置（ここでは (3, 5, 6)）がそのまま乗客を動かす量になるはず。
+    /// </summary>
     [Test]
     public void LaterObservedOnlinePositionProducesItsExactDelta()
     {
@@ -126,6 +174,9 @@ public class PullAblePlateTests
         Assert.That(actual, Is.EqualTo(new Vector3(3f, 5f, 6f)));
     }
 
+    /// <summary>
+    /// 回していない床なら → 8方向の柱は、名前どおりの水平な向き（Front = 奥 +Z、Right = 右 +X、斜めはその間）で、長さ 1 のはず。
+    /// </summary>
     [TestCase(PullAblePlateDirection.Front, 0f, 1f)]
     [TestCase(PullAblePlateDirection.FrontRight, 1f, 1f)]
     [TestCase(PullAblePlateDirection.Right, 1f, 0f)]
@@ -146,6 +197,7 @@ public class PullAblePlateTests
         Assert.That(Vector3.Distance(actual, expected), Is.LessThan(0.0001f));
     }
 
+    /// <summary>床を Y軸で 90度回して置いたら → Front の柱は、床と一緒に回って右（+X）へ引っ張るはず。</summary>
     [Test]
     public void CalculateDirectionRotatesWithThePlate()
     {
@@ -156,6 +208,10 @@ public class PullAblePlateTests
         Assert.That(Vector3.Distance(actual, Vector3.right), Is.LessThan(0.0001f));
     }
 
+    /// <summary>
+    /// 床に乗っている人は、その床の柱を引っ掛けられず → 乗っていない人は引っ掛けられるはず
+    /// （乗ったまま自分の床を引っ張れないようにする決まり）。
+    /// </summary>
     [Test]
     public void PullPointRejectsPassengerButAllowsAnotherPlayer()
     {
@@ -179,6 +235,9 @@ public class PullAblePlateTests
         }
     }
 
+    /// <summary>
+    /// Front の柱を OFF にしたら → 柱の GameObject ごと非表示になり、フックでも引っ掛けられなくなるはず。
+    /// </summary>
     [Test]
     public void DisablingDirectionHidesItsPullPointAndPreventsHooking()
     {
@@ -187,6 +246,8 @@ public class PullAblePlateTests
 
         try
         {
+            // 床が「どの柱を消すか」を知れるよう、プレハブと同じく床の項目に柱をつないでおく
+            // ※ frontPullPoint は PullAblePlate の private の項目名。変えるとここが null で落ちる
             SerializedObject serializedPlate = new SerializedObject(plate);
             serializedPlate.FindProperty("frontPullPoint").objectReferenceValue = point;
             serializedPlate.ApplyModifiedPropertiesWithoutUndo();
@@ -202,6 +263,10 @@ public class PullAblePlateTests
         }
     }
 
+    /// <summary>
+    /// 2人が乗った床を右へ 2m 引っ張ったら → 2人とも床と同じ 2m だけ右へ動くはず。
+    /// 同じ人を2回登録しても、2倍（4m）動いたりはしない。
+    /// </summary>
     [Test]
     public void ImmediatePullMovesEveryUniquePassengerByThePlateDelta()
     {
@@ -211,17 +276,20 @@ public class PullAblePlateTests
 
         try
         {
+            // 位置を変えたら、物理側（CharacterController.Move が使う位置）にもすぐ反映させる
             firstPlayer.transform.position = new Vector3(0f, 1f, 0f);
             secondPlayer.transform.position = new Vector3(0f, 1f, 1f);
             Physics.SyncTransforms();
             Vector3 firstStart = firstPlayer.transform.position;
             Vector3 secondStart = secondPlayer.transform.position;
 
+            // 1回で 2m・時間をかけずに動かす（ConfigureImmediatePull と同じ設定）
             SerializedObject serializedPlate = new SerializedObject(plate);
             serializedPlate.FindProperty("moveDistance").floatValue = 2f;
             serializedPlate.FindProperty("moveDuration").floatValue = 0f;
             serializedPlate.ApplyModifiedPropertiesWithoutUndo();
 
+            // 1人目はわざと2回登録する（乗客の判定は毎フレーム登録してくるため、重なっても1人ぶんであること）
             plate.RegisterPassenger(firstPlayer.transform, firstController);
             plate.RegisterPassenger(firstPlayer.transform, firstController);
             plate.RegisterPassenger(secondPlayer.transform, secondController);
@@ -240,6 +308,10 @@ public class PullAblePlateTests
         }
     }
 
+    /// <summary>
+    /// 乗客の CharacterController が無効（オンラインで他の人の体を見ているとき・操作が止まっているとき）なら →
+    /// 床が動いても、その乗客は動かさないはず。
+    /// </summary>
     [Test]
     public void ImmediatePullSkipsADisabledPassengerController()
     {
@@ -251,6 +323,7 @@ public class PullAblePlateTests
             remotePlayer.transform.position = new Vector3(0f, 1f, 0f);
             Physics.SyncTransforms();
             Vector3 start = remotePlayer.transform.position;
+            // 他の人のプレイヤーは、そのPCでは CharacterController を切って見た目だけ動かしている。その状態をまねる
             controller.enabled = false;
 
             SerializedObject serializedPlate = new SerializedObject(plate);
@@ -270,6 +343,10 @@ public class PullAblePlateTests
         }
     }
 
+    /// <summary>
+    /// 場外のアンカーは、どれかの床に乗っている人だけが引っ掛けられるはず。
+    /// 乗る前は引っ掛けられず → 乗ったら引っ掛けられ → 乗っていない別の人は引っ掛けられない。
+    /// </summary>
     [Test]
     public void AnchorCanOnlyBeHookedByAPlayerRidingAPlate()
     {
@@ -296,6 +373,11 @@ public class PullAblePlateTests
         }
     }
 
+    /// <summary>
+    /// 床に乗った人が、右前方の高い所（10, 4, 0）にあるアンカーを引っ張り切ったら →
+    /// 床と乗客が、高さは無視してアンカーの方（右）へ 1回ぶん（初期値の 2m）動くはず。
+    /// 移動の時間は設定していないが、再生していないので一瞬で動く。
+    /// </summary>
     [Test]
     public void AnchorCompletionMovesPlateAndPassengerTowardAnchor()
     {
@@ -310,6 +392,7 @@ public class PullAblePlateTests
             Vector3 passengerStart = passenger.transform.position;
             plate.RegisterPassenger(passenger.transform, controller);
 
+            // フックが触れた → 引っ張りのゲージがたまり切った、の順にフック側の呼び方をまねる
             anchor.SetHooked(true);
             anchor.CompletePull(new HookPullContext(passengerStart, 1f, passenger.transform));
 
@@ -325,6 +408,10 @@ public class PullAblePlateTests
         }
     }
 
+    /// <summary>
+    /// アンカーを引っ掛けたあと、引っ張り切る前に床から降りたら →
+    /// どの床を動かすか決まらないので、床は動かないはず。
+    /// </summary>
     [Test]
     public void AnchorCompletionDoesNothingAfterPlayerLeavesThePlate()
     {
@@ -351,6 +438,9 @@ public class PullAblePlateTests
         }
     }
 
+    /// <summary>
+    /// アンカーが床の真上（横方向の位置が同じ）にあるときは → 向かう向きが決まらないので、床は動かないはず。
+    /// </summary>
     [Test]
     public void AnchorAtTheSameHorizontalPositionDoesNotMoveThePlate()
     {
@@ -375,6 +465,10 @@ public class PullAblePlateTests
         }
     }
 
+    /// <summary>
+    /// 床（1m の箱）の右に 0.4m のすき間を空けて固定の箱があるとき、右へ 2m 引っ張ったら →
+    /// 箱にめり込まず、その手前（x が 0.5 より小さい所）で止まるはず。
+    /// </summary>
     [Test]
     public void ImmediatePullStopsBeforeAFixedCube()
     {
@@ -385,12 +479,14 @@ public class PullAblePlateTests
 
         try
         {
+            // どちらも 1m の箱なので、中心を 1.4m 離すと、あいだのすき間は 0.4m
             fixedObject.transform.position = new Vector3(1.4f, 0f, 0f);
             ConfigureImmediatePull(plate);
             Physics.SyncTransforms();
 
             Assert.That(plate.Pull(PullAblePlateDirection.Right), Is.True);
 
+            // 「当たり判定を無視してすり抜けた」のではなく、本当に手前で止まったことを確かめる
             Assert.That(Physics.GetIgnoreCollision(plateCollider, fixedCollider), Is.False);
             Assert.That(AreOverlapping(plateCollider, fixedCollider), Is.False);
             Assert.That(plateObject.transform.position.x, Is.LessThan(0.5f));
@@ -402,6 +498,9 @@ public class PullAblePlateTests
         }
     }
 
+    /// <summary>
+    /// Right の柱を3回続けて引っ張ったら → 毎回フックが外れて次も引っ掛けられ、床は合計 6m（2m × 3）右へ動くはず。
+    /// </summary>
     [Test]
     public void PullPointCanCompleteThreeConsecutivePulls()
     {
@@ -433,6 +532,11 @@ public class PullAblePlateTests
         }
     }
 
+    /// <summary>
+    /// 時間をかけて動いている途中で床が無効にされたら → 「動いている最中」が解けるはず
+    /// （解けないと、次に有効にしたとき二度と引っ張れなくなる）。
+    /// ※ private の body・MoveTo・OnDisable を名前で指定して呼んでいる。本体の名前を変えるとこのテストが壊れる
+    /// </summary>
     [Test]
     public void DisablingPlateDuringMoveClearsMovingState()
     {
@@ -440,6 +544,7 @@ public class PullAblePlateTests
 
         try
         {
+            // EditMode では Awake が呼ばれず、床の Rigidbody の控え（body）が空のままなので、ここで入れておく
             typeof(PullAblePlate).GetField(
                     "body",
                     BindingFlags.Instance | BindingFlags.NonPublic)
@@ -449,12 +554,15 @@ public class PullAblePlateTests
                 BindingFlags.Instance | BindingFlags.NonPublic);
             Assert.That(moveTo, Is.Not.Null);
 
+            // 時間をかけて動くコルーチンを、StartCoroutine を使わず手で1歩だけ進める。
+            // 最初の待ち（WaitForFixedUpdate）まで進むので、「動いている最中」になったところで止まる
             IEnumerator moveRoutine = (IEnumerator)moveTo.Invoke(
                 plate,
                 new object[] { new Vector3(2f, 0f, 0f) });
             Assert.That(moveRoutine.MoveNext(), Is.True);
             Assert.That(plate.IsMoving, Is.True);
 
+            // EditMode では無効にしても OnDisable が来ないので、直接呼んで「無効にされた」をまねる
             typeof(PullAblePlate).GetMethod(
                     "OnDisable",
                     BindingFlags.Instance | BindingFlags.NonPublic)
@@ -469,6 +577,10 @@ public class PullAblePlateTests
         }
     }
 
+    /// <summary>
+    /// フックが掛かったままの柱が無効にされたら → 「掛かっている」が外れ、また引っ掛けられる状態に戻るはず。
+    /// ※ 柱の private の OnDisable を名前で指定して呼んでいる（EditMode では自動で呼ばれないため）
+    /// </summary>
     [Test]
     public void DisablingPlateClearsHookedPullPointState()
     {
@@ -494,17 +606,25 @@ public class PullAblePlateTests
         }
     }
 
+    /// <summary>
+    /// 柱にフックを掛けているプレイヤーのフック（HookController）が無効にされたら → 柱の「掛かっている」も外れるはず
+    /// （外れないと、その柱を誰も引っ掛けられなくなる）。
+    /// ※ HookController の private の attachedPullable・OnDisable を名前で指定している。名前を変えるとこのテストが壊れる
+    /// </summary>
     [Test]
     public void DisablingHookControllerReleasesAttachedPullPoint()
     {
         GameObject plateObject = CreatePlate(out PullAblePlate plate);
         CreatePullPoint(plate, PullAblePlateDirection.Right, out PullAblePlatePullPoint point);
+        // 非表示にしてから付けて、フック本来の準備（Awake・OnEnable で照準や入力を探す処理）が動かないようにする。
+        // ここで見たいのは、OnDisable の片付けだけ
         GameObject playerObject = new GameObject("Player");
         playerObject.SetActive(false);
         HookController hook = playerObject.AddComponent<HookController>();
 
         try
         {
+            // 「この柱にフックが掛かっている」状態を、柱とフックの両方に作る
             point.SetHooked(true);
             typeof(HookController).GetField(
                     "attachedPullable",
@@ -525,6 +645,10 @@ public class PullAblePlateTests
         }
     }
 
+    /// <summary>
+    /// 固定の箱の手前で止まった床を、反対（左）へ引っ張ったら → 触れている箱に止められず、ほぼ 2m 離れられるはず
+    /// （進む向きと反対を向いた面は「止まる相手」にしない決まり。でないと一度ぶつかった床が動けなくなる）。
+    /// </summary>
     [Test]
     public void PlateCanMoveAwayAfterStoppingAtAFixedCube()
     {
@@ -555,6 +679,9 @@ public class PullAblePlateTests
         }
     }
 
+    /// <summary>
+    /// 床の右に 0.4m 空けて別の床があるとき、右へ引っ張ったら → 別の床にめり込まず、その手前で止まるはず。
+    /// </summary>
     [Test]
     public void ImmediatePullStopsBeforeAnotherPlate()
     {
@@ -582,6 +709,14 @@ public class PullAblePlateTests
         }
     }
 
+    /// <summary>
+    /// 床のプレハブが決めた作りになっているはず。
+    /// ・ルート … 専用の PullAblePlate だけ（昔の MovableBlock は付いていない）。見た目・当たり判定は持たず、位置・回転・拡大は初期値
+    /// ・Rigidbody … キネマティックで重力なし（スクリプトで動かすため）
+    /// ・見た目 … 子の PlateBody（10m × 0.5m × 10m の箱。上面がルートの高さ 0 に来るよう 0.25m 下げてある）
+    /// ・8方向の柱 … 名前どおりの向きで、どれも最初から有効なトリガー
+    /// ・PassengerArea … 乗っている人を見つけるトリガー
+    /// </summary>
     [Test]
     public void PlatePrefabUsesDedicatedComponentsAndEightActivePullPoints()
     {
@@ -637,6 +772,8 @@ public class PullAblePlateTests
         Assert.That(passengerTrigger.isTrigger, Is.True);
         Assert.That(passengerArea.GetComponent<PullAblePlatePassengerArea>(), Is.Not.Null);
 
+        // 8方向の ON/OFF の項目が、どれも ON のまま保存されているか。
+        // ※ PullAblePlate の private の項目名。変えるとここが null で落ちる
         SerializedObject serializedPlate = new SerializedObject(plate);
         string[] activeProperties =
         {
@@ -655,6 +792,10 @@ public class PullAblePlateTests
         }
     }
 
+    /// <summary>
+    /// 床のプレハブの通信設定は、`PullAblePlateOnlineSetup` で入れたとおりのはず。
+    /// 位置の持ち主はホスト（Server）で、配るのは位置だけ（回転・拡大は配らない）。
+    /// </summary>
     [Test]
     public void PlatePrefabUsesServerAuthoritativePositionSyncOnly()
     {
@@ -676,12 +817,18 @@ public class PullAblePlateTests
         Assert.That(networkTransform.SyncScaleZ, Is.False);
     }
 
+    /// <summary>
+    /// STAGE_05 に置いた床（1つだけ）は、通信用の番号（GlobalObjectIdHash など）が 0 でなく、
+    /// シーンの中のほかの通信オブジェクトと重なっていないはず。0 や重なりがあると、参加者のPCで床が取り違えられる。
+    /// ※ 番号は外から見えないので、インスペクターと同じ読み方で名前を指定して読んでいる
+    /// </summary>
     [Test]
     public void Stage05PlateHasUniqueNonZeroSceneNetworkIds()
     {
         Scene scene = EditorSceneManager.OpenScene(Stage05ScenePath, OpenSceneMode.Additive);
         try
         {
+            // 開いた直後に「変更あり」になっていたら、番号が保存されておらず開いた拍子に作り直されたということ
             Assert.That(scene.isDirty, Is.False,
                 "NetworkObject と配置 ID は STAGE_05 に保存済みである必要がある");
             PullAblePlate[] plates = scene.GetRootGameObjects()
@@ -718,6 +865,9 @@ public class PullAblePlateTests
         }
     }
 
+    /// <summary>
+    /// アンカーのプレハブは、目に見えて（MeshRenderer あり）、フックが触れたことだけ分かるトリガーを持っているはず。
+    /// </summary>
     [Test]
     public void AnchorPrefabIsVisibleAndHookableThroughATrigger()
     {
@@ -731,6 +881,10 @@ public class PullAblePlateTests
         Assert.That(trigger.isTrigger, Is.True);
     }
 
+    /// <summary>
+    /// 原点に、テスト用の床（キネマティックの Rigidbody ＋ PullAblePlate）を作る。見た目も当たり判定も無い。
+    /// 壁にぶつけるテストでは、呼んだ側で BoxCollider（1m の箱）を足す。
+    /// </summary>
     private static GameObject CreatePlate(out PullAblePlate plate)
     {
         GameObject plateObject = new GameObject("PullAblePlate");
@@ -741,6 +895,10 @@ public class PullAblePlateTests
         return plateObject;
     }
 
+    /// <summary>
+    /// 1回で動く距離を 2m、かける時間を 0 秒（一瞬で動く）にする。
+    /// ※ moveDistance・moveDuration は PullAblePlate の private の項目名。変えるとここが null で落ちる
+    /// </summary>
     private static void ConfigureImmediatePull(PullAblePlate plate)
     {
         SerializedObject serializedPlate = new SerializedObject(plate);
@@ -749,6 +907,7 @@ public class PullAblePlateTests
         serializedPlate.ApplyModifiedPropertiesWithoutUndo();
     }
 
+    /// <summary>2つの当たり判定が、いまの位置でめり込み合っているか。触れているだけ（すき間 0）なら false。</summary>
     private static bool AreOverlapping(Collider first, Collider second)
     {
         return Physics.ComputePenetration(
@@ -762,6 +921,7 @@ public class PullAblePlateTests
             out _);
     }
 
+    /// <summary>テスト用のプレイヤー（CharacterController だけを付けた物）を原点に作る。</summary>
     private static GameObject CreatePlayer(string name, out CharacterController controller)
     {
         GameObject player = new GameObject(name);
@@ -769,6 +929,10 @@ public class PullAblePlateTests
         return player;
     }
 
+    /// <summary>
+    /// 床の子に、指定の向きの柱（トリガー ＋ PullAblePlatePullPoint）を作る。床の子なので、床を消せば柱も消える。
+    /// ※ direction は PullAblePlatePullPoint の private の項目名。変えるとここが null で落ちる
+    /// </summary>
     private static GameObject CreatePullPoint(
         PullAblePlate plate,
         PullAblePlateDirection direction,
@@ -786,6 +950,7 @@ public class PullAblePlateTests
         return pointObject;
     }
 
+    /// <summary>指定の位置に、場外のアンカー（トリガー ＋ PullAblePlateAnchor）を作る。</summary>
     private static GameObject CreateAnchor(Vector3 position, out PullAblePlateAnchor anchor)
     {
         GameObject anchorObject = new GameObject("PullAblePlateAnchor");
@@ -796,6 +961,9 @@ public class PullAblePlateTests
         return anchorObject;
     }
 
+    /// <summary>
+    /// プレハブの子の柱が、名前どおりにあり、最初から有効で、トリガーを持ち、名前と同じ向きになっているかを確かめる。
+    /// </summary>
     private static void AssertPlatePullPoint(
         Transform root,
         string childName,

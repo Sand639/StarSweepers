@@ -85,6 +85,7 @@ public class LiquidBeam : MonoBehaviour
     [SerializeField] private float bulgeWavelength = 0.9f;
 
     [Header("まわりのらせん（水流）")]
+    [Tooltip("らせん（水流）の本数。始まったとき（Awake）に作るので、再生中に変えても反映されない")]
     [SerializeField] private int ribbonCount = 8;
 
     [Tooltip("らせんの半径（流れの中心から）")]
@@ -99,8 +100,10 @@ public class LiquidBeam : MonoBehaviour
     [Tooltip("らせん1本が出てから消えるまでの時間（秒。最小・最大）")]
     [SerializeField] private Vector2 ribbonLifeRange = new Vector2(0.3f, 0.7f);
 
+    [Tooltip("らせん1本の太さ（メートル）。出るときと消えるときは、これより細くなる")]
     [SerializeField] private float ribbonWidth = 0.08f;
 
+    [Tooltip("らせんの濃さ（0 で透明、1 で不透明）")]
     [Range(0f, 1f)]
     [SerializeField] private float ribbonAlpha = 0.8f;
 
@@ -126,6 +129,7 @@ public class LiquidBeam : MonoBehaviour
     [Tooltip("しぶきが消えるまでの時間（秒。最小・最大）")]
     [SerializeField] private Vector2 dropletLife = new Vector2(0.35f, 0.8f);
 
+    [Tooltip("しぶきの粒を同時に出せる最大数。超えたぶんは出ない（重くなりすぎないように）。Awake で決まり、再生中に変えても反映されない")]
     [SerializeField] private int maxDroplets = 400;
 
     [Header("色の変わり方")]
@@ -136,6 +140,7 @@ public class LiquidBeam : MonoBehaviour
     [Tooltip("流れの先端についていくライト（空なら照らさない）。色は液体の色に合わせる")]
     [SerializeField] private Light headLight;
 
+    [Tooltip("先端のライトの明るさ。消えていくときは、流れと一緒にだんだん弱くなる")]
     [SerializeField] private float lightIntensity = 3f;
 
     [Tooltip("先端のライトを使うか。オフにすると、Head Light が入っていても照らさない")]
@@ -158,12 +163,21 @@ public class LiquidBeam : MonoBehaviour
     /// <summary>いまライトを点けてよいか。</summary>
     private bool LightOn => headLight != null && useHeadLight && LightsEnabled;
 
+    /// <summary>
+    /// ビームの状態。ふつうは 待機 → 溜め → 発射 → 出たまま → 消える → 待機 と進む。
+    /// Follow() を呼ばれている間だけは「外から両端を決めてもらう」状態になる。
+    /// </summary>
     private enum State
     {
+        /// <summary>何も出ていない。BeginCharge() または Follow() を待っている。</summary>
         Idle,
+        /// <summary>ボタンを押している間。口もとに玉がふくらみ、届く距離の目安が出る。</summary>
         Charging,
+        /// <summary>先端が目標の距離へ向かって進んでいる途中。</summary>
         Firing,
+        /// <summary>先端が届いて、出たままになっている（holdSeconds 秒、または Stop() まで）。</summary>
         Holding,
+        /// <summary>根元から切れて、先端へ流れ去りながら消えていく途中。</summary>
         Fading,
         Following,  // 外から両端を決めてもらっている（フックの糸の代わり。Follow()）
     }
@@ -177,38 +191,58 @@ public class LiquidBeam : MonoBehaviour
     /// <summary>らせん1本の目印の点の最大数。</summary>
     private const int MaxControlPoints = 16;
 
+    /// <summary>らせんの目印の点と点のあいだを、何個の点でなめらかにつなぐか。多いほどなめらかだが重い。</summary>
     private const int SamplesPerSegment = 5;
 
     /// <summary>色が切り替わる境目のぼかし幅（流れの長さに対する割合）。</summary>
     private const float ColorEdgeSoftness = 0.12f;
 
     private State state = State.Idle;
+
+    /// <summary>溜めを始めてから押し続けている時間（秒）。</summary>
     private float chargeTime;
+
+    /// <summary>今回の発射で先端が届く距離（メートル）。離した瞬間の溜め具合で決まる。</summary>
     private float targetLength;
+
+    /// <summary>根元（このオブジェクトの位置）から先端までの距離（メートル・前方向）。</summary>
     private float headDistance;
+
+    /// <summary>根元から、流れの切れ目（いちばん根元側の端）までの距離（メートル）。消えるときに先端へ向かって増える。</summary>
     private float tailDistance;
+
+    /// <summary>「出たまま」「消える」の残り時間（秒）。</summary>
     private float stateTimer;
+
+    /// <summary>始まってからの経過時間（秒）。波やゆれを流すのに使う。</summary>
     private float flowTime;
 
+    /// <summary>インスペクターで決めた最初の色。ResetColor() で戻す先。</summary>
     private Color defaultColor;
+
+    /// <summary>色を変えている途中の、元の色（根元側に残っている色）。</summary>
     private Color fromColor;
+
+    /// <summary>色を変えている途中の、新しい色（先端から染まっていく色）。変えていなければ今の色。</summary>
     private Color toColor;
 
     /// <summary>先端から何割まで新しい色に染まったか（0〜1）。1 なら全部 <see cref="toColor"/>。</summary>
     private float colorSpread = 1f;
 
+    /// <summary>先端のしぶき・流れのしずくの「1個に満たない端数」。次のフレームに持ち越す（<see cref="TakeCount"/>）。</summary>
     private float headSplashCarry;
     private float dripCarry;
 
     /// <summary>Follow() で、先端が前のフレームより先へ伸びたか（しぶきを前へ飛ばすかどうか）。</summary>
     private bool followGrowing;
 
-    private LiquidLine body;
-    private LiquidLine highlight;
-    private LiquidLine preview;
-    private LiquidLine nozzleBlob;
-    private Ribbon[] ribbons;
-    private ParticleSystem droplets;
+    // 見た目の部品。どれも Awake で子オブジェクトとして作る
+    private LiquidLine body;        // 流れ本体
+    private LiquidLine highlight;   // 流れの真ん中の明るい筋
+    private LiquidLine preview;     // 溜め中の、届く距離の目安（うすい線）
+    private LiquidLine nozzleBlob;  // 溜め中に口もとでふくらむ玉
+    private Ribbon[] ribbons;       // まわりに巻きつくらせん
+    private ParticleSystem droplets; // しぶき・しずく
 
     private readonly Vector3[] streamPoints = new Vector3[StreamPointCount];
     private readonly Keyframe[] widthKeys = new Keyframe[WidthKeyCount];
@@ -408,6 +442,10 @@ public class LiquidBeam : MonoBehaviour
         Tick(Time.deltaTime);
     }
 
+    /// <summary>
+    /// 無効にされたら、出ている物をすべて隠して待機に戻す（次に有効にしたとき、途中の状態から始まらないように）。
+    /// Awake より前に呼ばれた場合（部品がまだ無い）は何もしない。
+    /// </summary>
     private void OnDisable()
     {
         if (body == null)
@@ -462,6 +500,7 @@ public class LiquidBeam : MonoBehaviour
                     }
                 }
 
+                // 届いたあとは、先端のしぶきを飛んでいる途中の 35% に減らし、まわりへ散らす
                 DrawStream(1f, deltaTime);
                 EmitHeadSpray(deltaTime, headSplashRate * 0.35f, false);
                 EmitDrips(deltaTime, dripsPerMeter);
@@ -481,11 +520,14 @@ public class LiquidBeam : MonoBehaviour
                 float fade = stateTimer / fadeSeconds;
                 tailDistance = headDistance * (1f - fade);
 
+                // 太さは平方根を使って細くなるのを遅らせ、消える直前まで見えるようにする。
+                // 切れた流れからは、しずくをふだんの8倍こぼす
                 DrawStream(Mathf.Sqrt(fade), deltaTime);
                 EmitDrips(deltaTime, dripsPerMeter * 8f);
                 break;
 
             case State.Following:
+                // 先端が伸びているときは前へ勢いよく、止まっているときは控えめにまわりへ散らす
                 DrawStream(1f, deltaTime);
                 EmitHeadSpray(deltaTime, followGrowing ? headSplashRate : headSplashRate * 0.35f, followGrowing);
                 EmitDrips(deltaTime, dripsPerMeter);
@@ -493,6 +535,7 @@ public class LiquidBeam : MonoBehaviour
         }
     }
 
+    /// <summary>消え始める。fadeSeconds 秒かけて根元から切れていき、終わったら待機に戻る。</summary>
     private void BeginFade()
     {
         state = State.Fading;
@@ -512,13 +555,14 @@ public class LiquidBeam : MonoBehaviour
         streamPoints[0] = Vector3.zero;
         streamPoints[1] = new Vector3(0f, 0f, length);
 
-        // 溜めきったら点滅して「最大」と分かるようにする
+        // 溜めきったら点滅して「最大」と分かるようにする（1秒に8回、明るさ 100% と 45% を行き来する）
         float flicker = charge >= 1f ? (Mathf.Repeat(flowTime * 8f, 1f) < 0.5f ? 1f : 0.45f) : 1f;
 
         preview.SetSolidColor(toColor, Mathf.Lerp(0.1f, 0.35f, charge) * flicker);
         preview.SetPoints(streamPoints, 2, streamWidth * 0.2f);
 
         // 口もとの玉：ごく短い線を丸い端で描くと、丸く見える。ぷるぷる震わせる
+        // （速さの違う2つの揺れを重ねて、規則的に見えないようにする。大きさは ±13% ほど）
         float wobbleScale = 1f + Mathf.Sin(flowTime * 22f) * 0.08f + Mathf.Sin(flowTime * 13f) * 0.05f;
         streamPoints[0] = Vector3.zero;
         streamPoints[1] = new Vector3(0f, 0f, 0.01f);
@@ -624,12 +668,14 @@ public class LiquidBeam : MonoBehaviour
             widthKeys[i] = new Keyframe(u, value);
         }
 
+        // 残りの2つで先端のふくらみを作る（先端の少し手前がいちばん太く、先端でやや細くなる）
         widthKeys[bodyKeys] = new Keyframe(1f - headSpan * 0.4f, headBlobScale);
         widthKeys[bodyKeys + 1] = new Keyframe(1f, headBlobScale * 0.75f);
 
         widthCurve.keys = widthKeys;
     }
 
+    /// <summary>流れ・らせん・溜めの表示・ライトをすべて隠し、長さを 0 に戻す（しぶきの粒は自然に消えるのを待つ）。</summary>
     private void HideAll()
     {
         body.SetVisible(false);
@@ -705,6 +751,10 @@ public class LiquidBeam : MonoBehaviour
         gradient.SetKeys(colorKeys, alphaKeys);
     }
 
+    /// <summary>
+    /// 線の上の位置 <paramref name="u"/>（0〜1）にあたる流れの場所の色を、グラデーションの目印にする。
+    /// 線が流れの一部（らせんなど）でも、流れ全体での位置に直してから色を決めるので、本体と色がそろう。
+    /// </summary>
     private void SetColorKey(GradientColorKey[] keys, int index, float u, float fromZ, float span, float head, float whiten)
     {
         Color color = ColorAt((fromZ + u * span) / head);
@@ -715,6 +765,11 @@ public class LiquidBeam : MonoBehaviour
     // しぶき
     // ------------------------------------------------------------
 
+    /// <summary>
+    /// しぶき用のパーティクルを子として作る。
+    /// 自動では出さず（Emission はオフ）、<see cref="EmitDroplet"/> で1粒ずつ位置・速さ・色を決めて出す。
+    /// 重力で落ち、だんだん小さく・薄くなって消える。
+    /// </summary>
     private ParticleSystem CreateDroplets()
     {
         var child = new GameObject("Droplets");
@@ -802,6 +857,10 @@ public class LiquidBeam : MonoBehaviour
         }
     }
 
+    /// <summary>
+    /// しぶきを1粒出す。位置と速さはこのオブジェクト基準で受け取り、ワールドに直して出す。
+    /// <paramref name="t"/> は流れの上の位置（0＝根元、1＝先端）で、その場所の液体の色を少し白っぽくして使う。
+    /// </summary>
     private void EmitDroplet(Vector3 localPosition, Vector3 localVelocity, float t)
     {
         Color color = Color.Lerp(ColorAt(t), Color.white, 0.2f);
@@ -878,16 +937,20 @@ public class LiquidBeam : MonoBehaviour
         private readonly Vector3[] controlPoints = new Vector3[MaxControlPoints];
         private readonly Vector3[] points = new Vector3[LightningShape.PointCount(MaxControlPoints, SamplesPerSegment)];
 
+        /// <summary>いま出ているか。false なら、次のフレームで別の場所に生まれ直す。</summary>
         private bool alive;
+
+        /// <summary>流れが出てから最初の1本目か（全部が同時に出て同時に消えないよう、最初だけ途中から始める）。</summary>
         private bool firstSpawn = true;
-        private float age;
-        private float life;
-        private float startZ;
-        private float length;
-        private float twist;
-        private float direction;
-        private float phase;
-        private float radiusScale;
+
+        private float age;          // 生まれてからの時間（秒）
+        private float life;         // 消えるまでの時間（秒）
+        private float startZ;       // らせんの根元側の端の位置（根元からのメートル）。先端へ流れていく
+        private float length;       // らせん1本の長さ（メートル）
+        private float twist;        // 1メートルあたり何周回るか
+        private float direction;    // 回る向き（1 か -1）
+        private float phase;        // らせんの回りはじめの角度（ラジアン）。時間とともに回る
+        private float radiusScale;  // 半径のばらつき（0.8〜1.2 倍）。全部が同じ太さの筒に見えないように
 
         public Ribbon(LiquidBeam owner, int index)
         {
@@ -895,6 +958,7 @@ public class LiquidBeam : MonoBehaviour
             line = new LiquidLine(owner.transform, $"Ribbon_{index}", owner.lineMaterial, LiquidTextures.Tube, owner.brightness, 4);
         }
 
+        /// <summary>隠して、次に流れが出たときに「最初の1本目」から始め直す。</summary>
         public void Hide()
         {
             line.SetVisible(false);
@@ -902,6 +966,10 @@ public class LiquidBeam : MonoBehaviour
             firstSpawn = true;
         }
 
+        /// <summary>
+        /// 1フレームぶん、先端へ流しながら回して描き直す。寿命が来たら消え、次のフレームで別の場所に生まれ直す。
+        /// <paramref name="fade"/> は流れ本体と同じ消え具合（1＝そのまま、0＝消える）。
+        /// </summary>
         public void Tick(float deltaTime, float fade)
         {
             float tail = owner.tailDistance;
@@ -909,6 +977,7 @@ public class LiquidBeam : MonoBehaviour
 
             if (!alive)
             {
+                // 流れが短すぎる（0.8m 未満）うちは、巻きつく余地が無いので出さない
                 if (head - tail < 0.8f)
                 {
                     line.SetVisible(false);
@@ -941,6 +1010,7 @@ public class LiquidBeam : MonoBehaviour
                 return;
             }
 
+            // 目印の点は、1周あたり4つ置く（少ないと、らせんが角ばって見える）。4〜MaxControlPoints の間に収める
             int controlCount = Mathf.Clamp(Mathf.CeilToInt((to - from) * twist * 4f) + 1, 4, MaxControlPoints);
 
             for (int i = 0; i < controlCount; i++)
@@ -955,6 +1025,7 @@ public class LiquidBeam : MonoBehaviour
                 controlPoints[i] = new Vector3(center.x + Mathf.Cos(angle) * r, center.y + Mathf.Sin(angle) * r, z);
             }
 
+            // 目印の点のあいだを、電撃のビームと同じ道具でなめらかな曲線につなぐ
             int count = LightningShape.SampleHermite(controlPoints, controlCount, SamplesPerSegment, points);
 
             // 出るときと消えるときは細くする
@@ -964,6 +1035,7 @@ public class LiquidBeam : MonoBehaviour
             line.SetPoints(points, count, owner.ribbonWidth * envelope * fade);
         }
 
+        /// <summary>流れの上のどこかに、長さ・回り方・向き・寿命をばらつかせて新しく生まれる。</summary>
         private void Spawn(float tail, float head)
         {
             alive = true;
@@ -973,6 +1045,8 @@ public class LiquidBeam : MonoBehaviour
             age = firstSpawn ? Random.Range(0f, life * 0.6f) : 0f;
             firstSpawn = false;
 
+            // 流れより長くはしない。根元側は少しはみ出してもよい（はみ出した所は描かない）ので、
+            // 根元のすぐそばからも巻きついて見える
             length = Mathf.Min(Random.Range(owner.ribbonLengthRange.x, owner.ribbonLengthRange.y), head - tail);
             startZ = Random.Range(tail - length * 0.3f, head - length * 0.8f);
             twist = Random.Range(owner.turnsPerMeter.x, owner.turnsPerMeter.y);
@@ -1001,12 +1075,18 @@ public class LiquidBeam : MonoBehaviour
         private readonly GradientColorKey[] colorKeys = new GradientColorKey[4];
         private readonly GradientAlphaKey[] alphaKeys = new GradientAlphaKey[2];
 
+        /// <summary>
+        /// 子オブジェクトに LineRenderer を作る。最初は隠しておく。
+        /// <paramref name="capVertices"/> は線の端を丸めるための頂点の数（多いほど丸い。口もとの玉は 10 で丸く見せている）。
+        /// </summary>
         public LiquidLine(Transform parent, string name, Material material, Texture texture, float brightness, int capVertices)
         {
             var child = new GameObject(name);
             child.transform.SetParent(parent, false);
 
             line = child.AddComponent<LineRenderer>();
+            // 点はビームのオブジェクト基準で渡す（ビームを動かせば線もそのまま付いてくる）。
+            // 線はいつもカメラの方を向く平たい帯で描く
             line.useWorldSpace = false;
             line.sharedMaterial = material;
             line.shadowCastingMode = ShadowCastingMode.Off;
@@ -1048,6 +1128,7 @@ public class LiquidBeam : MonoBehaviour
             line.colorGradient = gradient;
         }
 
+        /// <summary>線全体を1色にする（溜め中の表示用。色の変わり目は付けない）。</summary>
         public void SetSolidColor(Color color, float alpha)
         {
             color.a = alpha;
@@ -1055,6 +1136,10 @@ public class LiquidBeam : MonoBehaviour
             line.endColor = color;
         }
 
+        /// <summary>
+        /// 線の点を、配列の先頭 <paramref name="count"/> 個で入れ替え、太さ（<paramref name="width"/>、太さの形に掛ける倍率）を決めて表示する。
+        /// 配列は使い回すので、count より後ろの値は使わない。
+        /// </summary>
         public void SetPoints(Vector3[] positions, int count, float width)
         {
             line.positionCount = count;
@@ -1073,6 +1158,9 @@ public class LiquidBeam : MonoBehaviour
     // 質感のテクスチャ（実行時に作る。外部の素材は使わない）
     // ------------------------------------------------------------
 
+    /// <summary>
+    /// 液体の見た目に使うテクスチャ。初めて使われたときに1回だけ作り、すべてのビームで使い回す。
+    /// </summary>
     private static class LiquidTextures
     {
         private static Texture2D tube;
@@ -1095,6 +1183,7 @@ public class LiquidBeam : MonoBehaviour
         /// <summary>線の幅方向（V）にだけ変化するテクスチャを作る。d は 0（真ん中）〜1（ふち）。</summary>
         private static Texture2D CreateAcross(System.Func<float, float> alpha)
         {
+            // 長さ方向は変化しないので幅は 4 ピクセルで足りる。幅方向（V）だけ 64 段で細かく作る
             const int height = 64;
             var texture = new Texture2D(4, height, TextureFormat.RGBA32, false)
             {
@@ -1118,6 +1207,7 @@ public class LiquidBeam : MonoBehaviour
             return texture;
         }
 
+        /// <summary>32×32 ピクセルの丸。中心からの距離 r（0〜1）で、ふちの手前が濃く、外側（r が 1 に近い所）でなめらかに透ける。</summary>
         private static Texture2D CreateDrop()
         {
             const int size = 32;

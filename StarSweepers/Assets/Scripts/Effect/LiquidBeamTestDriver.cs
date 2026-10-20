@@ -12,10 +12,17 @@ using UnityEngine.InputSystem;
 /// | R | 最初の色に戻す |
 /// | H | 出しっぱなし（Stop を呼ぶまで消えない）の切り替え |
 /// | 2 | キャラクターを円を描いて動かす／止める（しぶきが置いていかれるかの確認） |
+///
+/// 検証シーン `Assets/Scenes/Test/LiquidBeamTest.unity` に置く物で、シーンはメニューの
+/// 「Tools > StarSweepers > 液体ビームの検証シーンを作り直す」（<c>LiquidBeamTestSetup</c>）で作られる。
+/// 試合の操作とは関係なく、キーボードを直接読んでいる。
 /// </summary>
 public class LiquidBeamTestDriver : MonoBehaviour
 {
+    [Tooltip("操作する液体のビーム")]
     [SerializeField] private LiquidBeam beam;
+
+    [Tooltip("2 キーで円を描いて動かすキャラクター（ビームの親）。空なら動かさない")]
     [SerializeField] private Transform character;
 
     [Tooltip("はじめから出しっぱなしにしておくか（色の変わり方を見やすくするため）")]
@@ -30,13 +37,22 @@ public class LiquidBeamTestDriver : MonoBehaviour
         new Color(1f, 0.2f, 0.3f, 1f),
     };
 
+    [Tooltip("2 キーで動かすときの円の半径（メートル。ワールドの原点を中心に回る）")]
     [SerializeField] private float moveRadius = 3f;
+
+    [Tooltip("2 キーで動かすときの回る速さ（1秒あたりの角度。ラジアン）")]
     [SerializeField] private float moveSpeed = 0.6f;
 
+    /// <summary>次に C を押したときに使う色の番号（cargoColors の何番目か）。</summary>
     private int colorIndex;
+
+    /// <summary>2 キーでキャラクターを動かしている最中か。</summary>
     private bool moving;
+
+    /// <summary>円の上のいまの角度（ラジアン）。止めても覚えておき、次はその続きから動く。</summary>
     private float moveAngle;
 
+    /// <summary>インスペクターの「はじめから出しっぱなし」を、ビームに伝える。</summary>
     private void Start()
     {
         if (beam != null)
@@ -56,6 +72,7 @@ public class LiquidBeamTestDriver : MonoBehaviour
 
         if (beam != null)
         {
+            // F は1つのキーで「溜める」と「止める」を兼ねる。流れが出ていれば止め、出ていなければ溜め始める
             if (keyboard.fKey.wasPressedThisFrame)
             {
                 if (beam.IsFiring)
@@ -68,6 +85,7 @@ public class LiquidBeamTestDriver : MonoBehaviour
                 }
             }
 
+            // 止めるために押した F を離したときも呼ばれるが、溜め中でなければビーム側で無視される
             if (keyboard.fKey.wasReleasedThisFrame)
             {
                 beam.Release();
@@ -98,12 +116,15 @@ public class LiquidBeamTestDriver : MonoBehaviour
 
         if (moving && character != null)
         {
+            // 原点のまわりを左回り（上から見て反時計回り）に動かし、進む向き（円の接線）を向かせる。
+            // ビームが横へ振られるので、しぶきがワールドに置いていかれるかを見られる
             moveAngle += moveSpeed * Time.deltaTime;
             character.position = new Vector3(Mathf.Cos(moveAngle) * moveRadius, 0f, Mathf.Sin(moveAngle) * moveRadius);
             character.rotation = Quaternion.LookRotation(new Vector3(-Mathf.Sin(moveAngle), 0f, Mathf.Cos(moveAngle)));
         }
     }
 
+    /// <summary>画面の左上に、操作の説明と、溜め中は溜め具合（% と届く距離）を出す。</summary>
     private void OnGUI()
     {
         string hold = beam != null && beam.HoldUntilStopped ? "オン（F でとめる）" : "オフ（少しで消える）";

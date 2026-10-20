@@ -17,9 +17,31 @@ using UnityEngine.UI;
 /// コードは部品の名前や並び順ではなく、付いている印（<see cref="TitlePart"/> / <see cref="TitleMenuButton"/> の Action など）で見つける。
 ///
 /// 見た目の初期値は、2026/10/6 までコードで組み立てていた画面と同じ（めっちゃカメレオン風）。
+///
+/// ## 流れ
+///
+/// 1. Unity がスクリプトを読み込むと <see cref="AutoBuildIfMissing"/> が動き、**エディタが落ち着いてから**（`EditorApplication.delayCall`）次のどれかをする
+///    ・プレハブが無い → <see cref="Build"/>（作って TitleScene に置く）
+///    ・版が 3 より古い → <see cref="Build"/>（作り直す。手で直した配置は消える）
+///    ・版が 3 以上で <see cref="PrefabVersion"/> より古い → <see cref="Upgrade"/>（足りない部品だけを足す。手で直した配置は残る）
+/// 2. <see cref="Build"/> … 見えない作業用のシーンで <see cref="BuildRoot"/> が画面を丸ごと組み立て、プレハブに保存して、TitleScene に置く
+/// 3. <see cref="Upgrade"/> … 保存してあるプレハブを開き、古い版から1つずつ順に部品を足す・消す・組み替えて、版を書き換えて保存する
+///
+/// ## 版を上げるとき
+///
+/// ・**新しく作るとき**（<see cref="BuildRoot"/> とその下の Build…Page）と、**今あるプレハブを上げるとき**（<see cref="Upgrade"/> に足す処理）の両方を書く
+/// ・`-batchmode -quit` で Unity を開くだけでは `delayCall` が呼ばれる前に終わり、版上げは動かない（2026/10/13 の申し送り）。
+///   コマンドから上げるときは <see cref="UpgradeFromCommandLine"/> を `-executeMethod` で呼ぶ
+/// ・`Upgrade` と `PrefabVersion` は、リフレクションで名前を指定して呼ばれたことがあるので、**名前を変えない**
+///
+/// ## 部品の重なり順
+///
+/// 同じ親の中では、**後ろに並んだ部品ほど手前に出る。** だから、つないでいる途中の表示（Busy）は一番最後に置き、
+/// あとから足す画面や窓は、その**前**に差し込む（<see cref="PutBehindBusyOverlay"/>）。
 /// </summary>
 public static class TitleScreenPrefabBuilder
 {
+    /// <summary>作るプレハブの場所（Resources の中なので、<see cref="TitleScreen.PrefabResourcePath"/> で読み込める）。</summary>
     public const string PrefabPath = "Assets/Resources/TitleScreen.prefab";
 
     /// <summary>背景の画像（Assets/Art/Sprites/title.png）。場所が変わっても見つかるように番号で探す。</summary>
@@ -28,6 +50,7 @@ public static class TitleScreenPrefabBuilder
     private const string TitleSceneName = "TitleScene";
 
     // 見た目の初期値（作ったあとは、プレハブの中で直接変える）
+    // 大きさ・位置の数字は、画面を 1920×1080 としたときのピクセル（<see cref="BuildRoot"/> の CanvasScaler）
     private const int FontSize = 24;
     private const int ButtonFontSize = 30;
     private static readonly Color TextColor = Color.white;
@@ -39,12 +62,17 @@ public static class TitleScreenPrefabBuilder
     private static readonly Color SliderFillColor = new Color(0.20f, 0.95f, 0.35f, 1f);
     private static readonly Vector2 MainButtonSize = new Vector2(420f, 76f);
 
+    /// <summary>作る文字に入れるフォント（Unity 標準）。<see cref="Build"/> と <see cref="Upgrade"/> の最初に読み込む。</summary>
     private static Font defaultFont;
 
     // ------------------------------------------------------------
     // 入口
     // ------------------------------------------------------------
 
+    /// <summary>
+    /// Unity がスクリプトを読み込むたびに呼ばれる。プレハブが無ければ作り、古ければ作り直すか部品を足す（クラスの説明の「流れ」）。
+    /// 読み込みの最中にアセットを作ると失敗することがあるので、`delayCall` で落ち着いてから動かす。再生に入るときは何もしない。
+    /// </summary>
     [InitializeOnLoadMethod]
     private static void AutoBuildIfMissing()
     {
@@ -105,6 +133,9 @@ public static class TitleScreenPrefabBuilder
 
         try
         {
+            // ※ 版ごとの処理を、古いほうから1つずつ順に通す。だから版 3・4 から上げるときは、
+            //    ここで足した画面（フレンド・LAN の一覧）を、あとの版 8 の組み替えで消すことになる
+            // どの段も「もう足してあれば何もしない」ので、途中まで上がったプレハブでも二重には足さない
             if (fromVersion < 4 && FindPart(root, TitlePartRole.PageFindFriends) == null)
             {
                 AddFriendsButton(root);
@@ -113,14 +144,10 @@ public static class TitleScreenPrefabBuilder
                 page.SetActive(false);
 
                 // つないでいる途中の表示より手前に出ないように、その前に並べる
-                TitlePart busy = FindPart(root, TitlePartRole.BusyOverlay);
-                if (busy != null)
-                {
-                    page.transform.SetSiblingIndex(busy.transform.GetSiblingIndex());
-                }
+                PutBehindBusyOverlay(root, page);
             }
 
-            // 古い版から順に直す（4 → 5 → 6 → 7 → 8）
+            // 古い版から順に直す（4 → 5 → 6 → 7 → 8 → 9）
             if (fromVersion < 5 && FindPart(root, TitlePartRole.LanListContent) == null)
             {
                 TitlePart lanPage = FindPart(root, TitlePartRole.PageFindLan);
@@ -163,6 +190,7 @@ public static class TitleScreenPrefabBuilder
     /// <summary>
     /// 「サーバーを探す」の「LANのサーバーに参加する」を複製して「フレンドのサーバーを探す」にし、
     /// その場所に置く（LAN のボタンは1つ下へずらす）。
+    /// 版 3 → 4 のときだけ使う（「サーバーを探す」の画面は版 8 で消えた）。
     /// </summary>
     private static void AddFriendsButton(GameObject root)
     {
@@ -191,11 +219,13 @@ public static class TitleScreenPrefabBuilder
                 friends.Label.text = "フレンドのサーバーを探す";
             }
 
+            // 1つぶん下げる：ボタンの高さ＋ボタンどうしの間（22）
             lanRect.anchoredPosition -= new Vector2(0f, lanRect.sizeDelta.y + 22f);
             return;
         }
     }
 
+    /// <summary>その印（Role）の付いた部品を探す（隠れている部品も含める）。無ければ null。</summary>
     private static TitlePart FindPart(GameObject root, TitlePartRole role)
     {
         foreach (TitlePart part in root.GetComponentsInChildren<TitlePart>(true))
@@ -210,9 +240,38 @@ public static class TitleScreenPrefabBuilder
     }
 
     /// <summary>
+    /// あとから足した画面や窓を、つないでいる途中の表示（Busy）の**すぐ前**に並べ替える。
+    /// 後ろに並んだ部品ほど手前に出るので、こうしておけば、つないでいる途中の表示がいつも一番手前に出る。
+    /// </summary>
+    private static void PutBehindBusyOverlay(GameObject root, GameObject added)
+    {
+        TitlePart busy = FindPart(root, TitlePartRole.BusyOverlay);
+        if (busy != null)
+        {
+            added.transform.SetSiblingIndex(busy.transform.GetSiblingIndex());
+        }
+    }
+
+    /// <summary>
+    /// column の中で、index 番より後ろに並んでいる部品を、distance だけ上へずらす（消した部品のぶんを詰めるとき）。
+    /// </summary>
+    private static void MoveUpSiblingsAfter(Transform column, int index, float distance)
+    {
+        for (int i = index + 1; i < column.childCount; i++)
+        {
+            if (column.GetChild(i) is RectTransform below)
+            {
+                below.anchoredPosition += new Vector2(0f, distance);
+            }
+        }
+    }
+
+    /// <summary>
     /// **マルチプレイの画面**（2026/10/19・大槻さんの絵コンテ）。
     /// 左：名前・クイックプレイ・プライベートサーバーを探す・サーバーを作る・サーバー検索設定（■パブリックサーバー ■フレンドのサーバー）。
     /// 右：参加可能なサーバーの一覧（LAN の部屋はいつも一番上）と、パスワードの欄。
+    /// ※ パスワードの欄は、版 9（2026/10/19）で参加の確認の窓へ移したので、いまはここでは作らない。
+    /// 版 7 → 8 の <see cref="Upgrade"/> でも、これを使って足す。
     /// </summary>
     private static GameObject BuildMultiPage(Transform root)
     {
@@ -329,6 +388,7 @@ public static class TitleScreenPrefabBuilder
             }
         }
 
+        // 版 8 のマルチプレイの画面には、印の無い「Password」という名前の欄があった（名前で探すしかない）
         TitlePart multi = FindPart(root, TitlePartRole.PageMulti);
         Transform oldPassword = multi != null ? multi.transform.Find("Password") : null;
         if (oldPassword != null)
@@ -343,11 +403,7 @@ public static class TitleScreenPrefabBuilder
 
         GameObject dialog = BuildJoinDialog(root.transform);
         dialog.SetActive(false);
-        TitlePart busy = FindPart(root, TitlePartRole.BusyOverlay);
-        if (busy != null)
-        {
-            dialog.transform.SetSiblingIndex(busy.transform.GetSiblingIndex());
-        }
+        PutBehindBusyOverlay(root, dialog);
     }
 
     /// <summary>「□ 名前」のチェック1行（押すとチェックが付いたり外れたりする）。</summary>
@@ -401,17 +457,8 @@ public static class TitleScreenPrefabBuilder
             if (find != null)
             {
                 RectTransform findRect = (RectTransform)find.transform;
-                Transform column = findRect.parent;
-                int index = findRect.GetSiblingIndex();
-                float step = findRect.sizeDelta.y + 22f;
-
-                for (int i = index + 1; i < column.childCount; i++)
-                {
-                    if (column.GetChild(i) is RectTransform below)
-                    {
-                        below.anchoredPosition += new Vector2(0f, step);
-                    }
-                }
+                float step = findRect.sizeDelta.y + 22f; // ボタンの高さ＋ボタンどうしの間（22。メインの画面の Column と同じ）
+                MoveUpSiblingsAfter(findRect.parent, findRect.GetSiblingIndex(), step);
 
                 Object.DestroyImmediate(find.gameObject);
             }
@@ -434,11 +481,7 @@ public static class TitleScreenPrefabBuilder
         // マルチプレイの画面を足す（つないでいる途中の表示より手前に出ないように、その前に並べる）
         GameObject multi = BuildMultiPage(root.transform);
         multi.SetActive(false);
-        TitlePart busy = FindPart(root, TitlePartRole.BusyOverlay);
-        if (busy != null)
-        {
-            multi.transform.SetSiblingIndex(busy.transform.GetSiblingIndex());
-        }
+        PutBehindBusyOverlay(root, multi);
     }
 
     /// <summary>ボタンの Action と文字を変える。</summary>
@@ -542,8 +585,9 @@ public static class TitleScreenPrefabBuilder
             RectTransform modeRow = (RectTransform)useInternet.transform.parent;
             Transform column = modeRow.parent;
             int index = modeRow.GetSiblingIndex();
-            float removed = modeRow.sizeDelta.y + 10f;
+            float removed = modeRow.sizeDelta.y + 10f; // 行の高さ＋行どうしの間（10。「サーバーを作る」の Column と同じ）
 
+            // すぐ上の行が「つなぎかた」の見出し（AddLabel で作った行）
             if (index > 0)
             {
                 Transform labelRow = column.GetChild(index - 1);
@@ -552,6 +596,7 @@ public static class TitleScreenPrefabBuilder
                     if (text.name == "Label")
                     {
                         text.text = RoomKindLabel;
+                        // 幅は AddLabel と同じ決め方（1文字 ≒ 文字の大きさぶん）
                         text.rectTransform.sizeDelta = new Vector2(Mathf.Max(200f, RoomKindLabel.Length * FontSize + 10f), text.rectTransform.sizeDelta.y);
                     }
                     else if (text.name == "Note")
@@ -561,13 +606,7 @@ public static class TitleScreenPrefabBuilder
                 }
             }
 
-            for (int i = index + 1; i < column.childCount; i++)
-            {
-                if (column.GetChild(i) is RectTransform below)
-                {
-                    below.anchoredPosition += new Vector2(0f, removed);
-                }
-            }
+            MoveUpSiblingsAfter(column, index, removed);
 
             if (column is RectTransform columnRect)
             {
@@ -584,6 +623,7 @@ public static class TitleScreenPrefabBuilder
             return;
         }
 
+        // □LAN を置く横の位置：説明の文字（このあと消す）を除いた部品の、いちばん右の端＋間（12。Row の間と同じ）
         float x = 0f;
         foreach (Transform child in privateRow.transform)
         {
@@ -606,6 +646,7 @@ public static class TitleScreenPrefabBuilder
         Mark(lanCheck.Label, TitlePartRole.LanCheckText);
         Place((RectTransform)lanCheck.transform, new Vector2(0f, 0.5f), new Vector2(x, 0f), new Vector2(64f, 56f), new Vector2(0f, 0.5f));
 
+        // 「LAN」の文字は、チェック（幅 64）と間（12）のぶん右
         Text lanLabel = NewText("LanLabel", privateRow.transform, "LAN", FontSize, TextColor, TextAnchor.MiddleLeft);
         Place(lanLabel.rectTransform, new Vector2(0f, 0.5f), new Vector2(x + 64f + 12f, 0f), new Vector2(120f, 56f), new Vector2(0f, 0.5f));
     }
@@ -613,6 +654,8 @@ public static class TitleScreenPrefabBuilder
     /// <summary>
     /// コマンドから、足りない部品だけを足す（Unity を画面なしで動かすとき用：
     /// `Unity.exe -batchmode -quit -projectPath ... -executeMethod TitleScreenPrefabBuilder.UpgradeFromCommandLine`）。
+    /// 画面なしで `-quit` を付けると、<see cref="AutoBuildIfMissing"/> の `delayCall` が呼ばれる前に終わってしまうため、こちらを直接呼ぶ。
+    /// ※ <see cref="AutoBuildIfMissing"/> と違い、版 3 より古いプレハブでも作り直さずに <see cref="Upgrade"/> する（Upgrade は版 3 からの差分しか知らない）。
     /// </summary>
     public static void UpgradeFromCommandLine()
     {
@@ -638,6 +681,7 @@ public static class TitleScreenPrefabBuilder
         Build();
     }
 
+    /// <summary>プレハブを最初の状態で丸ごと作り（今あるものは上書き）、TitleScene に無ければ置く。</summary>
     private static void Build()
     {
         defaultFont = Resources.GetBuiltinResource<Font>("LegacyRuntime.ttf");
@@ -738,6 +782,11 @@ public static class TitleScreenPrefabBuilder
     // 画面を組み立てる
     // ------------------------------------------------------------
 
+    /// <summary>
+    /// 画面の一番上の入れ物（Canvas）と、その中の画面を全部作る。**いまの版の形**はここで決まる。
+    /// 並べる順番がそのまま重なり順（後ろほど手前）：背景 → 各画面 → 参加の確認の窓 → つないでいる途中の表示。
+    /// メイン以外の画面は隠しておく（どれを出すかは、再生したときに <see cref="TitleScreen"/> が決める）。
+    /// </summary>
     private static GameObject BuildRoot(Scene stage)
     {
         GameObject root = new GameObject("TitleScreen", typeof(RectTransform), typeof(Canvas), typeof(CanvasScaler), typeof(GraphicRaycaster));
@@ -747,6 +796,7 @@ public static class TitleScreenPrefabBuilder
         canvas.renderMode = RenderMode.ScreenSpaceOverlay;
         canvas.sortingOrder = 90; // ポーズ画面（100）より後ろ、ほかのUIより手前
 
+        // 1920×1080 を基準に、画面の大きさに合わせて全体を拡大・縮小する（横と縦の合わせ方は半々）
         CanvasScaler scaler = root.GetComponent<CanvasScaler>();
         scaler.uiScaleMode = CanvasScaler.ScaleMode.ScaleWithScreenSize;
         scaler.referenceResolution = new Vector2(1920f, 1080f);
@@ -915,6 +965,7 @@ public static class TitleScreenPrefabBuilder
 
     /// <summary>
     /// 「フレンドのサーバーを探す」（Steam。2026/10/6）。Steam のフレンドのうち、このゲームで部屋に入っている人を並べる。
+    /// いまの <see cref="BuildRoot"/> では作らない。版 3 → 4 の <see cref="Upgrade"/> だけで使う（この画面は版 8 で消える）。
     /// </summary>
     private static GameObject BuildFindFriendsPage(Transform root)
     {
@@ -971,6 +1022,7 @@ public static class TitleScreenPrefabBuilder
     /// <summary>
     /// 「LANのサーバーに参加する」画面の下半分に、**見つかった LAN の部屋の一覧**を置く（2026/10/15）。
     /// 同じネットワークで「サーバーを作る → LAN」した部屋が、IPアドレスを打たなくても並ぶ（<see cref="LanRoomDiscovery"/>）。
+    /// いまの <see cref="BuildRoot"/> では作らない。版 4 → 5 の <see cref="Upgrade"/> だけで使う（この画面は版 8 で消える）。
     /// </summary>
     private static void BuildLanRoomList(Transform page)
     {
@@ -1087,7 +1139,11 @@ public static class TitleScreenPrefabBuilder
     {
         public readonly RectTransform Rect;
         private readonly float width;
+
+        /// <summary>部品と部品の間（縦）。</summary>
         private readonly float spacing;
+
+        /// <summary>上の端から、次の部品を置く所までの長さ（置くたびに増える）。</summary>
         private float y;
 
         public Column(string name, Transform parent, float width, float spacing, Vector2 anchor, Vector2 position, Vector2 pivot)
@@ -1125,7 +1181,11 @@ public static class TitleScreenPrefabBuilder
     private sealed class Row
     {
         public readonly RectTransform Rect;
+
+        /// <summary>部品と部品の間（横）。</summary>
         private readonly float spacing;
+
+        /// <summary>左の端から、次の部品を置く所までの長さ（置くたびに増える）。</summary>
         private float x;
 
         public Row(Column column, float height, float spacing, string name = "Row")
@@ -1162,6 +1222,7 @@ public static class TitleScreenPrefabBuilder
     {
         Row row = new Row(column, 40f, 16f, "Label");
 
+        // 見出しの幅は、1文字 ≒ 文字の大きさ（FontSize）として文字数から決める（短くても 200）。説明はその右に並ぶ
         Text title = NewText("Label", row.Rect, label, FontSize, TextColor, TextAnchor.LowerLeft);
         title.horizontalOverflow = HorizontalWrapMode.Overflow;
         title.rectTransform.sizeDelta = new Vector2(Mathf.Max(200f, label.Length * FontSize + 10f), 40f);
@@ -1182,6 +1243,10 @@ public static class TitleScreenPrefabBuilder
         AddInput(column, "名前を入力", TitleInputKind.PlayerName);
     }
 
+    /// <summary>
+    /// 入力欄を1つ。何を入れる欄かは <see cref="TitleInput"/> の Kind で決まる（打てる文字数や中身は、再生したときに <see cref="TitleScreen"/> が入れる）。
+    /// 幅は入れ物の幅まで、ただし 1000 より広くはしない。
+    /// </summary>
     private static void AddInput(Column column, string placeholder, TitleInputKind kind)
     {
         Image background = NewImage("Input " + kind, column.Rect, PanelColor);
@@ -1208,6 +1273,7 @@ public static class TitleScreenPrefabBuilder
         background.gameObject.AddComponent<TitleInput>().EditorSetup(kind, counter);
     }
 
+    /// <summary>ボタンを1つ。押したときにすることは Action で決まる（<see cref="TitleMenuButton"/>）。部品の名前は label と同じになる。</summary>
     private static TitleMenuButton NewButton(Transform parent, string label, Vector2 size, int fontSize, TitleButtonAction action)
     {
         Image background = NewImage(label, parent, new Color(0.10f, 0.12f, 0.12f, 0.92f));
@@ -1296,7 +1362,11 @@ public static class TitleScreenPrefabBuilder
         row.gameObject.AddComponent<TitleSettingRow>().EditorSetup(kind, value, slider, null, null);
     }
 
-    /// <summary>縦に流れる一覧（パブリックサーバーの検索結果）。中身を入れる入れ物を返す。ここだけは自動で並べる。</summary>
+    /// <summary>
+    /// 縦に流れる一覧（パブリックサーバーの検索結果）。中身を入れる入れ物を返す。ここだけは自動で並べる。
+    /// いまは参加可能なサーバーの一覧（マルチプレイの画面）。古い版から上げるときは、LAN・フレンドの一覧にも使う。
+    /// 入れ物には VerticalLayoutGroup が付く。中のカードは <see cref="SetLayoutSize"/> で大きさを決める。
+    /// </summary>
     private static RectTransform NewScrollList(Transform parent)
     {
         RectTransform viewRect = NewRect("Viewport", parent);
@@ -1361,11 +1431,13 @@ public static class TitleScreenPrefabBuilder
         return text;
     }
 
+    /// <summary>部品に印（<see cref="TitlePart"/> の Role）を付ける。<see cref="TitleScreen"/> はこの印で部品を見つける。</summary>
     private static void Mark(Component target, TitlePartRole role)
     {
         target.gameObject.AddComponent<TitlePart>().EditorSetRole(role);
     }
 
+    /// <summary>自動で並べる一覧の中の部品の大きさを決める。自動で並べるときに見る大きさ（LayoutElement）にも同じ値を入れておく。</summary>
     private static void SetLayoutSize(GameObject target, float width, float height)
     {
         ((RectTransform)target.transform).sizeDelta = new Vector2(width, height);

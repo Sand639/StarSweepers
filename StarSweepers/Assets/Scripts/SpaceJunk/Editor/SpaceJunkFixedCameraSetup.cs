@@ -9,6 +9,8 @@ using UnityEngine.SceneManagement;
 /// **ステージ全体を映す「固定カメラ」のマップを作るツール。**
 ///
 /// Unityのメニュー「Tools &gt; StarSweepers &gt; 宇宙ごみの全体固定カメラのマップを作る（Map01を複製）」から実行する。
+/// （※ いまはアーカイブに移してあり、メニューの場所は
+/// 「Tools &gt; StarSweepers &gt; アーカイブ &gt; 宇宙ごみ &gt; 全体固定カメラのマップを作る（Map01を複製）」）
 ///
 /// `SpaceJunkMap01` を複製して `SpaceJunkMap01Fixed` を作り、**カメラだけ**を変える
 /// （2026/9/22・大槻さんの依頼）。地形・壁・ゴール・スポナー・進行役は Map01 と同じ。
@@ -52,8 +54,19 @@ public static class SpaceJunkFixedCameraSetup
     /// <summary>計算に使う画面の縦横比。展示・検証ともに 16:9 を想定している。</summary>
     private const float AssumedAspect = 16f / 9f;
 
-    /// <summary>これより大きい見た目は、ステージの外の飾り（背景など）とみなして計算に入れない。</summary>
+    /// <summary>これより大きい見た目（幅か奥行きが m で）は、ステージの外の飾り（背景など）とみなして計算に入れない。</summary>
     private const float IgnoreLargerThan = 300f;
+
+    /// <summary>カメラを置く距離（ステージの真ん中から、m）を探す範囲の、いちばん近い値。</summary>
+    private const float MinDistance = 1f;
+
+    /// <summary>カメラを置く距離を探す範囲の、いちばん遠い値（m）。</summary>
+    private const float MaxDistance = 500f;
+
+    /// <summary>
+    /// 距離を探すときに、範囲を半分に絞る回数。40 回絞れば、500m の範囲でも誤差は 1mm よりずっと小さい。
+    /// </summary>
+    private const int SearchSteps = 40;
 
     [MenuItem("Tools/StarSweepers/アーカイブ/宇宙ごみ/全体固定カメラのマップを作る（Map01を複製）")]
     public static void Create()
@@ -186,21 +199,22 @@ public static class SpaceJunkFixedCameraSetup
                 continue;
             }
 
-            Bounds b = renderer.bounds;
+            Bounds rendererBounds = renderer.bounds;
 
-            if (b.size.x > IgnoreLargerThan || b.size.z > IgnoreLargerThan)
+            if (rendererBounds.size.x > IgnoreLargerThan || rendererBounds.size.z > IgnoreLargerThan)
             {
                 continue;
             }
 
+            // 1つ目はそのまま使い、2つ目からは、今までの範囲を広げて包み込む
             if (!found)
             {
-                bounds = b;
+                bounds = rendererBounds;
                 found = true;
             }
             else
             {
-                bounds.Encapsulate(b);
+                bounds.Encapsulate(rendererBounds);
             }
         }
 
@@ -214,17 +228,22 @@ public static class SpaceJunkFixedCameraSetup
     private static void PlaceToFit(Camera camera, Bounds stage)
     {
         Quaternion rotation = Quaternion.Euler(PitchDegrees, 0f, 0f);
+
+        // カメラから見て「後ろ」の向き。ステージの真ん中からこの向きに離した所にカメラを置く
         Vector3 back = rotation * Vector3.back;
 
         Vector3[] corners = CornersOf(stage);
 
+        // 計算のあいだだけ、画面の縦横比を想定の 16:9 にしておく（最後に元へ戻す）
         float savedAspect = camera.aspect;
         camera.aspect = AssumedAspect;
 
-        float near = 1f;
-        float far = 500f;
+        // near 側は「収まらない」、far 側は「収まる」とみなして、その間を半分ずつ絞っていく
+        // （いちばん遠い MaxDistance でも収まらなければ、そこに置く）
+        float near = MinDistance;
+        float far = MaxDistance;
 
-        for (int i = 0; i < 40; i++)
+        for (int i = 0; i < SearchSteps; i++)
         {
             float middle = (near + far) * 0.5f;
             camera.transform.SetPositionAndRotation(stage.center + back * middle, rotation);
@@ -249,15 +268,20 @@ public static class SpaceJunkFixedCameraSetup
         camera.farClipPlane = Mathf.Max(camera.farClipPlane, far + stage.extents.magnitude * 2f);
     }
 
+    /// <summary>
+    /// 点がすべて、画面の余白（<see cref="ScreenMargin"/>）より内側に映っているか。
+    /// 画面の位置は 0〜1（左下が 0、右上が 1）で比べ、カメラより後ろ・近すぎる点は「映っていない」とみなす。
+    /// </summary>
     private static bool AllInView(Camera camera, Vector3[] corners)
     {
         foreach (Vector3 corner in corners)
         {
-            Vector3 v = camera.WorldToViewportPoint(corner);
+            // x・y は画面の中の位置（0〜1）、z はカメラからの奥行き（m）
+            Vector3 viewport = camera.WorldToViewportPoint(corner);
 
-            if (v.z <= camera.nearClipPlane
-                || v.x < ScreenMargin || v.x > 1f - ScreenMargin
-                || v.y < ScreenMargin || v.y > 1f - ScreenMargin)
+            if (viewport.z <= camera.nearClipPlane
+                || viewport.x < ScreenMargin || viewport.x > 1f - ScreenMargin
+                || viewport.y < ScreenMargin || viewport.y > 1f - ScreenMargin)
             {
                 return false;
             }
@@ -266,10 +290,11 @@ public static class SpaceJunkFixedCameraSetup
         return true;
     }
 
-    private static Vector3[] CornersOf(Bounds b)
+    /// <summary>箱の角8つの位置（下の面の4つと、上の面の4つ）。</summary>
+    private static Vector3[] CornersOf(Bounds box)
     {
-        Vector3 min = b.min;
-        Vector3 max = b.max;
+        Vector3 min = box.min;
+        Vector3 max = box.max;
 
         return new[]
         {
@@ -289,6 +314,9 @@ public static class SpaceJunkFixedCameraSetup
     /// </summary>
     internal static void RefreshNetworkIds()
     {
+        // NetworkObject の OnValidate（Unity が値の点検で呼ぶ、外からは呼べない処理）が番号を付け直すので、
+        // リフレクション（名前を文字で指定して呼ぶ方法）で呼ぶ。Netcode の版が変わって名前が無くなると、
+        // validate が null になり、エラーも出ずに番号が付け直されなくなる点に注意
         System.Reflection.MethodInfo validate = typeof(NetworkObject).GetMethod("OnValidate",
             System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic |
             System.Reflection.BindingFlags.Public);

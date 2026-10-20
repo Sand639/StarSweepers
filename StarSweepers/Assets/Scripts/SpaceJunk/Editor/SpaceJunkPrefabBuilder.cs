@@ -20,6 +20,12 @@ using UnityEngine.InputSystem;
 /// （同じ組み立てコードを2つ持つと、片方だけ直して食い違うため）。
 /// 複製なので、あとから釣り側が変わってもこちらは影響を受けない。
 ///
+/// ## 部品の値の入れ方の注意
+///
+/// 部品の中身は `FishingSceneBuilder.SetString` / `SetInt` / `SetObjectArray` で、
+/// **フィールドの名前（`"lobbySceneName"` など）を文字で指定して**書き込んでいる。
+/// 書き込む先のフィールドを改名すると、警告が出るか、何も言わずに値が入らなくなる。改名するときは、ここの文字も直すこと。
+///
 /// ※ Editor フォルダにあるため、ゲームのビルドには含まれない。
 /// </summary>
 internal static class SpaceJunkPrefabBuilder
@@ -34,6 +40,9 @@ internal static class SpaceJunkPrefabBuilder
     public const string CircuitPrefabPath = OnlinePrefabFolder + "/SpaceJunkCircuit.prefab";
     public const string FuelPrefabPath = OnlinePrefabFolder + "/SpaceJunkFuel.prefab";
 
+    /// <summary>
+    /// 通信で出せるプレハブの一覧（Netcode が最初に作るファイル）。ここに入っていないプレハブは、ホストが出しても他の人に出ない。
+    /// </summary>
     private const string NetworkPrefabsListPath = "Assets/DefaultNetworkPrefabs.asset";
 
     /// <summary>プレハブの置き場を用意する。</summary>
@@ -57,9 +66,11 @@ internal static class SpaceJunkPrefabBuilder
         GameObject root = new GameObject("SpaceJunkSession");
         root.AddComponent<NetworkObject>();
 
+        // ロビーへ戻るときに読み込むシーンの名前
         SpaceJunkSession session = root.AddComponent<SpaceJunkSession>();
         FishingSceneBuilder.SetString(session, "lobbySceneName", lobbySceneName);
 
+        // 作業用に置いた物は、プレハブに保存したらすぐ消す（いま開いているシーンに残さない）
         GameObject saved = PrefabUtility.SaveAsPrefabAsset(root, SessionPrefabPath);
         Object.DestroyImmediate(root);
 
@@ -95,7 +106,8 @@ internal static class SpaceJunkPrefabBuilder
 
         SpaceJunkPlayerSetup setup = root.AddComponent<SpaceJunkPlayerSetup>();
 
-        // チームの色に塗る見た目（釣りのプレハブと同じ2つ）
+        // チームの色に塗る見た目（釣りのプレハブと同じ2つ）。
+        // 子の**名前**（Body / その下の FrontMark）で探すので、釣りのプレイヤーの子を改名すると見つからなくなる（警告は出る）
         Transform body = root.transform.Find("Body");
         Transform frontMark = body != null ? body.Find("FrontMark") : null;
 
@@ -134,6 +146,8 @@ internal static class SpaceJunkPrefabBuilder
     /// </summary>
     public static GameObject[] CreateMaterialPrefabs()
     {
+        // 大きさは（幅, 厚み, 奥行き）の m。板は平たく、基板は小さく薄く、燃料タンクは縦長にしている。
+        // **この順番は変えない**（SpaceJunkSetup.ReplaceSpawner が 0・1・2 番目で受け取っている）
         return new[]
         {
             CreateMaterialPrefab(SpaceJunkMaterialKind.Plate, PlatePrefabPath,
@@ -145,6 +159,11 @@ internal static class SpaceJunkPrefabBuilder
         };
     }
 
+    /// <summary>
+    /// 素材1種類ぶんのプレハブを作って保存し、通信の一覧に登録する。
+    /// 作業用の箱はシーンに一時的に置くので、保存したらすぐ消す。
+    /// </summary>
+    /// <param name="size">箱の大きさ（localScale。Unity の箱（Cube）の形は 1m 四方なので、そのまま m になる）。</param>
     private static GameObject CreateMaterialPrefab(SpaceJunkMaterialKind kind, string path, Vector3 size)
     {
         // 釣りの物資と同じ部品（Rigidbody / HookableObject / NetworkObject /
