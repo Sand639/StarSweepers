@@ -98,11 +98,11 @@ public partial class SpaceJunkRound : NetworkBehaviour
     [Min(0f)]
     [SerializeField] private float introCountdownSeconds = 3f;
 
-    [Tooltip("カウントダウンのあと、チームの中央を中心に回る秒数")]
+    [Tooltip("カウントダウンが始まると同時に、チームの中央を中心に回る秒数")]
     [Min(0f)]
     [SerializeField] private float introTeamOrbitSeconds = 2f;
 
-    [Tooltip("カウントダウンのあと、チームの中央を中心に回る角度（度）")]
+    [Tooltip("カウントダウン中に、チームの中央を中心に回る角度（度）")]
     [SerializeField] private float introTeamOrbitDegrees = 220f;
 
     [Tooltip("チームの周りを回るときの、チームの中央からの距離（水平）")]
@@ -112,7 +112,7 @@ public partial class SpaceJunkRound : NetworkBehaviour
     [Tooltip("チームの周りを回るときの高さ（② で寄ったとき（3.5）より少し下）")]
     [SerializeField] private float introTeamOrbitHeight = 1.5f;
 
-    [Tooltip("回ったあと、全体カメラ（ふだんのカメラ）の位置へ戻る秒数。戻り終わると START!")]
+    [Tooltip("回ったあと、全体カメラ（ふだんのカメラ）の位置へ戻る秒数。回る＋戻るがカウントダウンより長ければ、START のあとも戻り続ける")]
     [Min(0f)]
     [SerializeField] private float introReturnSeconds = 1.7f;
 
@@ -128,9 +128,9 @@ public partial class SpaceJunkRound : NetworkBehaviour
     public float IntroTeamOrbitHeight => introTeamOrbitHeight;
     public float IntroReturnSeconds => introReturnSeconds;
 
-    /// <summary>演出の長さ（① マップの紹介〜全体カメラへ戻り終わるまで。読み込み待ちは入れない）。</summary>
+    /// <summary>演出の長さ（① マップの紹介〜START まで。読み込み待ちは入れない。回る・戻るはカウントダウンの間に行うので入れない）。</summary>
     private float IntroTotalSeconds =>
-        introFlyoverSeconds + introZoomSeconds + introCountdownSeconds + introTeamOrbitSeconds + introReturnSeconds;
+        introFlyoverSeconds + introZoomSeconds + introCountdownSeconds;
 
     /// <summary>
     /// **動き出してよい時刻**（全員で同期された時計 ServerTime）。これより前は始まりの演出中で、誰も動けない。
@@ -148,7 +148,7 @@ public partial class SpaceJunkRound : NetworkBehaviour
     /// <summary>いまの時刻（全員で同期された時計）。</summary>
     public double ServerNow => NetworkManager != null ? NetworkManager.ServerTime.Time : 0d;
 
-    /// <summary>**始まりの演出中か**（マップの紹介〜全体カメラへ戻り終わるまで）。この間は誰も動けず、素材も出ない。</summary>
+    /// <summary>**始まりの演出中か**（マップの紹介〜カウントダウン）。この間は誰も動けず、素材も出ない。</summary>
     public bool IsIntro =>
         phase.Value == SpaceJunkRoundPhase.Playing && playStartServerTime.Value > 0d && ServerNow < playStartServerTime.Value;
 
