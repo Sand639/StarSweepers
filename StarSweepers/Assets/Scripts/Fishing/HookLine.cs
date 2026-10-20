@@ -10,8 +10,8 @@ using UnityEngine;
 /// （つかんだ瞬間に、先端から根元へ染まっていく）。
 /// チームの色は <see cref="SetTeamColor"/>、つかんでいるかは <see cref="SetGrabbing"/> で外から教えてもらう。
 ///
-/// **つかんだ瞬間から約 0.5 秒で、物資のまわりを液体の枠で囲う**（<see cref="LiquidWrap"/>。Use Wrap がオンのとき）。
-/// はなすと枠がはじけて消える。
+/// **つかんだ瞬間から約 0.5 秒で、物資のふちを液体のリムライトで縁取る**（<see cref="LiquidWrap"/>。Use Wrap がオンのとき）。
+/// くっついた所から液体が広がって包み、はなすと外へふくらみながら消える。
 ///
 /// Use Liquid をオフにすると、前と同じ LineRenderer のまっすぐな1本に戻る。
 ///
@@ -42,14 +42,15 @@ public class HookLine : MonoBehaviour
     [Range(0f, 1f)]
     [SerializeField] private float vividSaturation = 1f;
 
-    [Header("つかんだ物資を囲う枠")]
-    [Tooltip("オンなら、物資をつかんだときに液体の枠で囲う（Use Liquid がオンのときだけ）")]
+    [Header("つかんだ物資の縁取り")]
+    [Tooltip("オンなら、物資をつかんだときに液体のリムライトで縁取る（Use Liquid がオンのときだけ）。" +
+             "見た目の値は、液体のビームのプレハブの子「LiquidWrap」で変える")]
     [SerializeField] private bool useWrap = true;
 
     [Tooltip("つかんだ物資を探す範囲（フックの先からの距離。メートル）")]
     [SerializeField] private float wrapSearchRadius = 0.8f;
 
-    [Tooltip("これより大きな物（大きな板など）は囲わない（メートル）")]
+    [Tooltip("これより大きな物（大きな板など）は縁取らない（メートル）")]
     [SerializeField] private float wrapMaxSize = 5f;
 
     private LineRenderer line;
@@ -77,7 +78,14 @@ public class HookLine : MonoBehaviour
 
             if (useWrap)
             {
-                wrap = LiquidWrap.Create(transform, liquid.LineMaterial);
+                // 縁取りは液体のビームのプレハブの子に入っている（値はそこのインスペクターで変える）。
+                // 入っていないとき（プレハブなしの検証シーンなど）は、初期値で作る
+                wrap = liquid.GetComponentInChildren<LiquidWrap>(true);
+
+                if (wrap == null)
+                {
+                    wrap = LiquidWrap.Create(liquid.transform, liquid.LineMaterial);
+                }
             }
         }
 
@@ -105,11 +113,6 @@ public class HookLine : MonoBehaviour
     {
         tipPosition = b;
         hasTip = true;
-
-        if (wrap != null)
-        {
-            wrap.SetContactPoint(b);
-        }
 
         if (liquid != null)
         {
@@ -205,7 +208,7 @@ public class HookLine : MonoBehaviour
     }
 
     /// <summary>
-    /// **フックの先にくっついている物を探す**（囲う枠のため）。
+    /// **フックの先にくっついている物を探す**（縁取りのため）。
     /// 他の人のフックでは「何をつかんだか」が届かないので、自分のときも同じく、フックの先の近くから探す。
     /// 物資（<see cref="HookableObject"/>）を優先し、無ければ近くの当たり判定から探す。
     /// </summary>

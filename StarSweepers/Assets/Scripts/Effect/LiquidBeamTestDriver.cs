@@ -9,7 +9,7 @@ using UnityEngine.InputSystem;
 /// | F（長押し） | 溜める。**離すと撃つ。長く押すほど遠くまで届く** |
 /// | F（流れが出ている間） | 止める（出しっぱなしのとき用） |
 /// | C | **先端に物資がついた想定。**先端から根元へ、次の色に染まっていく |
-/// | G | **先端に箱をくっつけて、液体の枠で囲う**（<see cref="LiquidWrap"/>）。もう一度押すと、はなす（枠がはじける） |
+/// | G | **先端に箱をくっつけて、液体のリムライトで縁取る**（<see cref="LiquidWrap"/>）。もう一度押すと、はなす |
 /// | R | 最初の色に戻す |
 /// | H | 出しっぱなし（Stop を呼ぶまで消えない）の切り替え |
 /// | 2 | キャラクターを円を描いて動かす／止める（しぶきが置いていかれるかの確認） |
@@ -50,8 +50,13 @@ public class LiquidBeamTestDriver : MonoBehaviour
         {
             beam.HoldUntilStopped = holdUntilStopped;
 
-            // 枠はシーンに置かず、ここで作る（シーンを作り直さなくても試せるように）
-            wrap = LiquidWrap.Create(transform, beam.LineMaterial);
+            // 縁取りは液体のビームのプレハブの子に入っている。無ければ初期値で作る
+            wrap = beam.GetComponentInChildren<LiquidWrap>(true);
+
+            if (wrap == null)
+            {
+                wrap = LiquidWrap.Create(beam.transform, beam.LineMaterial);
+            }
         }
     }
 
@@ -121,7 +126,7 @@ public class LiquidBeamTestDriver : MonoBehaviour
 
         if (box != null)
         {
-            // くるくる回して、枠が物の形に合わせて変わるかを見る
+            // くるくる回して、ふちの光が向きに合わせて変わるかを見る
             box.transform.Rotate(new Vector3(20f, 45f, 10f) * Time.deltaTime, Space.Self);
         }
 
@@ -138,7 +143,7 @@ public class LiquidBeamTestDriver : MonoBehaviour
         }
     }
 
-    /// <summary>先端に箱をくっつけて（物資をつかんだ想定）、色を変え、枠で囲う。</summary>
+    /// <summary>先端に箱をくっつけて（物資をつかんだ想定）、色を変え、縁取る。</summary>
     private void AttachBox()
     {
         Color color = cargoColors.Length > 0 ? cargoColors[colorIndex] : Color.white;
@@ -173,7 +178,7 @@ public class LiquidBeamTestDriver : MonoBehaviour
         GUI.Label(new Rect(16, 16, 700, 140),
             "F（長押し）：溜める → 離すと撃つ（長く押すほど遠くへ）\n" +
             "C：先端に物資がついた想定（先端から色が変わる）　R：最初の色に戻す\n" +
-            "G：先端に箱をくっつけて、液体の枠で囲う／はなす（流れが届いているときだけ）\n" +
+            "G：先端に箱をくっつけて、液体で縁取る／はなす（流れが届いているときだけ）\n" +
             $"H：出しっぱなし … {hold}\n" +
             "2：キャラクターを動かす／止める");
 

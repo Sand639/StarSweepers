@@ -3,89 +3,111 @@ using UnityEngine;
 using UnityEngine.Rendering;
 
 /// <summary>
-/// **つかんだ物資のまわりを、液体の枠でぐるっと囲う演出。**
+/// **つかんだ物資のまわりを、液体のリムライトで縁取る演出。**
 /// <see cref="LiquidBeam"/>（液体の糸）が物資にくっついたときに使う。
 ///
 /// 動き：
-/// 1. くっついた所から、液体が**左右の2本に分かれて**物資のふちを回りこむ
-/// 2. 約 0.5 秒（<see cref="wrapSeconds"/>）で反対側で合わさり、**枠が閉じる**。外からきゅっと締めつけ、閉じた瞬間にぷるんと揺れて、しぶきが飛ぶ
-/// 3. つかんでいる間は、枠が物資についていき、波打ちながら流れ続ける
-/// 4. はなすと（<see cref="Release"/>）、枠が外へはじけて消える
+/// 1. くっついた所から、液体が物資の表面を**広がっていく**（広がる先は明るく光る）
+/// 2. 約 0.5 秒（<see cref="wrapSeconds"/>）で物資全体を包みきり、**ふち（シルエット）が液体の色で光る**。包みきった瞬間に一度強く光り、しぶきが飛ぶ
+/// 3. つかんでいる間は、ふちの光と外側の液体の膜が、ゆらゆら流れ続ける
+/// 4. はなすと（<see cref="Release"/>）、膜が外へふくらみながら消える
 ///
-/// 枠は**いつもカメラのほうを向いた面**に描く（どの角度から見ても枠に見えるように）。
-/// 大きさは物資の見た目（Renderer）の大きさに合わせて毎フレーム測り直すので、細長い物にはそれに合った形の枠になる。
+/// 見た目は <c>StarSweepers/LiquidRim</c> シェーダー（<c>Assets/Art/Shaders/LiquidRim.shader</c>）。
+/// 物資のメッシュを、そのマテリアルで**重ねて描くだけ**なので、物資のマテリアルや子オブジェクトは一切変えない。
 ///
-/// 使い方：<see cref="Create"/> で作り、くっついた瞬間に <see cref="Play"/>、はなしたら <see cref="Release"/>。
+/// **値はすべてインスペクターで変えられる。** 液体のビームのプレハブ（<c>Assets/Prefabs/Effect/LiquidBeam.prefab</c>）の
+/// 子の「LiquidWrap」に付いている。
+///
+/// 使い方：くっついた瞬間に <see cref="Play"/>、はなしたら <see cref="Release"/>。
 /// </summary>
 public class LiquidWrap : MonoBehaviour
 {
-    [Header("見た目")]
-    [Tooltip("半透明（アルファ合成）のマテリアル。液体のビームと同じものを使う。空なら実行時に作る")]
-    [SerializeField] private Material lineMaterial;
+    [Header("素材")]
+    [Tooltip("縁取りのマテリアル（シェーダーは StarSweepers/LiquidRim）。空なら実行時に作る（ビルドでは出ないことがあるので入れておく）")]
+    [SerializeField] private Material rimMaterial;
 
-    [Tooltip("明るさ。1 より大きいと、ブルーム（光のにじみ）で少し光る")]
-    [SerializeField] private float brightness = 1.3f;
+    [Tooltip("しぶきのマテリアル（半透明。液体のビームと同じ LiquidAlpha）。空なら実行時に作る")]
+    [SerializeField] private Material dropletMaterial;
 
-    [Tooltip("枠の濃さ（0 で透明、1 で不透明）")]
+    [Header("ふちの光（リムライト）")]
+    [Tooltip("明るさ。1 より大きいと、ブルーム（光のにじみ）で光る")]
+    [SerializeField] private float brightness = 1.6f;
+
+    [Tooltip("ふちの細さ（大きいほど、ふちだけが細く光る）。箱のような平らな面は面ごと光りやすいので、大きめにする")]
+    [Range(0.5f, 8f)]
+    [SerializeField] private float rimPower = 4f;
+
+    [Tooltip("ふちの光の強さ（物資の表面の、横を向いた所が光る）")]
+    [Range(0f, 4f)]
+    [SerializeField] private float rimStrength = 0.5f;
+
+    [Tooltip("物資全体にうっすらかかる色の強さ（0 でふちだけ）")]
     [Range(0f, 1f)]
-    [SerializeField] private float alpha = 0.8f;
+    [SerializeField] private float fillStrength = 0.02f;
 
-    [Tooltip("枠の太さ（メートル）")]
-    [SerializeField] private float width = 0.14f;
+    [Tooltip("ふちの光を、物資の表面からどれだけ浮かせるか（メートル）。0 だとちらつくことがある")]
+    [Range(0f, 0.05f)]
+    [SerializeField] private float shellOffset = 0.005f;
 
-    [Tooltip("枠の真ん中の、明るい筋の太さ（メートル）")]
-    [SerializeField] private float highlightWidth = 0.035f;
+    [Header("外側の液体の膜")]
+    [Tooltip("シルエットの外側を囲う膜の厚さ（メートル）。0 で膜なし（ふちの光だけ）")]
+    [Range(0f, 0.3f)]
+    [SerializeField] private float outlineWidth = 0.05f;
 
-    [Tooltip("枠の形。2 で楕円、大きいほど四角に近づく（角の丸い四角）")]
-    [Range(2f, 8f)]
-    [SerializeField] private float squareness = 3.5f;
+    [Tooltip("膜の濃さ（0 で透明、1 で不透明）")]
+    [Range(0f, 1f)]
+    [SerializeField] private float outlineAlpha = 0.9f;
 
-    [Tooltip("物資のふちから、枠までのすき間（メートル）")]
-    [SerializeField] private float padding = 0.18f;
+    [Tooltip("膜の厚さのゆれ（0 で一定。0.35 なら ±35%）")]
+    [Range(0f, 1f)]
+    [SerializeField] private float wobble = 0.35f;
 
-    [Header("囲うまでの動き")]
-    [Tooltip("くっついてから、枠が閉じるまでの時間（秒）")]
+    [Tooltip("膜のさらに外にかかる、うっすらした光の幅（メートル）。0 でなし")]
+    [Range(0f, 0.5f)]
+    [SerializeField] private float glowWidth = 0.12f;
+
+    [Tooltip("うっすらした光の濃さ")]
+    [Range(0f, 1f)]
+    [SerializeField] private float glowAlpha = 0.25f;
+
+    [Header("液体の模様")]
+    [Tooltip("模様が流れる速さ")]
+    [SerializeField] private float flowSpeed = 2f;
+
+    [Tooltip("模様の細かさ（大きいほど細かい）")]
+    [SerializeField] private float flowScale = 4f;
+
+    [Header("包むまでの動き")]
+    [Tooltip("くっついてから、物資全体を包みきるまでの時間（秒）")]
     [SerializeField] private float wrapSeconds = 0.5f;
 
-    [Tooltip("囲い始めの枠の大きさ（何倍か）。1 より大きいと、外から締めつけるように見える")]
-    [SerializeField] private float startScale = 1.3f;
+    [Tooltip("広がる先のぼかし幅（メートル）")]
+    [SerializeField] private float edgeSoftness = 0.25f;
 
-    [Tooltip("回りこんでいる液体の、先のふくらみ（太さの何倍か）")]
-    [SerializeField] private float tipBlobScale = 1.7f;
+    [Tooltip("広がる先の明るさ（0 で光らない）")]
+    [SerializeField] private float frontGlow = 1.5f;
 
-    [Tooltip("枠が閉じた瞬間に、ぷるんと縮む強さ（0 で揺れない）")]
-    [Range(0f, 0.3f)]
-    [SerializeField] private float closeSqueeze = 0.08f;
-
-    [Header("液体のゆれ")]
-    [Tooltip("枠が外へ内へ波打つ大きさ（メートル）")]
-    [SerializeField] private float wobble = 0.04f;
-
-    [Tooltip("波が枠のまわりを流れる速さ")]
-    [SerializeField] private float waveSpeed = 4f;
-
-    [Tooltip("太さのムラ（0 で一定。0.3 なら ±30%）")]
-    [Range(0f, 0.8f)]
-    [SerializeField] private float bulge = 0.35f;
+    [Tooltip("包みきった瞬間に、一度強く光る強さ（0 で光らない）")]
+    [SerializeField] private float closeFlash = 0.8f;
 
     [Header("はなしたとき")]
-    [Tooltip("はじけて消えるまでの時間（秒）")]
+    [Tooltip("消えるまでの時間（秒）")]
     [SerializeField] private float burstSeconds = 0.3f;
 
-    [Tooltip("はじけたときに、枠がどこまで広がるか（何倍か）")]
-    [SerializeField] private float burstScale = 1.5f;
+    [Tooltip("消えながら、膜が外へどれだけふくらむか（メートル）")]
+    [SerializeField] private float burstExpand = 0.35f;
 
     [Header("しぶき（粒）")]
     [Tooltip("くっついた瞬間に飛ぶしぶきの数")]
     [SerializeField] private int contactSplashCount = 10;
 
-    [Tooltip("枠が閉じた瞬間に、合わさった所から飛ぶしぶきの数")]
-    [SerializeField] private int closeSplashCount = 24;
+    [Tooltip("包みきった瞬間に、くっついた所の反対側から飛ぶしぶきの数")]
+    [SerializeField] private int closeSplashCount = 20;
 
-    [Tooltip("はじけたときに、枠のまわりから飛ぶしぶきの数")]
+    [Tooltip("はなしたときに、物資のまわりから飛ぶしぶきの数")]
     [SerializeField] private int burstSplashCount = 40;
 
-    [Tooltip("つかんでいる間に、枠から落ちるしずくの数（1秒あたり）")]
+    [Tooltip("つかんでいる間に落ちるしずくの数（1秒あたり）")]
     [SerializeField] private float dripRate = 6f;
 
     [Tooltip("しぶきの大きさ（最小・最大）")]
@@ -100,105 +122,103 @@ public class LiquidWrap : MonoBehaviour
     private enum State
     {
         Idle,
-        Wrapping,   // くっついた所から回りこんでいる
-        Held,       // 枠が閉じて、つかんでいる
-        Bursting,   // はなして、はじけている
+        Wrapping,   // くっついた所から広がっている
+        Held,       // 包みきって、つかんでいる
+        Bursting,   // はなして、消えている
     }
 
-    /// <summary>枠を描く点の数。</summary>
-    private const int PointCount = 72;
-
-    /// <summary>太さのムラを表す目印の数。</summary>
-    private const int WidthKeyCount = 16;
+    private static readonly int ColorId = Shader.PropertyToID("_Color");
+    private static readonly int RimPowerId = Shader.PropertyToID("_RimPower");
+    private static readonly int RimStrengthId = Shader.PropertyToID("_RimStrength");
+    private static readonly int FillStrengthId = Shader.PropertyToID("_FillStrength");
+    private static readonly int OutlineWidthId = Shader.PropertyToID("_OutlineWidth");
+    private static readonly int OutlineAlphaId = Shader.PropertyToID("_OutlineAlpha");
+    private static readonly int ShellOffsetId = Shader.PropertyToID("_ShellOffset");
+    private static readonly int FlowSpeedId = Shader.PropertyToID("_FlowSpeed");
+    private static readonly int FlowScaleId = Shader.PropertyToID("_FlowScale");
+    private static readonly int WobbleId = Shader.PropertyToID("_Wobble");
+    private static readonly int EdgeSoftnessId = Shader.PropertyToID("_EdgeSoftness");
+    private static readonly int FrontGlowId = Shader.PropertyToID("_FrontGlow");
+    private static readonly int ContactId = Shader.PropertyToID("_Contact");
+    private static readonly int CenterId = Shader.PropertyToID("_Center");
+    private static readonly int RevealId = Shader.PropertyToID("_Reveal");
+    private static readonly int FadeId = Shader.PropertyToID("_Fade");
+    private static readonly int ExpandId = Shader.PropertyToID("_Expand");
 
     private State state = State.Idle;
     private float stateTime;
-    private float flowTime;
     private float dripCarry;
 
     private Transform target;
-    private readonly List<Renderer> targetRenderers = new List<Renderer>();
-    private readonly List<Collider> targetColliders = new List<Collider>();
+    private readonly List<MeshRenderer> targetRenderers = new List<MeshRenderer>();
+    private readonly List<Mesh> targetMeshes = new List<Mesh>();
 
     private Color color = Color.white;
-    private Vector3 contactPoint;
 
-    /// <summary>回りこみ具合（0〜1）。1 で枠が閉じている。はじけるときは、はなした瞬間の値のまま。</summary>
-    private float progress;
+    /// <summary>くっついた所（物資から見た位置）。物資が動いても回っても、広がる中心がずれないように。</summary>
+    private Vector3 contactLocal;
 
-    /// <summary>くっついた所の、枠の上での角度（ラジアン）。</summary>
-    private float contactAngle;
-
-    // 物資の大きさ（カメラから見た面の上で測る）
+    // 物資の大きさ（毎フレーム測る）
     private Vector3 center;
-    private Vector2 halfExtents;
+    private Vector3 contactWorld;
+    private float coverDistance;
     private bool hasMeasured;
-    private Vector3 right = Vector3.right;
-    private Vector3 up = Vector3.up;
 
-    private Camera viewCamera;
-    private LineRenderer body;
-    private LineRenderer highlight;
+    private MaterialPropertyBlock block;
+    private MaterialPropertyBlock glowBlock;
     private ParticleSystem droplets;
 
-    private readonly Vector3[] points = new Vector3[PointCount];
-    private readonly Keyframe[] widthKeys = new Keyframe[WidthKeyCount];
-    private readonly AnimationCurve widthCurve = new AnimationCurve();
-    private readonly Gradient gradient = new Gradient();
-    private readonly GradientColorKey[] colorKeys = new GradientColorKey[4];
-    private readonly GradientAlphaKey[] alphaKeys = new GradientAlphaKey[2];
-
-    /// <summary>枠が出ている（囲い始め〜はじけ終わるまで）か。</summary>
+    /// <summary>縁取りが出ている（包み始め〜消え終わるまで）か。</summary>
     public bool IsPlaying => state != State.Idle;
 
-    /// <summary>枠が閉じきっているか。</summary>
+    /// <summary>包みきっているか。</summary>
     public bool IsClosed => state == State.Held;
 
     /// <summary>
-    /// **枠を作る。** <paramref name="parent"/> の子に置く（描く位置はワールド座標なので、親が動いても関係ない）。
-    /// <paramref name="material"/> は液体のビームと同じもの（<see cref="LiquidBeam.LineMaterial"/>）を渡す。
+    /// **プレハブに入っていないとき用。** <paramref name="parent"/> の子に作る。
+    /// 値は初期値のままになるので、ふだんは液体のビームのプレハブの子に入っている物を使う。
     /// </summary>
-    public static LiquidWrap Create(Transform parent, Material material)
+    public static LiquidWrap Create(Transform parent, Material droplet)
     {
         var child = new GameObject("LiquidWrap");
         child.transform.SetParent(parent, false);
 
         LiquidWrap wrap = child.AddComponent<LiquidWrap>();
-        wrap.lineMaterial = material;
+        wrap.dropletMaterial = droplet;
         return wrap;
     }
 
     /// <summary>
-    /// **物資を囲い始める。** くっついた瞬間に呼ぶ。
-    /// <paramref name="contact"/> はくっついた所（フックの先）。ここから液体が左右に分かれて回りこむ。
+    /// **物資を包み始める。** くっついた瞬間に呼ぶ。
+    /// <paramref name="contact"/> はくっついた所（フックの先）。ここから液体が広がる。
     /// </summary>
     public void Play(Transform newTarget, Vector3 contact, Color newColor)
     {
-        if (newTarget == null)
+        if (newTarget == null || !EnsureBuilt())
         {
             return;
         }
 
-        EnsureBuilt();
-
         target = newTarget;
-        CollectTargetParts();
+        CollectMeshes();
+
+        if (targetMeshes.Count == 0)
+        {
+            target = null;
+            return;
+        }
 
         color = newColor;
-        contactPoint = contact;
-        progress = 0f;
+        contactLocal = target.InverseTransformPoint(contact);
         stateTime = 0f;
         hasMeasured = false;
         state = State.Wrapping;
 
-        if (Measure())
-        {
-            contactAngle = AngleOf(contactPoint);
-            Splash(contactAngle, contactSplashCount, 0.6f);
-        }
+        Measure();
+        Splash(contactWorld, (contactWorld - center).normalized, contactSplashCount, 0.6f);
     }
 
-    /// <summary>はなす。枠が外へはじけて消える。出ていなければ何もしない。</summary>
+    /// <summary>はなす。膜が外へふくらみながら消える。出ていなければ何もしない。</summary>
     public void Release()
     {
         if (state != State.Wrapping && state != State.Held)
@@ -211,10 +231,12 @@ public class LiquidWrap : MonoBehaviour
 
         if (hasMeasured)
         {
+            float radius = coverDistance * 0.5f;
+
             for (int i = 0; i < burstSplashCount; i++)
             {
-                float angle = contactAngle + Random.Range(-Mathf.PI, Mathf.PI) * progress;
-                EmitDroplet(PointAt(angle, 1f), Outward(angle) * dropletSpeed * Random.Range(0.6f, 1.2f));
+                Vector3 direction = Random.onUnitSphere;
+                EmitDroplet(center + direction * radius, direction * dropletSpeed * Random.Range(0.6f, 1.2f));
             }
         }
     }
@@ -224,24 +246,11 @@ public class LiquidWrap : MonoBehaviour
     {
         state = State.Idle;
         target = null;
-
-        if (body != null)
-        {
-            body.enabled = false;
-            highlight.enabled = false;
-        }
+        targetRenderers.Clear();
+        targetMeshes.Clear();
     }
 
-    /// <summary>
-    /// くっついた所（フックの先）を教える。毎フレーム呼んでよい。
-    /// 回りこんでいる途中は、液体の分かれ目がここについていく（糸とつながって見えるように）。
-    /// </summary>
-    public void SetContactPoint(Vector3 contact)
-    {
-        contactPoint = contact;
-    }
-
-    /// <summary>枠の色を変える（チームの色が後から決まったときなど）。</summary>
+    /// <summary>縁取りの色を変える（チームの色が後から決まったときなど）。</summary>
     public void SetColor(Color newColor)
     {
         color = newColor;
@@ -251,7 +260,7 @@ public class LiquidWrap : MonoBehaviour
     // Unityから呼ばれる
     // ------------------------------------------------------------
 
-    // 液体のビーム（LiquidBeam）と同じく、物資やフックが動いたあとに描く
+    // 物資やフックが動いたあとに描く
     private void LateUpdate()
     {
         if (state == State.Idle)
@@ -260,20 +269,17 @@ public class LiquidWrap : MonoBehaviour
         }
 
         float deltaTime = Time.deltaTime;
-        flowTime += deltaTime;
         stateTime += deltaTime;
 
-        // 物資が消えた（ポケットに入ったなど）ら、最後にいた場所ではじけさせる
-        if (target == null && (state == State.Wrapping || state == State.Held))
+        // 物資が消えた（ポケットに入ったなど）ら、最後にいた場所でしぶきだけ飛ばして終わる
+        if (target == null)
         {
             Release();
-        }
-
-        if (state != State.Bursting && !Measure())
-        {
             Clear();
             return;
         }
+
+        Measure();
 
         switch (state)
         {
@@ -298,40 +304,38 @@ public class LiquidWrap : MonoBehaviour
 
     private void TickWrapping()
     {
-        // 回りこんでいる途中は、分かれ目を糸の先についていかせる
-        contactAngle = AngleOf(contactPoint);
-
         float t = Mathf.Clamp01(stateTime / Mathf.Max(0.01f, wrapSeconds));
-
-        // 最初は勢いよく、合わさる直前はゆっくり
-        progress = 1f - (1f - t) * (1f - t);
 
         if (t >= 1f)
         {
-            progress = 1f;
             state = State.Held;
             stateTime = 0f;
-            Splash(contactAngle + Mathf.PI, closeSplashCount, 1f);
-            DrawClosed(1f, 1f);
+
+            // くっついた所の反対側で、包みきったしぶき
+            Vector3 away = (center - contactWorld).normalized;
+            Splash(center + away * coverDistance * 0.4f, away, closeSplashCount, 1f);
+
+            TickHeld(0f);
             return;
         }
 
-        float scale = Mathf.Lerp(startScale, 1f, progress);
-        DrawOpen(scale, 1f, true);
+        // 最初は勢いよく、包みきる直前はゆっくり
+        float progress = 1f - (1f - t) * (1f - t);
+        Draw(progress * coverDistance, 1f, 0f, 1f);
     }
 
     private void TickHeld(float deltaTime)
     {
-        // 閉じた瞬間に、ぷるんと縮んで戻る
-        float squeeze = closeSqueeze * Mathf.Sin(stateTime * 22f) * Mathf.Exp(-stateTime * 7f);
-        DrawClosed(1f - squeeze, 1f);
+        // 包みきった瞬間に一度強く光って、すっと落ち着く
+        float flash = 1f + closeFlash * Mathf.Exp(-stateTime * 8f);
+        Draw(coverDistance + edgeSoftness * 2f, 1f, 0f, flash);
 
         int count = TakeCount(ref dripCarry, dripRate * deltaTime);
 
         for (int i = 0; i < count; i++)
         {
-            float angle = Random.Range(0f, Mathf.PI * 2f);
-            EmitDroplet(PointAt(angle, 1f), Outward(angle) * dropletSpeed * 0.15f);
+            Vector3 direction = Random.onUnitSphere;
+            EmitDroplet(center + direction * coverDistance * 0.4f, direction * dropletSpeed * 0.15f);
         }
     }
 
@@ -345,17 +349,8 @@ public class LiquidWrap : MonoBehaviour
             return;
         }
 
-        float scale = Mathf.Lerp(1f, burstScale, 1f - (1f - t) * (1f - t));
-        float fade = 1f - t;
-
-        if (progress >= 1f)
-        {
-            DrawClosed(scale, fade);
-        }
-        else
-        {
-            DrawOpen(scale, fade, false);
-        }
+        float expand = burstExpand * (1f - (1f - t) * (1f - t));
+        Draw(coverDistance + edgeSoftness * 2f, 1f - t, expand, 1f);
     }
 
     // ------------------------------------------------------------
@@ -363,306 +358,157 @@ public class LiquidWrap : MonoBehaviour
     // ------------------------------------------------------------
 
     /// <summary>
-    /// 回りこんでいる途中の枠。くっついた所から左右へ <see cref="progress"/> の割合だけのびた、開いた線。
-    /// <paramref name="anchorContact"/> なら、大きさの倍率をくっついた所では掛けず、反対側ほど強く掛ける
-    /// （分かれ目が糸の先から離れず、腕だけが外から回りこんで見える）。
+    /// 物資のメッシュを縁取りのマテリアルで重ねて描く（このフレームだけ）。
+    /// <paramref name="reveal"/> はくっついた所から広がった距離（メートル）、<paramref name="fade"/> は濃さ、
+    /// <paramref name="expand"/> は外へふくらませる量、<paramref name="glow"/> は明るさの倍率。
     /// </summary>
-    private void DrawOpen(float scale, float fade, bool anchorContact)
+    private void Draw(float reveal, float fade, float expand, float glow)
     {
-        float span = Mathf.PI * progress;
+        float front = state == State.Wrapping ? frontGlow : 0f;
 
-        if (span < 0.02f)
+        // 本体：ふちの光と、外側の膜
+        FillBlock(block, reveal, fade, expand, glow, rimStrength, fillStrength, outlineWidth, outlineAlpha, front);
+        DrawTarget(block);
+
+        // そのさらに外の、うっすらした光（膜だけを、太く薄く重ねる。ふちの光は 0 にして描かない）
+        if (glowWidth > 0f && glowAlpha > 0f)
         {
-            body.enabled = false;
-            highlight.enabled = false;
-            return;
+            FillBlock(glowBlock, reveal, fade, expand, glow, 0f, 0f, outlineWidth + glowWidth, outlineAlpha * glowAlpha, 0f);
+            DrawTarget(glowBlock);
         }
-
-        float from = contactAngle - span;
-
-        for (int i = 0; i < PointCount; i++)
-        {
-            float angle = from + span * 2f * i / (PointCount - 1);
-            float pointScale = anchorContact
-                ? Mathf.Lerp(1f, scale, (1f - Mathf.Cos(angle - contactAngle)) * 0.5f)
-                : scale;
-
-            points[i] = PointAt(angle, pointScale);
-        }
-
-        // 先のふくらみは、のびた長さによらず同じくらいの大きさにする
-        float arcLength = span * 2f * (halfExtents.x + halfExtents.y + padding * 2f) * 0.5f;
-        float tipSpan = Mathf.Clamp(width * 2f / Mathf.Max(0.01f, arcLength), 0.03f, 0.3f);
-
-        int bodyKeys = WidthKeyCount - 4;
-        widthKeys[0] = new Keyframe(0f, tipBlobScale * 0.7f);
-        widthKeys[1] = new Keyframe(tipSpan * 0.4f, tipBlobScale);
-
-        for (int i = 0; i < bodyKeys; i++)
-        {
-            float u = Mathf.Lerp(tipSpan, 1f - tipSpan, i / (float)(bodyKeys - 1));
-            widthKeys[i + 2] = new Keyframe(u, WidthAt(from + span * 2f * u));
-        }
-
-        widthKeys[WidthKeyCount - 2] = new Keyframe(1f - tipSpan * 0.4f, tipBlobScale);
-        widthKeys[WidthKeyCount - 1] = new Keyframe(1f, tipBlobScale * 0.7f);
-        widthCurve.keys = widthKeys;
-
-        // 回りこんでいる先は、少し白っぽく光らせる
-        SetLines(false, Mathf.Lerp(0.6f, 1f, progress) * fade, fade, 0.25f);
     }
 
-    /// <summary>閉じた枠（ぐるっと1周）。</summary>
-    private void DrawClosed(float scale, float fade)
+    /// <summary>シェーダーに渡す値を、1回ぶん入れる。</summary>
+    private void FillBlock(MaterialPropertyBlock target, float reveal, float fade, float expand, float glow,
+        float rim, float fill, float width, float alpha, float front)
     {
-        // 合わさった所（くっついた所の反対側）から1周する
-        float from = contactAngle + Mathf.PI;
-
-        for (int i = 0; i < PointCount; i++)
-        {
-            points[i] = PointAt(from + Mathf.PI * 2f * i / PointCount, scale);
-        }
-
-        for (int i = 0; i < WidthKeyCount; i++)
-        {
-            float u = i / (float)(WidthKeyCount - 1);
-            widthKeys[i] = new Keyframe(u, WidthAt(from + Mathf.PI * 2f * u));
-        }
-
-        widthCurve.keys = widthKeys;
-
-        SetLines(true, fade, fade, 0f);
+        target.SetColor(ColorId, color * brightness * glow);
+        target.SetFloat(RimPowerId, rimPower);
+        target.SetFloat(RimStrengthId, rim);
+        target.SetFloat(FillStrengthId, fill);
+        target.SetFloat(OutlineWidthId, width);
+        target.SetFloat(OutlineAlphaId, alpha);
+        target.SetFloat(ShellOffsetId, shellOffset);
+        target.SetFloat(FlowSpeedId, flowSpeed);
+        target.SetFloat(FlowScaleId, flowScale);
+        target.SetFloat(WobbleId, wobble);
+        target.SetFloat(EdgeSoftnessId, edgeSoftness);
+        target.SetFloat(FrontGlowId, front);
+        target.SetVector(ContactId, contactWorld);
+        target.SetVector(CenterId, center);
+        target.SetFloat(RevealId, reveal);
+        target.SetFloat(FadeId, fade);
+        target.SetFloat(ExpandId, expand);
     }
 
-    /// <summary>点・太さ・色を、本体と明るい筋の2本に入れる。</summary>
-    private void SetLines(bool loop, float widthScale, float alphaScale, float tipWhiten)
+    /// <summary>物資のメッシュを、渡した値で1回描く。</summary>
+    private void DrawTarget(MaterialPropertyBlock properties)
     {
-        // 本体だけ太さのムラをつける。明るい筋は一定の太さ
-        body.widthCurve = widthCurve;
-
-        SetLine(body, loop, width * widthScale, 0f, alpha * alphaScale, tipWhiten);
-        SetLine(highlight, loop, highlightWidth * widthScale, 0.45f, alpha * 0.6f * alphaScale, tipWhiten);
-    }
-
-    /// <summary>線1本に点と色を入れる。<paramref name="whiten"/> は白に寄せる割合、<paramref name="tipWhiten"/> は両端だけさらに寄せる割合。</summary>
-    private void SetLine(LineRenderer line, bool loop, float lineWidth, float whiten, float lineAlpha, float tipWhiten)
-    {
-        line.loop = loop;
-        line.positionCount = PointCount;
-        line.SetPositions(points);
-        line.widthMultiplier = lineWidth;
-
-        Color main = Color.Lerp(color, Color.white, whiten);
-        Color tip = Color.Lerp(main, Color.white, tipWhiten);
-
-        colorKeys[0] = new GradientColorKey(tip, 0f);
-        colorKeys[1] = new GradientColorKey(main, 0.1f);
-        colorKeys[2] = new GradientColorKey(main, 0.9f);
-        colorKeys[3] = new GradientColorKey(tip, 1f);
-
-        alphaKeys[0] = new GradientAlphaKey(lineAlpha, 0f);
-        alphaKeys[1] = new GradientAlphaKey(lineAlpha, 1f);
-
-        gradient.SetKeys(colorKeys, alphaKeys);
-        line.colorGradient = gradient;
-        line.enabled = true;
-    }
-
-    /// <summary>
-    /// 枠の上の点（ワールド座標）。<paramref name="angle"/> は枠の上の角度、<paramref name="scale"/> は枠の大きさの倍率。
-    /// 「角の丸い四角」（スーパー楕円）に、流れていく波をのせる。
-    /// </summary>
-    private Vector3 PointAt(float angle, float scale)
-    {
-        float c = Mathf.Cos(angle);
-        float s = Mathf.Sin(angle);
-        float e = 2f / squareness;
-
-        var p = new Vector2(
-            Mathf.Sign(c) * Mathf.Pow(Mathf.Abs(c), e) * (halfExtents.x + padding),
-            Mathf.Sign(s) * Mathf.Pow(Mathf.Abs(s), e) * (halfExtents.y + padding));
-
-        // 波は角度の整数倍で作るので、1周してもつなぎ目がずれない
-        float wave = 0.6f * Mathf.Sin(angle * 3f - flowTime * waveSpeed)
-                   + 0.4f * Mathf.Sin(angle * 5f + flowTime * waveSpeed * 0.7f + 1.3f);
-
-        p = p * scale + p.normalized * wobble * wave;
-
-        return center + right * p.x + up * p.y;
-    }
-
-    /// <summary>その角度の、枠の外向き（ワールド座標）。</summary>
-    private Vector3 Outward(float angle)
-    {
-        return (right * Mathf.Cos(angle) + up * Mathf.Sin(angle)).normalized;
-    }
-
-    /// <summary>その場所の太さの倍率（1 が基準）。波は枠のまわりを流れていく。</summary>
-    private float WidthAt(float angle)
-    {
-        float n = 0.6f * Mathf.Sin(angle * 4f - flowTime * waveSpeed * 1.5f)
-                + 0.4f * Mathf.Sin(angle * 7f + flowTime * waveSpeed + 1.1f);
-
-        return 1f + bulge * n;
-    }
-
-    /// <summary>ワールド座標の点が、枠の上で何度（ラジアン）の所にあたるか。<see cref="PointAt"/> の逆。</summary>
-    private float AngleOf(Vector3 world)
-    {
-        Vector3 offset = world - center;
-        float x = Vector3.Dot(offset, right) / Mathf.Max(0.01f, halfExtents.x + padding);
-        float y = Vector3.Dot(offset, up) / Mathf.Max(0.01f, halfExtents.y + padding);
-        float inverse = squareness / 2f;
-
-        return Mathf.Atan2(
-            Mathf.Sign(y) * Mathf.Pow(Mathf.Abs(y), inverse),
-            Mathf.Sign(x) * Mathf.Pow(Mathf.Abs(x), inverse));
-    }
-
-    // ------------------------------------------------------------
-    // 物資の大きさを測る
-    // ------------------------------------------------------------
-
-    /// <summary>物資の見た目の部品（Renderer）と当たり判定を集める。エフェクト（線・粒）は除く。</summary>
-    private void CollectTargetParts()
-    {
-        targetRenderers.Clear();
-        targetColliders.Clear();
-
-        foreach (Renderer renderer in target.GetComponentsInChildren<Renderer>())
+        for (int i = 0; i < targetRenderers.Count; i++)
         {
-            if (renderer is MeshRenderer || renderer is SkinnedMeshRenderer || renderer is SpriteRenderer)
-            {
-                targetRenderers.Add(renderer);
-            }
-        }
+            MeshRenderer renderer = targetRenderers[i];
 
-        target.GetComponentsInChildren(targetColliders);
-    }
-
-    /// <summary>
-    /// カメラから見た面の上で、物資の中心と大きさを測る。測れなければ false。
-    /// 物資が回転しても枠ががたつかないよう、大きさは少しなめらかに追いかける。
-    /// </summary>
-    private bool Measure()
-    {
-        if (target == null)
-        {
-            return hasMeasured;
-        }
-
-        if (viewCamera == null || !viewCamera.isActiveAndEnabled)
-        {
-            viewCamera = Camera.main;
-        }
-
-        Vector3 forward;
-
-        if (viewCamera != null)
-        {
-            right = viewCamera.transform.right;
-            up = viewCamera.transform.up;
-            forward = viewCamera.transform.forward;
-        }
-        else
-        {
-            // カメラが無いときは、真上から見ているとみなす
-            right = Vector3.right;
-            up = Vector3.forward;
-            forward = Vector3.down;
-        }
-
-        var min = new Vector3(float.MaxValue, float.MaxValue, float.MaxValue);
-        var max = new Vector3(float.MinValue, float.MinValue, float.MinValue);
-        bool found = false;
-
-        foreach (Renderer renderer in targetRenderers)
-        {
-            if (renderer == null || !renderer.enabled)
+            if (renderer == null || !renderer.enabled || !renderer.gameObject.activeInHierarchy)
             {
                 continue;
             }
 
-            // 物の向きに沿った箱で測る（ワールドの箱だと、回転するたびに大きさが変わってしまう）
-            Bounds local = renderer.localBounds;
-            Matrix4x4 matrix = renderer.transform.localToWorldMatrix;
-
-            for (int i = 0; i < 8; i++)
+            var parameters = new RenderParams(rimMaterial)
             {
-                var corner = new Vector3(
-                    (i & 1) == 0 ? local.min.x : local.max.x,
-                    (i & 2) == 0 ? local.min.y : local.max.y,
-                    (i & 4) == 0 ? local.min.z : local.max.z);
+                matProps = properties,
+                layer = renderer.gameObject.layer,
+                shadowCastingMode = ShadowCastingMode.Off,
+                receiveShadows = false,
+            };
 
-                Encapsulate(matrix.MultiplyPoint3x4(corner), forward, ref min, ref max);
+            Mesh mesh = targetMeshes[i];
+
+            for (int sub = 0; sub < mesh.subMeshCount; sub++)
+            {
+                Graphics.RenderMesh(parameters, mesh, sub, renderer.localToWorldMatrix);
+            }
+        }
+    }
+
+    // ------------------------------------------------------------
+    // 物資の形と大きさ
+    // ------------------------------------------------------------
+
+    /// <summary>物資の見た目（MeshRenderer とそのメッシュ）を集める。</summary>
+    private void CollectMeshes()
+    {
+        targetRenderers.Clear();
+        targetMeshes.Clear();
+
+        foreach (MeshRenderer renderer in target.GetComponentsInChildren<MeshRenderer>())
+        {
+            MeshFilter filter = renderer.GetComponent<MeshFilter>();
+
+            if (filter != null && filter.sharedMesh != null)
+            {
+                targetRenderers.Add(renderer);
+                targetMeshes.Add(filter.sharedMesh);
+            }
+        }
+    }
+
+    /// <summary>物資の中心と、くっついた所から物資全体を包むのに要る距離を測る。</summary>
+    private void Measure()
+    {
+        contactWorld = target.TransformPoint(contactLocal);
+
+        bool found = false;
+        var bounds = new Bounds(target.position, Vector3.zero);
+
+        foreach (MeshRenderer renderer in targetRenderers)
+        {
+            if (renderer == null)
+            {
+                continue;
             }
 
-            found = true;
-        }
-
-        // 見た目が無い物は、当たり判定の箱で測る
-        if (!found)
-        {
-            foreach (Collider collider in targetColliders)
+            if (found)
             {
-                if (collider == null || !collider.enabled)
-                {
-                    continue;
-                }
-
-                Bounds bounds = collider.bounds;
-
-                for (int i = 0; i < 8; i++)
-                {
-                    var corner = new Vector3(
-                        (i & 1) == 0 ? bounds.min.x : bounds.max.x,
-                        (i & 2) == 0 ? bounds.min.y : bounds.max.y,
-                        (i & 4) == 0 ? bounds.min.z : bounds.max.z);
-
-                    Encapsulate(corner, forward, ref min, ref max);
-                }
-
+                bounds.Encapsulate(renderer.bounds);
+            }
+            else
+            {
+                bounds = renderer.bounds;
                 found = true;
             }
         }
 
-        if (!found)
+        center = bounds.center;
+
+        // くっついた所から、いちばん遠い角までの距離
+        float farthest = 0f;
+
+        for (int i = 0; i < 8; i++)
         {
-            min = new Vector3(Vector3.Dot(target.position, right) - 0.5f, Vector3.Dot(target.position, up) - 0.5f, Vector3.Dot(target.position, forward) - 0.5f);
-            max = min + Vector3.one;
+            var corner = new Vector3(
+                (i & 1) == 0 ? bounds.min.x : bounds.max.x,
+                (i & 2) == 0 ? bounds.min.y : bounds.max.y,
+                (i & 4) == 0 ? bounds.min.z : bounds.max.z);
+
+            farthest = Mathf.Max(farthest, Vector3.Distance(corner, contactWorld));
         }
 
-        // 枠は物資の手前（カメラ側）の面に置く。真ん中だと、物資の手前側に隠れてしまうことがあるため
-        Vector3 mid = (min + max) * 0.5f;
-        center = right * mid.x + up * mid.y + forward * min.z;
-
-        var measured = new Vector2((max.x - min.x) * 0.5f, (max.y - min.y) * 0.5f);
-        halfExtents = hasMeasured ? Vector2.Lerp(halfExtents, measured, 1f - Mathf.Exp(-20f * Time.deltaTime)) : measured;
+        // 外側の膜とぼかしの分も足して、包みきったときに端が残らないようにする
+        coverDistance = farthest + outlineWidth + edgeSoftness;
         hasMeasured = true;
-        return true;
-    }
-
-    private void Encapsulate(Vector3 world, Vector3 forward, ref Vector3 min, ref Vector3 max)
-    {
-        var p = new Vector3(Vector3.Dot(world, right), Vector3.Dot(world, up), Vector3.Dot(world, forward));
-        min = Vector3.Min(min, p);
-        max = Vector3.Max(max, p);
     }
 
     // ------------------------------------------------------------
     // しぶき
     // ------------------------------------------------------------
 
-    /// <summary>枠の上の <paramref name="angle"/> の所から、しぶきを外へ散らす。</summary>
-    private void Splash(float angle, int count, float strength)
+    /// <summary><paramref name="origin"/> から <paramref name="outward"/> の向きへ、しぶきを散らす。</summary>
+    private void Splash(Vector3 origin, Vector3 outward, int count, float strength)
     {
-        Vector3 origin = PointAt(angle, 1f);
-        Vector3 outward = Outward(angle);
-
         for (int i = 0; i < count; i++)
         {
             Vector3 velocity = (outward * Random.Range(0.4f, 1.2f) + Random.insideUnitSphere * 0.6f) * dropletSpeed * strength;
-            EmitDroplet(origin + Random.insideUnitSphere * width * 0.5f, velocity);
+            EmitDroplet(origin + Random.insideUnitSphere * 0.05f, velocity);
         }
     }
 
@@ -696,47 +542,36 @@ public class LiquidWrap : MonoBehaviour
     // 部品を作る
     // ------------------------------------------------------------
 
-    /// <summary>線としぶきを、初めて使うときに作る（Create() でマテリアルを受け取ってから作るため）。</summary>
-    private void EnsureBuilt()
+    /// <summary>マテリアルとしぶきを、初めて使うときに用意する。縁取りのシェーダーが見つからなければ false。</summary>
+    private bool EnsureBuilt()
     {
-        if (body != null)
+        if (droplets != null)
         {
-            return;
+            return true;
         }
 
-        if (lineMaterial == null)
+        if (rimMaterial == null)
         {
-            lineMaterial = LiquidBeam.CreateAlphaMaterial();
+            Shader shader = Shader.Find("StarSweepers/LiquidRim");
+
+            if (shader == null)
+            {
+                Debug.LogWarning("[LiquidWrap] 縁取りのシェーダー（StarSweepers/LiquidRim）が見つかりません。Rim Material を入れてください");
+                return false;
+            }
+
+            rimMaterial = new Material(shader);
         }
 
-        body = CreateLine("WrapBody", LiquidBeam.LiquidTextures.Tube);
-        highlight = CreateLine("WrapHighlight", LiquidBeam.LiquidTextures.Soft);
-        highlight.widthCurve = AnimationCurve.Constant(0f, 1f, 1f);
+        if (dropletMaterial == null)
+        {
+            dropletMaterial = LiquidBeam.CreateAlphaMaterial();
+        }
+
+        block = new MaterialPropertyBlock();
+        glowBlock = new MaterialPropertyBlock();
         droplets = CreateDroplets();
-    }
-
-    private LineRenderer CreateLine(string lineName, Texture texture)
-    {
-        var child = new GameObject(lineName);
-        child.transform.SetParent(transform, false);
-
-        LineRenderer line = child.AddComponent<LineRenderer>();
-        line.useWorldSpace = true;
-        line.sharedMaterial = lineMaterial;
-        line.shadowCastingMode = ShadowCastingMode.Off;
-        line.receiveShadows = false;
-        line.numCapVertices = 8;
-        line.numCornerVertices = 2;
-        line.alignment = LineAlignment.View;
-        line.textureMode = LineTextureMode.Stretch;
-
-        var block = new MaterialPropertyBlock();
-        block.SetColor("_BaseColor", Color.white * brightness);
-        block.SetTexture("_BaseMap", texture);
-        line.SetPropertyBlock(block);
-
-        line.enabled = false;
-        return line;
+        return true;
     }
 
     /// <summary>しぶきの粒。液体のビームのしぶきと同じ作り（ワールド基準で動き、重力で落ちる）。</summary>
@@ -774,9 +609,9 @@ public class LiquidWrap : MonoBehaviour
             new[] { new GradientAlphaKey(1f, 0f), new GradientAlphaKey(1f, 0.6f), new GradientAlphaKey(0f, 1f) });
         fadeModule.color = fadeOut;
 
-        var material = new Material(lineMaterial);
+        var material = new Material(dropletMaterial);
         material.SetTexture("_BaseMap", LiquidBeam.LiquidTextures.Drop);
-        material.SetColor("_BaseColor", Color.white * brightness);
+        material.SetColor("_BaseColor", Color.white * 1.3f);
 
         var renderer = child.GetComponent<ParticleSystemRenderer>();
         renderer.renderMode = ParticleSystemRenderMode.Billboard;
