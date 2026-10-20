@@ -30,8 +30,13 @@ public class SpaceJunkLobbyValueRow : MonoBehaviour
     [Tooltip("数字を打ち込む入力欄。空なら打ち込めない（± のボタンだけ）")]
     [SerializeField] private InputField input;
 
+    /// <summary>何の設定か。</summary>
     public SpaceJunkLobbyValueKind Kind => kind;
+
+    /// <summary>いまの値を出す文字。無ければ null。</summary>
     public Text ValueText => valueText;
+
+    /// <summary>数字を打ち込む入力欄。無ければ null（± のボタンだけで変える）。</summary>
     public InputField Input => input;
 
 #if UNITY_EDITOR

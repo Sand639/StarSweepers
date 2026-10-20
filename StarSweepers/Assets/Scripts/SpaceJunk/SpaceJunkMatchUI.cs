@@ -37,9 +37,18 @@ public class SpaceJunkMatchUI : MonoBehaviour
     /// <summary>描く基準の幅（この幅に収まるように縮める）。</summary>
     private const float BaseWidth = 520f;
 
+    // 文字の見た目（GUI.skin は OnGUI の中でしか使えないので、最初の OnGUI で作る。PrepareStyles）
+
+    /// <summary>ラウンド数・イベントの一行など、上の見出し。</summary>
     private GUIStyle titleStyle;
+
+    /// <summary>残り時間の大きな数字。</summary>
     private GUIStyle timerStyle;
+
+    /// <summary>左のチームごとの行・案内。</summary>
     private GUIStyle lineStyle;
+
+    /// <summary>真ん中に出す大きな文字（決着・復活まで・イベント発生）。</summary>
     private GUIStyle resultStyle;
 
     private void OnGUI()
@@ -53,9 +62,12 @@ public class SpaceJunkMatchUI : MonoBehaviour
 
         PrepareStyles();
 
+        // 拡大率：設定の倍率（1920×1080 基準）を上限に、窓が小さいときは「幅 520・高さ 360」が収まるまで縮める。
+        // ただし 0.6 倍より小さくはしない（文字が読めなくなるため）
         float scale = Mathf.Min(DraggableGuiPanel.FitScale(uiScale), Screen.width / BaseWidth, Screen.height / 360f);
         scale = Mathf.Max(0.6f, scale);
 
+        // ここから下は、拡大率で割った「縮める前の大きさ」で位置を書く（GUI.matrix がまとめて拡大する）
         Matrix4x4 saved = GUI.matrix;
         GUI.matrix = Matrix4x4.Scale(new Vector3(scale, scale, 1f));
 
@@ -156,8 +168,10 @@ public class SpaceJunkMatchUI : MonoBehaviour
         int teamCount = session != null ? session.TeamCount : 1;
         int myTeam = MyTeam();
 
+        // 上の見出し（ラウンド数 8〜32・残り時間 30〜70・イベントの一行 70〜94）の下から並べる
         float y = 96f;
 
+        // 左から 12、幅 260・高さ 240 の枠の中に、上から順に並べる
         GUILayout.BeginArea(new Rect(12f, y, 260f, 240f));
 
         for (int team = 0; team < teamCount; team++)
@@ -165,9 +179,11 @@ public class SpaceJunkMatchUI : MonoBehaviour
             Color saved = GUI.color;
             GUI.color = SpaceJunkTeams.TeamColor(team);
 
+            // 自分のチームの行にだけ ▶ を付ける（ほかの行は同じ幅の空白で頭をそろえる）
             string mark = team == myTeam ? "▶ " : "　 ";
             int wins = session != null ? session.RoundWinsOf(team) : 0;
 
+            // 得点制 … 得点とイベントの進み具合。3種類ルール（下）… そろえた素材の印
             if (round.Rule == SpaceJunkWinRule.Score)
             {
                 GUILayout.Label($"{mark}{SpaceJunkTeams.TeamName(team)}　{round.ScoreOf(team)} 点　（{wins} 本）", lineStyle);
@@ -198,6 +214,7 @@ public class SpaceJunkMatchUI : MonoBehaviour
 
                 bool has = round.HasKind(team, kind);
 
+                // そろえた種類は素材の色、まだの種類は暗い灰色
                 Color kindSaved = GUI.color;
                 GUI.color = has
                     ? SpaceJunkMaterials.Color(kind)
@@ -259,12 +276,15 @@ public class SpaceJunkMatchUI : MonoBehaviour
                 SpaceJunkMaterialKind kind = SpaceJunkMaterials.FromIndex(round.SetItemAt(team, n));
                 Color color = SpaceJunkMaterials.Color(kind);
 
+                // 次の1個より先のものは、色を 7 割の明るさに落として控えめにする
                 if (n > step)
                 {
                     color = new Color(color.r * 0.7f, color.g * 0.7f, color.b * 0.7f, 1f);
                 }
 
                 GUI.color = color;
+
+                // step … 次に入れる番目（0 から）。それより前＝入れた（■）、ちょうど＝次（▶□）、後ろ＝まだ（□）
                 string mark = n < step ? "■" : n == step ? "▶□" : "□";
                 GUILayout.Label(mark, lineStyle, GUILayout.ExpandWidth(false));
             }
@@ -286,6 +306,7 @@ public class SpaceJunkMatchUI : MonoBehaviour
                 continue;
             }
 
+            // 入れた数だけ ■、残りを □（入れすぎても ■ は必要な数まで、□ がマイナスにならないよう 0 で止める）
             Color color = SpaceJunkMaterials.Color(kind);
             string marks = new string('■', Mathf.Min(done, required)) + new string('□', Mathf.Max(0, required - done));
 
@@ -303,6 +324,9 @@ public class SpaceJunkMatchUI : MonoBehaviour
     /// </summary>
     private void DrawEventNotice(SpaceJunkRound round, float viewWidth, float viewHeight)
     {
+        // 一行の表示は、どれも残り時間のすぐ下（y = 70）に出す。上から順に、当てはまった1つだけを出して抜ける
+
+        // 始まる前の 5 秒間だけ、カウントダウン
         float until = round.SecondsUntilEvent;
 
         if (until > 0f && until <= 5f)
@@ -311,6 +335,7 @@ public class SpaceJunkMatchUI : MonoBehaviour
             return;
         }
 
+        // 始まってからの秒数（マイナスなら、まだ始まっていない）
         float since = round.SecondsSinceEventStarted;
 
         if (since < 0f)
@@ -318,6 +343,7 @@ public class SpaceJunkMatchUI : MonoBehaviour
             return;
         }
 
+        // 始まって 4 秒間は、画面の上から 3 割の高さに大きく合図を出す（高さ 110 の枠の真ん中をそこに合わせる）
         if (since < 4f)
         {
             Color saved = GUI.color;
@@ -408,12 +434,14 @@ public class SpaceJunkMatchUI : MonoBehaviour
             }
 
             // 得点制なら、各チームの得点も出す（何点差だったかが分かるように）
+            // 「まもなく次のマップへ」の前の空行に、得点の一行を差し込んでいる
             if (round.Rule == SpaceJunkWinRule.Score)
             {
                 text = text.Replace("\n\nまもなく", $"\n{ScoreSummary(round)}\n\nまもなく");
             }
         }
 
+        // 画面の真ん中に、幅 440・高さ 230 の枠（左上の位置は、真ん中から幅・高さの半分ずつ戻した所）
         Rect box = new Rect(viewWidth * 0.5f - 220f, viewHeight * 0.5f - 115f, 440f, 230f);
 
         GUI.Box(box, GUIContent.none);
@@ -438,7 +466,10 @@ public class SpaceJunkMatchUI : MonoBehaviour
         return string.Join("／", parts);
     }
 
-    /// <summary>このPCで操作している人のチーム。分からなければ -1。</summary>
+    /// <summary>
+    /// このPCで操作している人のチーム。分からなければ -1。
+    /// 接続番号で引くので、1台で複数人のときは**そのPCの1人目**のチームになる。
+    /// </summary>
     private static int MyTeam()
     {
         NetworkManager manager = NetworkManager.Singleton;

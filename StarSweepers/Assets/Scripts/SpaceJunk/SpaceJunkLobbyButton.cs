@@ -33,8 +33,16 @@ public class SpaceJunkLobbyButton : MonoBehaviour
     [Tooltip("Step のときに、値をいくつ変えるか（-1・+10 など）")]
     [SerializeField] private int amount;
 
+    /// <summary>押したときにすること。</summary>
     public SpaceJunkLobbyAction Action => action;
+
+    /// <summary>Step のときに値を変える量（-1・+10 など）。Step 以外では使わない。</summary>
     public int Amount => amount;
+
+    /// <summary>
+    /// このボタン本体（RequireComponent で必ず付いている）。
+    /// 読むたびに探し直すので、毎フレーム使うときは控えておくこと。
+    /// </summary>
     public Button Button => GetComponent<Button>();
 
 #if UNITY_EDITOR
