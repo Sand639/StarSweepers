@@ -307,7 +307,6 @@ public class ThrowController : MonoBehaviour
     private Vector3 reelStart;
     private bool targetGravityWas;
     private bool targetKinematicWas;
-    private bool typeAReelPhysicsPending;
     private AnchorGimmick anchorTarget;
     private CharacterController pullingPlayer;
     private FishingPlayerController pullingPlayerMovement;
@@ -454,7 +453,6 @@ public class ThrowController : MonoBehaviour
     public void Begin(HookableObject hookable)
     {
         distanceBasedPullActive = false;
-        typeAReelPhysicsPending = false;
         target = hookable;
         pullableTarget = null;
         active = true;
@@ -487,36 +485,32 @@ public class ThrowController : MonoBehaviour
 
         if (target != null)
         {
-            // **持っている間は、自分の体に当たらないようにする**（2026/9/30）。
-            // 頭上や体のそばを通すので、当たると歩いたときに体が押されたり引っかかったりする。
-            // 手を離したら、体から離れたところで自動で元に戻る（ThrowPassThrough）
-            ThrowPassThrough.Hold(target.gameObject, hook.PlayerRoot.GetComponent<CharacterController>());
-
-            reelStart = target.transform.position;
             distancePullElapsed = 0f;
+            bool waitForTypeAClick = style == ThrowStyle.SweepOnce && !distanceBasedPullActive;
+            if (!waitForTypeAClick)
+            {
+                // **持っている間は、自分の体に当たらないようにする**（2026/9/30）。
+                // タイプAはクリックするまで物理・座標に触れないため、ここでは実行しない。
+                ThrowPassThrough.Hold(target.gameObject, hook.PlayerRoot.GetComponent<CharacterController>());
 
-            targetGravityWas = target.Body.useGravity;
-            targetKinematicWas = target.Body.isKinematic;
+                reelStart = target.transform.position;
+                targetGravityWas = target.Body.useGravity;
+                targetKinematicWas = target.Body.isKinematic;
 
-            if (distanceBasedPullActive)
-            {
-                // タイプBはRigidbodyを生かし、現在位置・速度・回転を保持して引きずる。
-                target.Body.isKinematic = false;
-                target.Body.useGravity = targetGravityWas;
-            }
-            else if (style == ThrowStyle.SweepOnce)
-            {
-                // タイプAは、最初のレール移動が始まるまで物理を生かしておく。
-                // 動く床に乗った物資が、フック命中の瞬間に止まるのを防ぐ。
-                typeAReelPhysicsPending = true;
-            }
-            else
-            {
-                // 宇宙ごみ式は従来どおり、決めた軌道へ乗せるため物理を止める。
-                target.Body.linearVelocity = Vector3.zero;
-                target.Body.angularVelocity = Vector3.zero;
-                target.Body.useGravity = false;
-                target.Body.isKinematic = true;
+                if (distanceBasedPullActive)
+                {
+                    // タイプBはRigidbodyを生かし、現在位置・速度・回転を保持して引きずる。
+                    target.Body.isKinematic = false;
+                    target.Body.useGravity = targetGravityWas;
+                }
+                else
+                {
+                    // 宇宙ごみ式は従来どおり、決めた軌道へ乗せるため物理を止める。
+                    target.Body.linearVelocity = Vector3.zero;
+                    target.Body.angularVelocity = Vector3.zero;
+                    target.Body.useGravity = false;
+                    target.Body.isKinematic = true;
+                }
             }
         }
 
@@ -611,7 +605,14 @@ public class ThrowController : MonoBehaviour
         // スタンさせられたら引っ張りは続けられない。ミス扱いで終了する
         if (hook != null && hook.IsStunned)
         {
-            FinishAsMiss("スタンしたため");
+            if (style == ThrowStyle.SweepOnce && !distanceBasedPullActive)
+            {
+                EndPull();
+            }
+            else
+            {
+                FinishAsMiss("スタンしたため");
+            }
             return;
         }
 
@@ -635,15 +636,6 @@ public class ThrowController : MonoBehaviour
 
         float t =Mathf.Clamp01(timer / Mathf.Max(0.1f, skillCheckDuration));
 
-        // タイプAは命中直後の短い猶予中、レール位置を適用せず動く床の物理に任せる。
-        // Rigidbody が動的でも Transform を直接動かすとコンベアの移動を打ち消すため、
-        // 物理を止めるタイミングとレール移動の開始を同じ進捗条件にそろえる。
-        if (!typeAReelPhysicsPending || t > 0.05f)
-        {
-            BeginTypeAReelIfNeeded();
-            UpdateReelPosition(t);
-        }
-
         if (hook != null && hook.UI != null)
         {
             hook.UI.SetMarker(t);
@@ -658,7 +650,15 @@ public class ThrowController : MonoBehaviour
         // ゲージが1往復して通り過ぎたらミス（仕様改善2）
         if (timer >= skillCheckDuration)
         {
-            FinishAsMiss("ゲージが通り過ぎた");
+            if (style == ThrowStyle.SweepOnce && !distanceBasedPullActive)
+            {
+                // 入力されないまま時間切れになった場合も、物資の物理には触れずフックだけ外す。
+                EndPull();
+            }
+            else
+            {
+                FinishAsMiss("ゲージが通り過ぎた");
+            }
         }
     }
 
@@ -1808,6 +1808,11 @@ public class ThrowController : MonoBehaviour
     /// <summary>押された瞬間のゲージ位置を、どの枠に入ったかで判定する。</summary>
     private void Resolve(float t)
     {
+        if (style == ThrowStyle.SweepOnce)
+        {
+            PrepareTypeAThrowAtClick();
+        }
+
         if (skillCheckZones != null)
         {
             foreach (SkillCheckZone zone in skillCheckZones)
@@ -2105,7 +2110,6 @@ public class ThrowController : MonoBehaviour
         pullingPlayerMovement = null;
         active = false;
         distanceBasedPullActive = false;
-        typeAReelPhysicsPending = false;
         heavy = false;
         heavyWeight = 1f;
 
@@ -2128,27 +2132,28 @@ public class ThrowController : MonoBehaviour
     /// <summary>引き寄せのために止めていた物理を元に戻す。</summary>
     private void RestorePhysics(Rigidbody body)
     {
-        typeAReelPhysicsPending = false;
         body.isKinematic = targetKinematicWas;
         body.useGravity = targetGravityWas;
     }
 
-    /// <summary>タイプAの等速レールへ入る直前に、物資の物理を止める。</summary>
-    private void BeginTypeAReelIfNeeded()
+    /// <summary>タイプAでクリックされた瞬間の物資の位置を取り、投げ処理を始める。</summary>
+    private void PrepareTypeAThrowAtClick()
     {
-        if (!typeAReelPhysicsPending || target == null)
+        if (target == null)
         {
             return;
         }
 
         Rigidbody body = target.Body;
-        // 猶予中に動く床で移動した位置を、レールの開始位置にする。
-        reelStart = target.transform.position;
+        // フック命中後は物理・座標に触れず、クリック時点の現在地を記録する。
+        reelStart = body.position;
+        targetGravityWas = body.useGravity;
+        targetKinematicWas = body.isKinematic;
+        ThrowPassThrough.Hold(target.gameObject, hook.PlayerRoot.GetComponent<CharacterController>());
         body.linearVelocity = Vector3.zero;
         body.angularVelocity = Vector3.zero;
         body.useGravity = false;
         body.isKinematic = true;
-        typeAReelPhysicsPending = false;
     }
 
     private float ForceOf(ThrowTier tier)
