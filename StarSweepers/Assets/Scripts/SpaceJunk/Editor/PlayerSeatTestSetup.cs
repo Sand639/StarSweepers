@@ -22,8 +22,13 @@ public static class PlayerSeatTestSetup
     private const string PlayerPrefabPath = "Assets/Prefabs/SpaceJunk/Online/SpaceJunkPlayer.prefab";
     private const string SupplyPrefabPath = "Assets/Prefabs/Fish/FishingSupply.prefab";
 
+    /// <summary>正方形の床の一辺（m）。四方の壁もこの長さで、床の縁に立てる。</summary>
     private const float FloorSize = 24f;
 
+    /// <summary>
+    /// 検証シーンを新しく作って保存する（同じ場所にあれば上書き）。
+    /// プレイヤーのプレハブが無ければ、何も作らずに止める。
+    /// </summary>
     [MenuItem("Tools/StarSweepers/1台のPCで複数人の検証シーンを作る")]
     public static void CreateScene()
     {
@@ -103,6 +108,7 @@ public static class PlayerSeatTestSetup
             "・F6 で固定登録（キーボード P1→P2、マウス P1→P2 の順に押す）");
     }
 
+    /// <summary>落ちないための壁（高さ2m・厚さ0.5mの箱）を1枚置く。</summary>
     private static void CreateWall(string name, Vector3 position, Vector3 scale)
     {
         GameObject wall = GameObject.CreatePrimitive(PrimitiveType.Cube);
@@ -111,6 +117,10 @@ public static class PlayerSeatTestSetup
         wall.transform.localScale = scale;
     }
 
+    /// <summary>
+    /// プレイヤーをプレハブのつながりを保ったまま置き、席の番号（0 = P1、1 = P2）を設定する。
+    /// プレハブに <see cref="PlayerInputSource"/> が無ければ、ここで足す。
+    /// </summary>
     private static void CreatePlayer(GameObject prefab, int seatIndex, Vector3 position)
     {
         var player = (GameObject)PrefabUtility.InstantiatePrefab(prefab);
@@ -124,6 +134,9 @@ public static class PlayerSeatTestSetup
             source = player.AddComponent<PlayerInputSource>();
         }
 
+        // seatIndex は private の [SerializeField] なので、インスペクターと同じ書き方で名前を指定して入れる
+        // （シーンに保存させるため、プロパティ経由ではなくこちらを使う）。
+        // ※ PlayerInputSource の seatIndex の名前を変えると、ここが null になって落ちる
         var serialized = new SerializedObject(source);
         serialized.FindProperty("seatIndex").intValue = seatIndex;
         serialized.ApplyModifiedPropertiesWithoutUndo();

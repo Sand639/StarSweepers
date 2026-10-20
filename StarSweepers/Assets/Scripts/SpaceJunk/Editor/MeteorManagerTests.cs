@@ -2,8 +2,16 @@ using System.Collections.Generic;
 using NUnit.Framework;
 using UnityEngine;
 
+/// <summary>
+/// 隕石の管理役（<see cref="MeteorManager"/>）が、候補の落下範囲から**どの範囲を選び、どこに落とすか**を確かめるテスト。
+///
+/// `TryChoosePoint` は 0～1 の値で「何番目の範囲か」と「範囲の中のどこか」を決める、テスト用の入口。
+/// 2つ目の引数（半径 2m）は古い呼び方との互換で残っているだけで、**今は使われていない**
+/// （爆風の円が範囲からはみ出すかは見ない決まり。`隕石攻撃.md` 参照）。
+/// </summary>
 public class MeteorManagerTests
 {
+	/// <summary>テストの中で作った物。終わったら <see cref="TearDown"/> でまとめて消す。</summary>
 	private readonly List<GameObject> created =
 		new List<GameObject>();
 
@@ -23,6 +31,7 @@ public class MeteorManagerTests
 	}
 
 
+	/// <summary>候補の範囲が1つも無ければ → 落とす場所が無いので false になるはず。</summary>
 	[Test]
 	public void TryChoosePoint_ReturnsFalseWhenListIsEmpty()
 	{
@@ -39,6 +48,10 @@ public class MeteorManagerTests
 	}
 
 
+	/// <summary>
+	/// 候補に非表示（無効）の範囲が混ざっていたら → それは飛ばし、有効な範囲の真ん中
+	/// （高さは箱の上面 0.5m）が選ばれるはず。
+	/// </summary>
 	[Test]
 	public void TryChoosePoint_SkipsInactiveAreas()
 	{
@@ -83,6 +96,10 @@ public class MeteorManagerTests
 	}
 
 
+	/// <summary>
+	/// 爆風の円（半径2m）より小さい 3m 四方の範囲でも → 外さずに選ばれるはず。
+	/// 範囲は「爆心を決める場所」で、円が収まるかは見ない決まりのため。
+	/// </summary>
 	[Test]
 	public void TryChoosePoint_AllowsSmallAreas()
 	{
@@ -118,6 +135,9 @@ public class MeteorManagerTests
 	}
 
 
+	/// <summary>
+	/// 有効な範囲が2つあり、「何番目か」に 0.99 を渡したら → 後ろ側（2つ目、X=20m に置いた方）が選ばれるはず。
+	/// </summary>
 	[Test]
 	public void TryChoosePoint_UsesNormalizedAreaValueAcrossValidAreas()
 	{
@@ -162,6 +182,10 @@ public class MeteorManagerTests
 	}
 
 
+	/// <summary>
+	/// 範囲を (15, 2, 30) に動かして、範囲の中の位置に (0.5, 0.5) を渡したら →
+	/// 範囲の真ん中（横方向は X=15m・Z=30m）に落ちるはず。
+	/// </summary>
 	[Test]
 	public void TryChoosePoint_CenterValuesReturnAreaCenter()
 	{
@@ -205,6 +229,10 @@ public class MeteorManagerTests
 	}
 
 
+	/// <summary>
+	/// 原点に、指定の大きさのトリガー BoxCollider と <see cref="MeteorArea"/> を付けた物を作る。
+	/// 後で消せるよう <see cref="created"/> に入れておく。
+	/// </summary>
 	private MeteorArea CreateArea(
 		string objectName,
 		Vector3 size)

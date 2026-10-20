@@ -21,6 +21,10 @@ public static class SpaceJunkCameraSetup
     private const string CameraPrefabPath = "Assets/Prefabs/SpaceJunk/Online/SpaceJunkStageCamera.prefab";
     private const string TestScenePath = "Assets/Scenes/Test/SpaceJunkTeamCameraTest.unity";
 
+    /// <summary>
+    /// ステージのカメラのプレハブを開き、切り替え役と3種類のカメラ（全体・チーム・自分）をそろえて保存する。
+    /// すでに付いている部品はそのまま使うので、何度実行しても調整した値は残る。
+    /// </summary>
     [MenuItem("Tools/StarSweepers/宇宙ごみのステージのカメラにチームカメラを足す")]
     public static void AddModesToStageCamera()
     {
@@ -49,6 +53,8 @@ public static class SpaceJunkCameraSetup
             MoveAbove(whole, team);
 
             // 始まりは、前と同じ全体カメラ（2026/10/6・大槻さんの決め）
+            // まだ決まっていないときだけ入れる（誰かが変えた始まりのカメラを上書きしない）。
+            // ※ firstMode は SpaceJunkCameraModeSwitch の private の項目名。変えるとここが null で落ちる
             SerializedObject so = new SerializedObject(modeSwitch);
             SerializedProperty first = so.FindProperty("firstMode");
             if (first.objectReferenceValue == null)
@@ -66,9 +72,15 @@ public static class SpaceJunkCameraSetup
         }
     }
 
+    /// <summary>
+    /// チームカメラの検証シーンを作り直す（同じ場所にあれば上書き）。
+    /// 床・目印・自陣の印・人形2体・ステージと同じカメラを置き、始まりのカメラだけチームカメラにする。
+    /// </summary>
     [MenuItem("Tools/StarSweepers/宇宙ごみのチームカメラの検証シーンを作り直す")]
     public static void CreateTestScene()
     {
+        // 新しいシーンに切り替えるので、作業中のシーンに保存していない変更があれば先に聞く。
+        // 「キャンセル」なら何もしない（コマンドラインからの実行では聞けないので飛ばす）
         if (!Application.isBatchMode && !EditorSceneManager.SaveCurrentModifiedScenesIfUserWantsTo())
         {
             return;
@@ -91,11 +103,14 @@ public static class SpaceJunkCameraSetup
         lightObject.transform.rotation = Quaternion.Euler(50f, -30f, 0f);
 
         // ----- 床（80m 四方）と、動きが分かるための目印 -----
+        // Plane はもともと 10m 四方なので、8倍で 80m 四方になる
         GameObject ground = GameObject.CreatePrimitive(PrimitiveType.Plane);
         ground.name = "Ground";
         ground.transform.localScale = new Vector3(8f, 1f, 8f);
         Paint(ground, new Color(0.22f, 0.24f, 0.28f));
 
+        // 10m おきに 7×7 個の小さな箱を、市松の2色で並べる。
+        // 一面同じ色だとカメラが動いても分かりにくいため。人形が引っかからないよう当たり判定は外す
         Transform marks = new GameObject("Landmarks").transform;
         for (int x = -3; x <= 3; x++)
         {
@@ -120,9 +135,12 @@ public static class SpaceJunkCameraSetup
         Paint(home, new Color(0.30f, 0.60f, 0.95f));
 
         // ----- 人形（A：WASD、B：矢印キー） -----
+        // B だけ、キーを押していない間は勝手に歩き回る（味方だけが動く場面を作るため）
         Transform a = CreateDummy("A_WASD", new Vector3(-3f, 0f, -6f), SpaceJunkCameraTestDummy.Control.Wasd, false);
         Transform b = CreateDummy("B_Arrows", new Vector3(4f, 0f, -2f), SpaceJunkCameraTestDummy.Control.Arrows, true);
 
+        // 通信なしでも、カメラが「チームの人たち」「自分」として A・B を見られるよう、一覧に入れておく。
+        // ※ players は SpaceJunkCameraTestTargets の private の項目名。変えるとここが null で落ちる
         GameObject targetsObject = new GameObject("CameraTestTargets");
         SpaceJunkCameraTestTargets targets = targetsObject.AddComponent<SpaceJunkCameraTestTargets>();
         SerializedObject targetsSo = new SerializedObject(targets);
@@ -156,6 +174,11 @@ public static class SpaceJunkCameraSetup
                   "再生して、WASD で A、矢印キーで B を動かせます。C でカメラ切り替え、Tab で自分を入れ替え、Q／E で自陣の向きを回します。");
     }
 
+    /// <summary>
+    /// カメラの動きを見るための人形（カプセルの体＋前向きの鼻）を作り、動かし方を設定する。
+    /// 見た目だけの部品は当たり判定を外す。色は A（WASD）が濃い青、B が薄い青。
+    /// </summary>
+    /// <param name="wander">true なら、キーを押していない間は勝手に歩き回る。</param>
     private static Transform CreateDummy(string name, Vector3 position, SpaceJunkCameraTestDummy.Control control, bool wander)
     {
         GameObject root = new GameObject(name);
@@ -177,6 +200,8 @@ public static class SpaceJunkCameraSetup
         Object.DestroyImmediate(nose.GetComponent<Collider>());
         Paint(nose, Color.white);
 
+        // 動かし方は private の項目なので、名前を指定して書き込む（シーンに保存させるため）。
+        // ※ SpaceJunkCameraTestDummy の control・wander の名前を変えると、ここが null で落ちる
         SpaceJunkCameraTestDummy dummy = root.AddComponent<SpaceJunkCameraTestDummy>();
         SerializedObject so = new SerializedObject(dummy);
         so.FindProperty("control").enumValueIndex = (int)control;
@@ -200,6 +225,7 @@ public static class SpaceJunkCameraSetup
         target.GetComponent<Renderer>().sharedMaterial = material;
     }
 
+    /// <summary>部品がすでに付いていればそれを、無ければ足して返す（調整した値を消さないため）。</summary>
     private static T GetOrAdd<T>(GameObject root) where T : Component
     {
         T component = root.GetComponent<T>();
@@ -209,6 +235,7 @@ public static class SpaceJunkCameraSetup
     /// <summary><paramref name="upper"/> が <paramref name="lower"/> より上（先）に来るまで上へ動かす。</summary>
     private static void MoveAbove(Component upper, Component lower)
     {
+        // 上へ動かせない部品があっても止まらなくならないよう、20回で打ち切る（部品の数より十分多い）
         for (int guard = 0; guard < 20 && IndexOf(upper) > IndexOf(lower); guard++)
         {
             if (!ComponentUtility.MoveComponentUp(upper))
@@ -218,6 +245,7 @@ public static class SpaceJunkCameraSetup
         }
     }
 
+    /// <summary>その部品が、同じ物に付いている部品の中で上から何番目か（インスペクターでの並び順）。</summary>
     private static int IndexOf(Component component)
     {
         Component[] all = component.GetComponents<Component>();

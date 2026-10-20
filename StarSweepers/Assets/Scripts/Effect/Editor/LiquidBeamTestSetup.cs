@@ -27,6 +27,11 @@ public static class LiquidBeamTestSetup
     private const string VolumeProfilePath = "Assets/Settings/LiquidBeamTestVolume.asset";
     private const string ScenePath = "Assets/Scenes/Test/LiquidBeamTest.unity";
 
+    /// <summary>
+    /// 検証シーンを新しく作って保存する（同じ場所にあれば上書き）。
+    /// 暗い床・ブルーム付きのカメラ・仮のキャラクター（ビームを持つ）・操作役（<see cref="LiquidBeamTestDriver"/>）を置く。
+    /// プレハブ・マテリアル・後処理の設定は、無ければここで作る（あればそのまま使う）。
+    /// </summary>
     [MenuItem("Tools/StarSweepers/液体ビームの検証シーンを作り直す")]
     public static void CreateTestScene()
     {
@@ -48,6 +53,7 @@ public static class LiquidBeamTestSetup
         light.shadows = LightShadows.Soft;
         lightObject.transform.rotation = Quaternion.Euler(50f, -30f, 0f);
 
+        // Plane はもともと 10m 四方なので、4倍で 40m 四方の床になる
         GameObject groundObject = GameObject.CreatePrimitive(PrimitiveType.Plane);
         groundObject.name = "Ground";
         groundObject.transform.localScale = new Vector3(4f, 1f, 4f);
@@ -62,6 +68,7 @@ public static class LiquidBeamTestSetup
         camera.fieldOfView = 45f;
         cameraObject.transform.position = new Vector3(1.5f, 10f, -11f);
         cameraObject.transform.LookAt(new Vector3(1.5f, 0.5f, 0f));
+        // ブルーム（明るい所のにじみ）を見るため、このカメラだけ後処理をオンにする
         camera.GetUniversalAdditionalCameraData().renderPostProcessing = true;
 
         GameObject volumeObject = new GameObject("PostProcessVolume");
@@ -91,6 +98,8 @@ public static class LiquidBeamTestSetup
         GameObject driverObject = new GameObject("LiquidBeamTestDriver");
         LiquidBeamTestDriver driver = driverObject.AddComponent<LiquidBeamTestDriver>();
 
+        // 操作役の項目は private なので、名前を指定して書き込む（シーンに保存させるため）。
+        // ※ LiquidBeamTestDriver の beam・character の名前を変えると、ここが null で落ちる
         SerializedObject driverSerialized = new SerializedObject(driver);
         driverSerialized.FindProperty("beam").objectReferenceValue = beam;
         driverSerialized.FindProperty("character").objectReferenceValue = character.transform;
@@ -136,6 +145,7 @@ public static class LiquidBeamTestSetup
         GameObject lightObject = new GameObject("LiquidHeadLight");
         lightObject.transform.SetParent(root.transform, false);
 
+        // 先端を照らす点光源（届く範囲 4m・影なし）。位置と色は、ビームが毎フレーム先端に合わせて動かす
         Light headLight = lightObject.AddComponent<Light>();
         headLight.type = LightType.Point;
         headLight.color = new Color(0.4f, 0.7f, 1f);
@@ -144,6 +154,8 @@ public static class LiquidBeamTestSetup
 
         LiquidBeam beam = root.AddComponent<LiquidBeam>();
 
+        // マテリアルをファイルとして渡しておく（空のままだと、再生のたびにビームが作る＝プレハブに残らない）。
+        // ※ lineMaterial・headLight は LiquidBeam の private の項目名。変えるとここが null で落ちる
         SerializedObject serialized = new SerializedObject(beam);
         serialized.FindProperty("lineMaterial").objectReferenceValue = GetOrCreateLiquidMaterial();
         serialized.FindProperty("headLight").objectReferenceValue = headLight;
@@ -163,6 +175,9 @@ public static class LiquidBeamTestSetup
     // 素材
     // ------------------------------------------------------------
 
+    /// <summary>
+    /// ビーム用の半透明のマテリアル（`LiquidAlpha.mat`）を読み込む。無ければ、ビームが実行時に作る物と同じ設定で作って保存する。
+    /// </summary>
     private static Material GetOrCreateLiquidMaterial()
     {
         Material existing = AssetDatabase.LoadAssetAtPath<Material>(LiquidMaterialPath);
@@ -177,6 +192,9 @@ public static class LiquidBeamTestSetup
         return material;
     }
 
+    /// <summary>
+    /// 床やキャラクター用の、光が当たるふつうのマテリアルを読み込む。無ければ指定の色で作って保存する（あれば色も変えない）。
+    /// </summary>
     private static Material GetOrCreateLitMaterial(string path, Color color)
     {
         Material existing = AssetDatabase.LoadAssetAtPath<Material>(path);
@@ -193,6 +211,7 @@ public static class LiquidBeamTestSetup
             shader = Shader.Find("Standard");
         }
 
+        // URP の Lit は _BaseColor、代わりの Standard は _Color（material.color）で色を見るので、両方に入れる
         Material material = new Material(shader);
         material.SetColor("_BaseColor", color);
         material.color = color;
@@ -202,6 +221,10 @@ public static class LiquidBeamTestSetup
     }
 
     /// <summary>ブルームだけを入れた後処理の設定を作る（電撃の検証シーンと同じ値）。</summary>
+    /// <remarks>
+    /// 実際には、明るすぎる色を自然に抑えるトーンマッピング（Neutral）も入れている。
+    /// すでにファイルがあれば作り直さない。ブルームは明るさ 1 を超えた所（<c>brightness</c> を上げた所）だけ光る。
+    /// </remarks>
     private static VolumeProfile GetOrCreateVolumeProfile()
     {
         VolumeProfile existing = AssetDatabase.LoadAssetAtPath<VolumeProfile>(VolumeProfilePath);
@@ -211,6 +234,8 @@ public static class LiquidBeamTestSetup
             return existing;
         }
 
+        // 中身の設定（Bloom など）は、先に作ったファイルの中へ一緒にしまう（AddObjectToAsset）。
+        // しまわないと、保存し直したときに中身が消える
         VolumeProfile profile = ScriptableObject.CreateInstance<VolumeProfile>();
         AssetDatabase.CreateAsset(profile, VolumeProfilePath);
 
@@ -228,6 +253,7 @@ public static class LiquidBeamTestSetup
         return profile;
     }
 
+    /// <summary>マテリアルを貼る。作れなかった（null）ときは、元のマテリアルのまま残す。</summary>
     private static void SetMaterial(GameObject target, Material material)
     {
         if (material != null)
