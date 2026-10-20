@@ -97,17 +97,37 @@ public class GravityGlassFloor : MonoBehaviour
     /// <summary>割れるまでの残り秒数（ヒビが入っている間だけ意味がある）。</summary>
     public float BreakRemaining { get; private set; }
 
+    /// <summary>
+    /// 「乗っている人」を探すときの入れ物。**毎フレーム作り直さないよう、全部の床で使い回している。**
+    /// 一度に拾えるのは16個まで（床の上にそれ以上の物が重なることは想定していない）。
+    /// </summary>
     private static readonly Collider[] Hits = new Collider[16];
+
+    /// <summary>ガラスのシェーダーの「ふちの色」の欄。名前で毎回探すと遅いので、番号にしておく。</summary>
     private static readonly int EdgeColorId = Shader.PropertyToID("_EdgeColor");
 
     private BoxCollider box;
     private MeshRenderer meshRenderer;
+
+    /// <summary>
+    /// ふちの色を、**この床だけ**変えるための入れ物。
+    /// マテリアルを直接書き換えると、同じマテリアルを使う他の床まで赤くなってしまうため。
+    /// </summary>
     private MaterialPropertyBlock propertyBlock;
+
+    /// <summary>マテリアルにもともと入っていた、ふちの色。点滅はこの色と赤の間を行き来する。</summary>
     private Color originalEdgeColor = Color.white;
+
+    /// <summary>マテリアルに「ふちの色」の欄があるか。無ければ点滅させない（ガラス以外のマテリアルでも動くように）。</summary>
     private bool hasEdgeColor;
 
+    /// <summary>ヒビの線をまとめて入れておく親。消すときはこれごと消す。</summary>
     private Transform crackRoot;
+
+    /// <summary>ヒビの線の一覧。**踏んだ場所に近い順**に並べてあり、前から順に見せていく。</summary>
     private readonly List<GameObject> crackSegments = new List<GameObject>();
+
+    /// <summary>割れてから元に戻るまでの残り秒数。</summary>
     private float respawnTimer;
 
     private void Awake()
@@ -116,6 +136,7 @@ public class GravityGlassFloor : MonoBehaviour
         meshRenderer = GetComponent<MeshRenderer>();
         propertyBlock = new MaterialPropertyBlock();
 
+        // ふちの色を持つマテリアル（ガラスのシェーダー）のときだけ、点滅させる
         if (meshRenderer != null && meshRenderer.sharedMaterial != null &&
             meshRenderer.sharedMaterial.HasProperty(EdgeColorId))
         {
@@ -141,6 +162,7 @@ public class GravityGlassFloor : MonoBehaviour
             return;
         }
 
+        // 状態は「ふつう → ヒビ → 割れた →（戻る秒数が決めてあれば）ふつう」の順に進む
         switch (State)
         {
             case FloorState.Intact:
@@ -161,9 +183,13 @@ public class GravityGlassFloor : MonoBehaviour
     // 踏まれたか
     // ------------------------------------------------------------
 
+    /// <summary>
+    /// 割れていない間、毎フレーム呼ぶ。**重力が重いときに誰かが乗っていたら、ヒビを入れる。**
+    /// </summary>
     private void CheckStep()
     {
         // 重力が軽いうちは、乗っても平気
+        // （WorldGravity.Value は下向きでマイナスなので、大きさで比べる）
         if (Mathf.Abs(WorldGravity.Value) < breakGravity)
         {
             return;
@@ -187,10 +213,12 @@ public class GravityGlassFloor : MonoBehaviour
         Vector3 up = transform.up;
 
         // 上面の少し内側から、上へ detectHeight ぶんの薄い箱
+        // （横の広さは床の 96%＝半分の 0.48倍。ふちよりわずかに内側）
         Vector3 top = transform.TransformPoint(box.center) + up * (size.y * 0.5f);
         Vector3 center = top + up * (detectHeight * 0.5f);
         Vector3 halfExtents = new Vector3(size.x * 0.48f, detectHeight * 0.5f, size.z * 0.48f);
 
+        // ~0 は「すべてのレイヤー」。すり抜ける当たり判定（トリガー）は数えない
         int count = Physics.OverlapBoxNonAlloc(
             center, halfExtents, Hits, transform.rotation, ~0, QueryTriggerInteraction.Ignore);
 
@@ -198,6 +226,7 @@ public class GravityGlassFloor : MonoBehaviour
         {
             Collider hit = Hits[i];
 
+            // 床そのものと、床の子（ヒビの線など）は数えない
             if (hit == null || hit == box || hit.transform.IsChildOf(transform))
             {
                 continue;
@@ -247,10 +276,15 @@ public class GravityGlassFloor : MonoBehaviour
         }
     }
 
+    /// <summary>
+    /// ヒビが入っている間、毎フレーム呼ぶ。ヒビを広げ、ふちを点滅させ、時間が来たら割る。
+    /// **重力はもう見ない**（一度ヒビが入ったら、軽くなっても止まらない）。
+    /// </summary>
     private void UpdateCracked()
     {
         BreakRemaining -= Time.deltaTime;
 
+        // 割れるまでの進み具合。ヒビが入った瞬間が 0、割れる瞬間が 1
         float progress = secondsUntilBreak > 0f ? 1f - BreakRemaining / secondsUntilBreak : 1f;
 
         RevealCracks(progress);
@@ -289,61 +323,93 @@ public class GravityGlassFloor : MonoBehaviour
             SafeInverse(scale.y),
             SafeInverse(scale.z));
 
+        // ここから下は、crackRoot の中での座標（大きさを打ち消してあるので、単位はそのままメートル）。
+        // 線は上面の上に平らに並べるので、2次元の (x, y) を床の (x, z) として扱う
         Vector3 size = Vector3.Scale(box.size, scale);
         float halfX = size.x * 0.5f;
         float halfZ = size.z * 0.5f;
+
+        // 上面の高さ。0.004（4ミリ）だけ浮かせて、ガラスの面とちらついて重ならないようにする
         float topY = box.center.y * scale.y + size.y * 0.5f + 0.004f;
 
         // 踏んだ場所を、上面の上の位置に直す（ふちに寄りすぎないように少し内側へ）
+        // （中心から、ふちまでの 7割の範囲に収める）
         Vector3 local = transform.InverseTransformPoint(from);
         Vector2 origin = new Vector2(
             Mathf.Clamp(local.x * scale.x, -halfX * 0.7f, halfX * 0.7f),
             Mathf.Clamp(local.z * scale.z, -halfZ * 0.7f, halfZ * 0.7f));
 
+        // 1本の線が伸びる長さの目安（メートル）。長いほうの辺の半分の1.5倍なので、
+        // どこから踏んでも、だいたいの線がふちまで届く
         float reach = Mathf.Max(halfX, halfZ) * 1.5f;
+
+        // 1本目の向き（度）。毎回変えて、同じ形のヒビにならないようにする
         float startAngle = Random.Range(0f, 360f);
 
         for (int line = 0; line < crackLines; line++)
         {
+            // 線を等間隔の向きに並べ、1本ごとに ±15度だけずらす（きれいに並びすぎないように）
             float angle = (startAngle + 360f * line / crackLines + Random.Range(-15f, 15f)) * Mathf.Deg2Rad;
-            Vector2 point = origin;
 
-            int segments = Random.Range(3, 5);
-            float step = reach / segments;
-
-            for (int s = 0; s < segments; s++)
-            {
-                // 少しずつ向きをずらして、ギザギザにする
-                float bend = angle + Random.Range(-0.45f, 0.45f);
-                Vector2 next = point + new Vector2(Mathf.Cos(bend), Mathf.Sin(bend)) * step * Random.Range(0.7f, 1.1f);
-
-                // 床の外にはみ出したら、ふちで止める
-                bool outside = Mathf.Abs(next.x) > halfX || Mathf.Abs(next.y) > halfZ;
-                next.x = Mathf.Clamp(next.x, -halfX, halfX);
-                next.y = Mathf.Clamp(next.y, -halfZ, halfZ);
-
-                CreateSegment(point, next, topY, s);
-
-                point = next;
-
-                if (outside)
-                {
-                    break;
-                }
-            }
+            GrowCrackLine(origin, angle, reach, halfX, halfZ, topY);
         }
 
         // 踏んだ場所に近い順に並べる（名前の先頭が「何本目の区切りか」）。見せるときにこの順で出す
+        // ※ 名前を文字として比べているので、区切りが10個以上になると「10」が「2」より前に来てしまう。
+        //    いまは1本あたり最大4区切り（0〜3）なので問題ない
         crackSegments.Sort((a, b) => a.name.CompareTo(b.name));
 
         RevealCracks(0f);
     }
 
+    /// <summary>
+    /// ヒビの線を**1本**伸ばす。<paramref name="origin"/> から <paramref name="angle"/>（ラジアン）の向きへ、
+    /// 3〜4個の区切りに分けて、**少しずつ曲げながら**進む。床のふちに着いたら、そこで止める。
+    ///
+    /// 座標は crackRoot の中での (x, z)。<paramref name="topY"/> は線を並べる高さ。
+    /// </summary>
+    private void GrowCrackLine(Vector2 origin, float angle, float reach, float halfX, float halfZ, float topY)
+    {
+        Vector2 point = origin;
+
+        // Random.Range(int, int) は2つ目の数を含まないので、区切りは3個か4個
+        int segments = Random.Range(3, 5);
+        float step = reach / segments;
+
+        for (int s = 0; s < segments; s++)
+        {
+            // 少しずつ向きをずらして、ギザギザにする
+            // （±0.45ラジアン＝約±26度。1区切りの長さも 0.7〜1.1倍でばらつかせる）
+            float bend = angle + Random.Range(-0.45f, 0.45f);
+            Vector2 next = point + new Vector2(Mathf.Cos(bend), Mathf.Sin(bend)) * step * Random.Range(0.7f, 1.1f);
+
+            // 床の外にはみ出したら、ふちで止める
+            bool outside = Mathf.Abs(next.x) > halfX || Mathf.Abs(next.y) > halfZ;
+            next.x = Mathf.Clamp(next.x, -halfX, halfX);
+            next.y = Mathf.Clamp(next.y, -halfZ, halfZ);
+
+            // s は「踏んだ場所から何個目の区切りか」。見せる順番に使う
+            CreateSegment(point, next, topY, s);
+
+            point = next;
+
+            if (outside)
+            {
+                break;
+            }
+        }
+    }
+
+    /// <summary>
+    /// ヒビの線の1区切りを作る。**細長い Cube を、<paramref name="from"/> から <paramref name="to"/> へ渡す**形。
+    /// <paramref name="depth"/> は踏んだ場所から何個目の区切りか（見せる順番に使う）。
+    /// </summary>
     private void CreateSegment(Vector2 from, Vector2 to, float y, int depth)
     {
         Vector2 delta = to - from;
         float length = delta.magnitude;
 
+        // 1センチ未満は見えないうえ、向きが決まらないので作らない（ふちのすぐ近くで止められたときなどに起きる）
         if (length < 0.01f)
         {
             return;
@@ -356,6 +422,8 @@ public class GravityGlassFloor : MonoBehaviour
 
         RemoveCollider(segment);
 
+        // 2点のまん中に置き、Z（奥行き）を線の向きに合わせて、Z方向に長さぶん伸ばす。
+        // 厚みは 0.008（8ミリ）。長さに線の太さを足しておくと、区切りのつなぎ目にすき間ができない
         segment.transform.SetParent(crackRoot, false);
         segment.transform.localPosition = new Vector3((from.x + to.x) * 0.5f, y, (from.y + to.y) * 0.5f);
         segment.transform.localRotation = Quaternion.LookRotation(new Vector3(delta.x, 0f, delta.y));
@@ -371,6 +439,8 @@ public class GravityGlassFloor : MonoBehaviour
     /// <summary>ヒビを、進み具合に合わせて見せていく。最初から4割は見えている。</summary>
     private void RevealCracks(float progress)
     {
+        // 見せる割合は 4割 → 10割。progress を 1.4倍しているので、
+        // 割れる時間の約7割が過ぎたところで全部見えきる（最後の3割は全部出たまま点滅だけが速くなる）
         int visible = Mathf.CeilToInt(crackSegments.Count * Mathf.Lerp(0.4f, 1f, Mathf.Clamp01(progress * 1.4f)));
 
         for (int i = 0; i < crackSegments.Count; i++)
@@ -392,12 +462,17 @@ public class GravityGlassFloor : MonoBehaviour
             return;
         }
 
+        // 点滅の速さ（1秒あたりのラジアン）。4 は約1.6秒に1回、18 は約0.35秒に1回の点滅
         float speed = Mathf.Lerp(4f, 18f, progress);
+
+        // sin の -1〜1 を 0〜1 に直したもの
         float blink = (Mathf.Sin(Time.time * speed) + 1f) * 0.5f;
 
+        // 一番薄いときでも 4割は赤を混ぜる（点滅の谷で、ヒビが入っていることを見失わないように）
         SetEdgeColor(Color.Lerp(originalEdgeColor, crackEdgeColor, Mathf.Lerp(0.4f, 1f, blink)));
     }
 
+    /// <summary>この床のふちの色だけを変える（<see cref="propertyBlock"/> を通すので、マテリアルは書き換えない）。</summary>
     private void SetEdgeColor(Color color)
     {
         meshRenderer.GetPropertyBlock(propertyBlock);
@@ -405,6 +480,7 @@ public class GravityGlassFloor : MonoBehaviour
         meshRenderer.SetPropertyBlock(propertyBlock);
     }
 
+    /// <summary>ヒビの線を全部消す。線は crackRoot の子なので、親ごと消せば済む。</summary>
     private void ClearCracks()
     {
         crackSegments.Clear();
@@ -448,6 +524,7 @@ public class GravityGlassFloor : MonoBehaviour
         }
     }
 
+    /// <summary>割れている間、毎フレーム呼ぶ。「元に戻る秒数」が決めてあれば、時間が来たら戻す。</summary>
     private void UpdateBroken()
     {
         if (respawnSeconds <= 0f)
@@ -500,6 +577,7 @@ public class GravityGlassFloor : MonoBehaviour
         Vector3 size = Vector3.Scale(box.size, transform.lossyScale);
         int count = Mathf.Max(1, piecesPerSide);
 
+        // 1枚の大きさは、マス目の 92%。すき間が空いて「割れた」と分かりやすい
         Vector3 pieceSize = new Vector3(size.x / count * 0.92f, size.y, size.z / count * 0.92f);
 
         for (int x = 0; x < count; x++)
@@ -512,31 +590,44 @@ public class GravityGlassFloor : MonoBehaviour
                     0f,
                     ((z + 0.5f) / count - 0.5f) * size.z);
 
-                GameObject piece = GameObject.CreatePrimitive(PrimitiveType.Cube);
-                piece.name = name + "_Piece";
-
-                RemoveCollider(piece);
-
-                piece.transform.SetPositionAndRotation(
-                    transform.TransformPoint(box.center) + transform.rotation * offset,
-                    transform.rotation);
-                piece.transform.localScale = pieceSize;
-
-                MeshRenderer pieceRenderer = piece.GetComponent<MeshRenderer>();
-                pieceRenderer.sharedMaterial = material;
-                pieceRenderer.shadowCastingMode = UnityEngine.Rendering.ShadowCastingMode.Off;
-
-                Rigidbody body = piece.AddComponent<Rigidbody>();
-                body.mass = 0.2f;
-
-                // 真ん中から外へ、少しだけ散らばる
-                Vector3 outward = offset.sqrMagnitude > 0.0001f ? offset.normalized : Random.onUnitSphere;
-                body.linearVelocity = (outward + Random.insideUnitSphere * 0.5f) * scatterSpeed;
-                body.angularVelocity = Random.insideUnitSphere * 4f;
-
-                Destroy(piece, pieceLifeSeconds);
+                SpawnPiece(offset, pieceSize, material);
             }
         }
+    }
+
+    /// <summary>
+    /// 破片を1枚出す。<paramref name="offset"/> は床の中心から見たマスの中心（床の向きで、メートル）。
+    /// 決めた秒数で自分から消える。
+    /// </summary>
+    private void SpawnPiece(Vector3 offset, Vector3 pieceSize, Material material)
+    {
+        GameObject piece = GameObject.CreatePrimitive(PrimitiveType.Cube);
+        piece.name = name + "_Piece";
+
+        RemoveCollider(piece);
+
+        piece.transform.SetPositionAndRotation(
+            transform.TransformPoint(box.center) + transform.rotation * offset,
+            transform.rotation);
+        piece.transform.localScale = pieceSize;
+
+        MeshRenderer pieceRenderer = piece.GetComponent<MeshRenderer>();
+        pieceRenderer.sharedMaterial = material;
+        pieceRenderer.shadowCastingMode = UnityEngine.Rendering.ShadowCastingMode.Off;
+
+        // Rigidbody は「重力で落とす・散らばらせる」ために付けている。
+        // 当たり判定が無く何にもぶつからないので、重さ（0.2kg）は動きにほぼ効かない
+        Rigidbody body = piece.AddComponent<Rigidbody>();
+        body.mass = 0.2f;
+
+        // 真ん中から外へ、少しだけ散らばる
+        // （まん中のマスは外向きが決まらないので、ランダムな向きにする。
+        //   向きに ±0.5 のばらつきを足し、回転は1秒あたり最大4ラジアンでランダムに回す）
+        Vector3 outward = offset.sqrMagnitude > 0.0001f ? offset.normalized : Random.onUnitSphere;
+        body.linearVelocity = (outward + Random.insideUnitSphere * 0.5f) * scatterSpeed;
+        body.angularVelocity = Random.insideUnitSphere * 4f;
+
+        Destroy(piece, pieceLifeSeconds);
     }
 
     /// <summary>
@@ -554,6 +645,7 @@ public class GravityGlassFloor : MonoBehaviour
         }
     }
 
+    /// <summary>1 ÷ value。value がほぼ 0 のときは、0 で割らないよう 1 を返す（大きさ 0 の床でも止まらないように）。</summary>
     private static float SafeInverse(float value)
     {
         return Mathf.Abs(value) > 0.0001f ? 1f / value : 1f;
@@ -569,6 +661,7 @@ public class GravityGlassFloor : MonoBehaviour
         }
 
         // 「乗っている」とみなす範囲を、水色の箱で示す
+        // （TryFindStepper で調べている箱と同じ。横は床の 96%、高さは detectHeight）
         Vector3 size = Vector3.Scale(collider.size, transform.lossyScale);
 
         Gizmos.matrix = Matrix4x4.TRS(

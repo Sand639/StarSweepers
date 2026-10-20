@@ -19,6 +19,16 @@ using UnityEngine.InputSystem;
 /// 細い物や小さい物でも拾えるように、**線を飛ばして当てる**のではなく、
 /// **近くにある持てる物の中から、正面に近くて一番近いもの**を選んでいる。
 /// （通信の実装でも、当たり判定より距離のほうが確実だという教訓があった）
+///
+/// ## 流れ
+///
+/// 1. 毎フレーム、何も持っていなければ**狙える物を探して色を変える**（<see cref="UpdateAim"/>）
+/// 2. F が押されたら、**持つ／離す**（<see cref="ToggleGrab"/>）。
+///    ただし、ロープや鍵が F を受け取るときは譲る
+/// 3. 持っている間は、物を**手の子にして**一緒に動かす。物理は止めておき、離すときに元へ戻す
+/// 4. 合体・分離で体が入れ替わったら、**新しい体の手へ持ち替えるか、その場に落とす**（<see cref="HandleControlSwitched"/>）
+///
+/// 使っているシーン：ロボット分離の検証シーン（`RobotSplitTest`）など、`RobotRig` を置いたシーン。
 /// </summary>
 [RequireComponent(typeof(RobotController))]
 public class RobotGrabber : MonoBehaviour
@@ -68,7 +78,20 @@ public class RobotGrabber : MonoBehaviour
     /// <summary>鍵を使う側。こちらも同じ F キーを使う（無くてもよい）。</summary>
     private RobotKeyUser keyUser;
 
-    private readonly Collider[] candidates = new Collider[32];
+    /// <summary>
+    /// 手の周りの当たり判定を一度に受け取れる数。
+    /// 床や壁など「持てない物」もここに入るので、`maxCandidates`（調べる「持てる物」の数。初期値16）より多めにしてある。
+    /// `maxCandidates` を32より大きくしても、一度に調べられるのはここまで。
+    /// </summary>
+    private const int OverlapBufferSize = 32;
+
+    /// <summary>
+    /// 手の周りにある当たり判定を受け取る入れ物。
+    /// 毎フレーム新しく作ると無駄なゴミが出るので、1つを使い回している。
+    /// </summary>
+    private readonly Collider[] overlapBuffer = new Collider[OverlapBufferSize];
+
+    /// <summary>狙えている物の色を変える道具。ロープ・鍵を使う側と同じ仕組みを使っている。</summary>
     private readonly InteractHighlight highlight = new InteractHighlight();
 
     /// <summary>いま狙えている物。無ければ null。</summary>
@@ -85,12 +108,14 @@ public class RobotGrabber : MonoBehaviour
         controller != null && controller.ActiveBody != null && controller.ActiveBody.CanHold
         && (ropeClimber == null || !ropeClimber.IsClimbing);
 
-    // 持つ前の状態。離すときに元へ戻すために control しておく
+    // 持つ前の状態。離すときに元へ戻すために控えておく
     private Transform heldOriginalParent;
     private bool heldOriginalKinematic;
     private bool heldOriginalGravity;
     private Rigidbody heldBody;
     private Collider heldCollider;
+
+    /// <summary>持った物とぶつからないようにしている体の当たり判定。戻すときに使う（<see cref="IgnoreCollisionWithBody"/>）。</summary>
     private Collider ignoredBodyCollider;
 
     /// <summary>いまどの体が持っているか。切り替えのときに、持ち替えるか判断するのに使う。</summary>
@@ -128,6 +153,7 @@ public class RobotGrabber : MonoBehaviour
         // いま操作している体が何も持っていなければ、狙える物を探す
         if (ActiveBodyIsHolding)
         {
+            // 持っている間は、狙いの色を消しておく
             if (Aimed != null)
             {
                 ClearHighlight();
@@ -200,16 +226,20 @@ public class RobotGrabber : MonoBehaviour
         RobotBody body = controller.ActiveBody;
         Transform hand = body.HoldPoint;
 
+        // 手から reach メートル以内の当たり判定を集める。
+        // `~0` は「すべてのレイヤー」、トリガー（すり抜け用の当たり判定）は数えない
         int count = Physics.OverlapSphereNonAlloc(
-            hand.position, reach, candidates, ~0, QueryTriggerInteraction.Ignore);
+            hand.position, reach, overlapBuffer, ~0, QueryTriggerInteraction.Ignore);
 
         Grabbable nearest = null;
         float nearestDistance = float.MaxValue;
+
+        // 調べた「持てる物」の数。床や壁は数えない。maxCandidates 個まで調べたら打ち切る
         int checkedCount = 0;
 
         for (int i = 0; i < count && checkedCount < maxCandidates; i++)
         {
-            Collider hit = candidates[i];
+            Collider hit = overlapBuffer[i];
 
             if (hit == null)
             {
@@ -232,21 +262,12 @@ public class RobotGrabber : MonoBehaviour
 
             checkedCount++;
 
-            // **頭を中心に、見ている方向から大きく外れているものは無視する**
-            // （判断のしかたは AimCheck にまとめてある）
-            if (!AimCheck.IsAimed(
-                body.HeadPosition, grabbable.transform.position, maxAngle, body.transform.forward))
+            if (!IsInSight(body, grabbable))
             {
                 continue;
             }
 
-            // **壁の向こうの物は持てない**（ガラスなど透ける物は通す）
-            if (requireClearPath && !AimCheck.HasClearPath(
-                body.HeadPosition, grabbable.transform.position, transform.root, grabbable.transform))
-            {
-                continue;
-            }
-
+            // 一番近いかどうかは、**手から物の中心まで**の距離で比べる
             float distance = Vector3.Distance(grabbable.transform.position, hand.position);
 
             if (distance < nearestDistance)
@@ -257,6 +278,30 @@ public class RobotGrabber : MonoBehaviour
         }
 
         return nearest;
+    }
+
+    /// <summary>
+    /// その物が、**いまの体から狙えていて、間に壁が無いか。**
+    /// 距離（届くか）はここでは見ない。呼ぶ側で測る。
+    /// </summary>
+    private bool IsInSight(RobotBody body, Grabbable grabbable)
+    {
+        // **頭を中心に、見ている方向から大きく外れているものは無視する**
+        // （判断のしかたは AimCheck にまとめてある）
+        if (!AimCheck.IsAimed(
+            body.HeadPosition, grabbable.transform.position, maxAngle, body.transform.forward))
+        {
+            return false;
+        }
+
+        // **壁の向こうの物は持てない**（ガラスなど透ける物は通す）
+        if (requireClearPath && !AimCheck.HasClearPath(
+            body.HeadPosition, grabbable.transform.position, transform.root, grabbable.transform))
+        {
+            return false;
+        }
+
+        return true;
     }
 
     // ------------------------------------------------------------
@@ -313,13 +358,7 @@ public class RobotGrabber : MonoBehaviour
 
         ClearHighlight();
 
-        target.transform.SetParent(hand, false);
-        target.transform.localPosition = target.HoldOffset;
-
-        if (target.StraightenWhenHeld)
-        {
-            target.transform.localRotation = Quaternion.identity;
-        }
+        AttachToHand(target, hand);
 
         target.SetHeld(true);
         Held = target;
@@ -327,6 +366,25 @@ public class RobotGrabber : MonoBehaviour
         Aimed = null;
 
         Debug.Log($"[ROBOT] {body.name} が {target.name} を持ちました");
+    }
+
+    /// <summary>
+    /// 物を**手の子にして**、手の位置に置く。
+    /// 手の子にしておくと、体が歩いても向きを変えても、物が手と一緒に付いてくる。
+    ///
+    /// 持ったとき（<see cref="Grab"/>）と、体が入れ替わって持ち替えるとき
+    /// （<see cref="HandleControlSwitched"/>）の両方で使う。
+    /// </summary>
+    private static void AttachToHand(Grabbable target, Transform hand)
+    {
+        // false … いまの見た目の位置を保たず、手から見た位置として置き直す
+        target.transform.SetParent(hand, false);
+        target.transform.localPosition = target.HoldOffset;
+
+        if (target.StraightenWhenHeld)
+        {
+            target.transform.localRotation = Quaternion.identity;
+        }
     }
 
     /// <summary>持っている物を離す。</summary>
@@ -339,6 +397,7 @@ public class RobotGrabber : MonoBehaviour
 
         Grabbable target = Held;
 
+        // true … いまの見た目の位置・向きのまま、元の親へ戻す（手を離したその場に残る）
         target.transform.SetParent(heldOriginalParent, true);
 
         if (heldBody != null)
@@ -386,7 +445,16 @@ public class RobotGrabber : MonoBehaviour
         Destroy(target);
     }
 
-    /// <summary>持った物と、体の当たり判定をぶつけないようにする（または戻す）。</summary>
+    /// <summary>
+    /// 持った物と、体の当たり判定をぶつけないようにする（または戻す）。
+    ///
+    /// | 呼び方 | すること |
+    /// | `ignore = true` | `body` の当たり判定を覚えて、持った物とぶつからないようにする |
+    /// | `ignore = false` | **前に覚えた体**とのぶつからない設定を元に戻し、覚えた体を忘れる（`body` は使わない） |
+    ///
+    /// 戻すときに `body` を見ないのは、体が入れ替わったあとでも、
+    /// **設定したときの体**を確実に元へ戻すため。
+    /// </summary>
     private void IgnoreCollisionWithBody(RobotBody body, bool ignore)
     {
         if (heldCollider == null)
@@ -447,17 +515,12 @@ public class RobotGrabber : MonoBehaviour
             return;
         }
 
-        // 新しい体の手に持ち替える
+        // 新しい体の手に持ち替える。
+        // 前の体とのぶつからない設定を戻してから、新しい体とぶつからないようにする
         IgnoreCollisionWithBody(null, false);
         IgnoreCollisionWithBody(body, true);
 
-        Held.transform.SetParent(body.HoldPoint, false);
-        Held.transform.localPosition = Held.HoldOffset;
-
-        if (Held.StraightenWhenHeld)
-        {
-            Held.transform.localRotation = Quaternion.identity;
-        }
+        AttachToHand(Held, body.HoldPoint);
 
         heldByBody = body;
 
@@ -480,6 +543,7 @@ public class RobotGrabber : MonoBehaviour
         highlight.Clear();
     }
 
+    /// <summary>このフレームに、持つ／離すキー（`grabKey`）が押されたか。</summary>
     private bool WasGrabKeyPressed()
     {
         Keyboard keyboard = Keyboard.current;

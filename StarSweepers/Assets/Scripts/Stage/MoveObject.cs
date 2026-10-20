@@ -14,6 +14,7 @@ using UnityEngine.Serialization;
 /// そこからどれだけ変わるかを、下の3つで決める。
 ///
 /// | 決めるもの | 例 |
+/// | --- | --- |
 /// | 位置 | (0, -3, 0) で床に沈む／(3, 0, 0) で横にスライド |
 /// | 回転 | (0, 90, 0) で90度開く扉になる |
 /// | 大きさ | (0, -2, 0) で縮んで消える壁になる |
@@ -86,7 +87,11 @@ public class MoveObject : MonoBehaviour
 
     /// <summary>閉じた状態。置いたときの位置・向き・大きさ。</summary>
     private Vector3 closedPosition;
+
+    /// <summary>閉じた状態の向き（度。X・Y・Z の回転角）。</summary>
     private Vector3 closedRotation;
+
+    /// <summary>閉じた状態の大きさ。</summary>
     private Vector3 closedScale;
 
     /// <summary>開き具合。0で閉じた状態、1で開いた状態。</summary>
@@ -113,6 +118,8 @@ public class MoveObject : MonoBehaviour
             return;
         }
 
+        // 1秒あたりに進む開き具合。moveTime 秒で 0 → 1 を進みきる。
+        // 0秒が入っていたときは、0.01秒で動ききる速さにする（0 で割らないため）
         float speed = moveTime > 0f ? 1f / moveTime : 100f;
 
         amount = Mathf.MoveTowards(amount, target, speed * Time.deltaTime);
@@ -159,6 +166,8 @@ public class MoveObject : MonoBehaviour
     {
         transform.localPosition = Vector3.Lerp(closedPosition, closedPosition + positionOffset, amount);
 
+        // ※ Slerp は**近いほうの回り方**で回る。180度を超える回転（例：270度）を入れると、
+        //    逆向きに 90度回って見える（行き着く角度は同じ）
         transform.localRotation = Quaternion.Slerp(
             Quaternion.Euler(closedRotation),
             Quaternion.Euler(closedRotation + rotationOffset),
@@ -188,6 +197,8 @@ public class MoveObject : MonoBehaviour
         SyncPair(transform.localPosition,
             ref positionOffset, ref positionResult, ref lastPositionOffset, ref lastPositionResult);
 
+        // 回転は、Unity が 0〜360度に直した角度をもとに計算する。
+        // そのため、-10度に置いた物の「変更後」は 350 のような数で出ることがある（向きとしては同じ）
         SyncPair(transform.localEulerAngles,
             ref rotationOffset, ref rotationResult, ref lastRotationOffset, ref lastRotationResult);
 
@@ -195,7 +206,11 @@ public class MoveObject : MonoBehaviour
             ref scaleOffset, ref scaleResult, ref lastScaleOffset, ref lastScaleResult);
     }
 
-    /// <summary>差分と変更後の値の、書き換えられたほうから、もう一方を求める。</summary>
+    /// <summary>
+    /// 差分と変更後の値の、書き換えられたほうから、もう一方を求める。
+    /// <paramref name="baseValue"/> は閉じた状態（いま置かれている値）。
+    /// last〜 は前回の値で、**前回と違うほう＝いま書き換えられたほう**と判断する。
+    /// </summary>
     private static void SyncPair(Vector3 baseValue,
         ref Vector3 offset, ref Vector3 result, ref Vector3 lastOffset, ref Vector3 lastResult)
     {

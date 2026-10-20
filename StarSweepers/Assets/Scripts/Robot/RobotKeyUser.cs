@@ -28,6 +28,9 @@ using UnityEngine.InputSystem;
 /// それ以外のときは、これまでどおり <see cref="RobotGrabber"/> が受け取る。
 ///
 /// 扉の正面で物を置きたいときは、**扉から目をそらしてから F を押す**。
+///
+/// 使っているシーン：ロボット分離の検証シーン（`RobotSplitTest`）など、`RobotRig` を置いたシーン。
+/// 扉そのものは <see cref="LockedDoor"/>、鍵は <see cref="DoorKey"/>。
 /// </summary>
 [RequireComponent(typeof(RobotController))]
 [RequireComponent(typeof(RobotGrabber))]
@@ -63,8 +66,11 @@ public class RobotKeyUser : MonoBehaviour
     [SerializeField] private float highlightStrength = 0.5f;
 
     private RobotController controller;
+
+    /// <summary>物を持つ側。「いま持っている物が鍵か」を見るのと、使った鍵を消すのに使う。</summary>
     private RobotGrabber grabber;
 
+    /// <summary>開けられる扉の色を変える道具。物を持つ・ロープ側と同じ仕組みを使っている。</summary>
     private readonly InteractHighlight highlight = new InteractHighlight();
 
     /// <summary>いま狙えている扉。無ければ null。</summary>
@@ -100,7 +106,10 @@ public class RobotKeyUser : MonoBehaviour
     // 狙う
     // ------------------------------------------------------------
 
-    /// <summary>正面の近くにある「いま持っている鍵で開く扉」を探して、色を変える。</summary>
+    /// <summary>
+    /// 正面の近くにある「いま持っている鍵で開く扉」を探して、色を変える。
+    /// （一度鍵を外した扉は、鍵を持っていなくても対象になる。<see cref="FindDoor"/> を参照）
+    /// </summary>
     private void UpdateAim()
     {
         LockedDoor found = FindDoor();
@@ -153,9 +162,12 @@ public class RobotKeyUser : MonoBehaviour
                 continue;
             }
 
+            // 距離は**体の足元から、扉の一番近い場所まで**で測る
+            // （物を持つ・ロープにつかまるほうは手から測っているので、測り方が違う）
             Vector3 point = ClosestPoint(door);
             float distance = Vector3.Distance(point, body.transform.position);
 
+            // 届かない扉と、すでに見つけた扉より遠い扉は、狙いを調べる前に外す（調べる手間を省く）
             if (distance > reach || distance >= nearestDistance)
             {
                 continue;
@@ -209,6 +221,8 @@ public class RobotKeyUser : MonoBehaviour
     public void UseKey()
     {
         LockedDoor door = Aimed;
+
+        // 鍵はこのあと消すので、ログに名前を出すために先に控えておく
         DoorKey key = HeldKey;
 
         if (door == null)
@@ -239,6 +253,7 @@ public class RobotKeyUser : MonoBehaviour
         Debug.Log($"[ROBOT] {(key != null ? key.name : "鍵")} を使って {door.name} の鍵を外しました");
     }
 
+    /// <summary>このフレームに、鍵を使うキー（`useKey`）が押されたか。</summary>
     private bool WasUseKeyPressed()
     {
         Keyboard keyboard = Keyboard.current;

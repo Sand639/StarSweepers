@@ -100,7 +100,10 @@ public class PressButton : MonoBehaviour
     /// <summary>沈み具合。0で浮いた状態、1で沈みきった状態。</summary>
     public float PressAmount { get; private set; }
 
+    /// <summary>乗っている物を探すときの入れ物。毎フレーム作り直さないよう使い回す。一度に拾えるのは16個まで。</summary>
     private readonly Collider[] hits = new Collider[16];
+
+    /// <summary>押せないあいだ、ボタンを暗い色にするための係（色を戻すときのために、元の色も覚えている）。</summary>
     private readonly InteractHighlight usedTint = new InteractHighlight();
 
     /// <summary>ボタンが浮いているときの位置。ここから下へ沈める。</summary>
@@ -121,6 +124,7 @@ public class PressButton : MonoBehaviour
         IsOccupied = CheckOccupied();
 
         // **乗った瞬間だけ**信号を出す。乗り続けても1回きり
+        // （浮き上がりきる前に乗り直した場合は CanSignal が false なので、沈むだけで信号は出ない）
         if (IsOccupied && !wasOccupied && CanSignal)
         {
             Signal();
@@ -136,6 +140,7 @@ public class PressButton : MonoBehaviour
     /// <summary>ボタンの上の箱の中に、何か入っているかを調べる。</summary>
     private bool CheckOccupied()
     {
+        // すり抜ける当たり判定（トリガー。見えない範囲など）は、乗った物として数えない
         int count = Physics.OverlapBoxNonAlloc(
             transform.TransformPoint(detectOffset),
             detectSize * 0.5f,
@@ -174,6 +179,7 @@ public class PressButton : MonoBehaviour
     /// </summary>
     public void Signal()
     {
+        // 浮き上がりきるまで、次の信号を出さない
         CanSignal = false;
 
         foreach (GameObject target in toggleObjects)
@@ -206,6 +212,7 @@ public class PressButton : MonoBehaviour
 
         // 沈むときと浮くときで速さが違う。
         // **浮くのが遅いほど、次に押せるまでの間が長くなる**
+        // speed は1秒あたりに進む沈み具合。0秒が入っていたときは 0.01秒で動ききる速さにする（0 で割らないため）
         float time = IsOccupied ? pressTime : riseTime;
         float speed = time > 0f ? 1f / time : 100f;
 
@@ -217,6 +224,7 @@ public class PressButton : MonoBehaviour
         }
 
         // **浮き上がりきったら、また押せるようになる**
+        // （0.0001 以下＝ほぼ 0。小数の誤差でぴったり 0 にならなくても戻れるように）
         if (!CanSignal && !IsOccupied && PressAmount <= 0.0001f)
         {
             CanSignal = true;
@@ -236,6 +244,7 @@ public class PressButton : MonoBehaviour
 
         bool shouldDim = !CanSignal;
 
+        // もうその色になっていれば何もしない（切り替わった瞬間だけ色を変える）
         if (shouldDim == usedTint.IsActive)
         {
             return;
@@ -243,6 +252,7 @@ public class PressButton : MonoBehaviour
 
         if (shouldDim)
         {
+            // 1 は「暗い色そのものにする」（元の色と混ぜない）
             usedTint.Apply(buttonVisual.gameObject, usedColor, 1f);
         }
         else

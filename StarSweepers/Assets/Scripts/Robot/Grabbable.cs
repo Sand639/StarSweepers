@@ -8,6 +8,11 @@ using UnityEngine;
 ///
 /// 持ち上げの処理そのものは <see cref="RobotGrabber"/> にある。
 /// こちらは「持てる物かどうか」と、持ったときの見た目の調整だけを持つ。
+///
+/// **Rigidbody が必ず要る。** 持っている間は物理を止め（手に付けて運ぶ）、
+/// 離したときに元の状態へ戻す、という作りのため。
+///
+/// 使っている物：ロボット分離の検証シーンの持てる箱、鍵（<see cref="DoorKey"/>）など。
 /// </summary>
 [RequireComponent(typeof(Rigidbody))]
 public class Grabbable : MonoBehaviour

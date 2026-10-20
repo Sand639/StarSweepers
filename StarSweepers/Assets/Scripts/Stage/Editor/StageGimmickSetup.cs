@@ -9,6 +9,17 @@ using UnityEngine;
 /// Unityのメニュー `Tools > StarSweepers > アーカイブ > ロボットステージ > 踏むボタンと動く壁を置く` から実行できる。
 /// **ボタンと壁が繋がった状態**で置かれるので、そのまま再生すれば動く。
 ///
+/// ほかに、同じ `ロボットステージ` の下に次のメニューもある。
+///
+/// | メニュー | すること |
+/// | --- | --- |
+/// | `鍵と鍵付きの扉を置く` | 鍵（<see cref="DoorKey"/>）と、それで開く扉（<see cref="LockedDoor"/>）を1組置く |
+/// | `ガラスの板を置く` | 透けるが通れないガラスの板を1枚置く |
+///
+/// 置く場所は、どれも**シーンビューが見ている場所の床の上**。
+/// 部品を作る public のメソッド（CreateButton など）は、**検証シーンを作り直すツール（`RobotRigSetup`）からも呼んでいる。**
+/// 名前や引数を変えるときは、そちらも合わせて直すこと。
+///
 /// ※ Editor フォルダにあるため、ゲームのビルドには含まれない。
 /// </summary>
 public static class StageGimmickSetup
@@ -33,6 +44,7 @@ public static class StageGimmickSetup
     {
         Vector3 position = FindGroundPosition();
 
+        // 壁はボタンの奥（+Z）へ 4メートルの所に置く。壁の位置は中心なので、高さの半分だけ持ち上げて床に立たせる
         PressButton button = CreateButton("PressButton", position);
         MoveObject wall = CreateWall("MovingWall", position + new Vector3(0f, WallSize.y * 0.5f, 4f));
 
@@ -53,6 +65,8 @@ public static class StageGimmickSetup
     {
         Vector3 position = FindGroundPosition();
 
+        // 鍵は横（-X）へ 2メートルずらし、床から 0.2メートル浮かせて置く（再生すると落ちて床に乗る）。
+        // 扉は奥（+Z）へ 4メートル。keyId は空 ＝ どの鍵でもどの扉でも開く
         GameObject key = CreateKey("DoorKey", position + new Vector3(-2f, 0.2f, 0f), "");
         LockedDoor door = CreateLockedDoor(
             "LockedDoor", position + new Vector3(0f, WallSize.y * 0.5f, 4f), "");
@@ -143,8 +157,7 @@ public static class StageGimmickSetup
         GameObject key = new GameObject(name);
         key.transform.position = position;
 
-        Material material = GetOrCreateMaterial(
-            MaterialFolder + "/DoorKey.mat", new Color(0.95f, 0.78f, 0.25f));
+        Material material = GetOrCreateKeyMaterial();
 
         // 持ち手（輪）と、差し込む棒。鍵らしい形にしておくと拾う物だと分かりやすい
         AddPart(key.transform, "Ring", new Vector3(0f, 0.1f, 0f),
@@ -156,9 +169,11 @@ public static class StageGimmickSetup
 
         // 当たり判定は、部品ごとではなく**まとめて1つ**にする。
         // 細かい形のまま物理に任せると、床で跳ねたり引っかかったりしやすい
+        // 大きさ（メートル）は、輪から歯の先までがすっぽり収まる、少し大きめの箱
         BoxCollider collider = key.AddComponent<BoxCollider>();
         collider.size = new Vector3(0.24f, 0.5f, 0.1f);
 
+        // 重さ 0.5kg。空気の抵抗（Damping）を少し入れて、落としたときに転がり続けないようにする
         Rigidbody body = key.AddComponent<Rigidbody>();
         body.mass = 0.5f;
         body.linearDamping = 0.5f;
@@ -193,6 +208,7 @@ public static class StageGimmickSetup
         SerializedObject wallSerialized = new SerializedObject(moving);
 
         // **上へ持ち上がる。** 鍵で開いた扉は「上がる」ほうが見て分かりやすい
+        // （扉の高さより 0.2メートル多く上げて、下をくぐれるようにする）
         wallSerialized.FindProperty("positionOffset").vector3Value = new Vector3(0f, WallSize.y + 0.2f, 0f);
         wallSerialized.ApplyModifiedPropertiesWithoutUndo();
 
@@ -202,11 +218,12 @@ public static class StageGimmickSetup
         lockMark.transform.SetParent(door.transform, false);
 
         // 扉が大きく引き伸ばされているので、印の大きさは割り算で戻す
+        // （実際の大きさは 横0.5 × 縦0.5 × 厚み0.15 メートル）。
+        // 位置の -0.55 は、扉の手前の面（-0.5）より少しだけ手前。印が扉から飛び出して見える
         lockMark.transform.localPosition = new Vector3(0f, 0f, -0.55f);
         lockMark.transform.localScale = new Vector3(
             0.5f / WallSize.x, 0.5f / WallSize.y, 0.15f / WallSize.z);
-        lockMark.GetComponent<MeshRenderer>().sharedMaterial =
-            GetOrCreateMaterial(MaterialFolder + "/DoorKey.mat", new Color(0.95f, 0.78f, 0.25f));
+        lockMark.GetComponent<MeshRenderer>().sharedMaterial = GetOrCreateKeyMaterial();
 
         Object.DestroyImmediate(lockMark.GetComponent<Collider>());
 
@@ -219,6 +236,15 @@ public static class StageGimmickSetup
         serialized.ApplyModifiedPropertiesWithoutUndo();
 
         return locked;
+    }
+
+    /// <summary>
+    /// 鍵の金色のマテリアル。**鍵そのものと、扉の鍵穴の印の両方に使う**
+    /// （同じ色にしておくと、鍵を使う場所だと見て分かる）。
+    /// </summary>
+    private static Material GetOrCreateKeyMaterial()
+    {
+        return GetOrCreateMaterial(MaterialFolder + "/DoorKey.mat", new Color(0.95f, 0.78f, 0.25f));
     }
 
     /// <summary>鍵の部品を1つ足す。当たり判定は持たせない（まとめて1つにするため）。</summary>
@@ -273,6 +299,7 @@ public static class StageGimmickSetup
         serialized.FindProperty("buttonVisual").objectReferenceValue = top.transform;
 
         // 反応する箱は、土台の上を覆う位置に置く
+        // （土台と同じ広さで、土台の上面から 0.5メートルの高さまで。箱の中心は上面の 0.25メートル上）
         serialized.FindProperty("detectSize").vector3Value =
             new Vector3(BaseSize.x, 0.5f, BaseSize.z);
         serialized.FindProperty("detectOffset").vector3Value =
@@ -330,6 +357,8 @@ public static class StageGimmickSetup
             ? SceneView.lastActiveSceneView.pivot
             : Vector3.zero;
 
+        // 見ている場所の 50メートル上から、真下へ 200メートルまで床を探す
+        // （見ている場所が床より下にあっても、上にあっても見つかるように）
         if (Physics.Raycast(pivot + Vector3.up * 50f, Vector3.down, out RaycastHit hit, 200f))
         {
             return hit.point;
