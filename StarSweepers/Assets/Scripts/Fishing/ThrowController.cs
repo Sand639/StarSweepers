@@ -1,3 +1,4 @@
+using System.Collections;
 using UnityEngine;
 using UnityEngine.InputSystem;
 
@@ -23,7 +24,7 @@ public enum ThrowDirectionMode
 public enum ThrowStyle
 {
     /// <summary>
-    /// **釣り式（もとの仕様）。** 引き寄せながらゲージが1回だけ動き、
+    /// **釣り式（もとの仕様）。** 物資を物理任せにしてゲージを1回だけ動かし、
     /// 前半の枠で押す＝後ろへ、後半の枠で押す＝前へ投げる。
     /// </summary>
     SweepOnce,
@@ -69,9 +70,9 @@ public class SkillCheckZone
 /// <summary>
 /// **フックした物資を引き寄せて、スキルチェックの入力で投げる係。**
 ///
-/// 引き寄せの動き（仕様改善1）：
-///   物資はプレイヤーへ向かって弧を描いて上がり、**ゲージの真ん中（0.5）でプレイヤーの真上を通過**し、
-///   そのまま後方へ抜けていく。「釣り竿で引っこ抜く」動きになる。
+/// タイプAの動き：
+///   命中後はゲージが動いている間、物資を物理任せにする。クリック時に現在位置から弧を描くレールを高速で通し、
+///   **プレイヤーの真上を通過して後方へ抜けたあと**、ゲージ位置に応じた強さと方向で飛ばす。
 ///
 /// スキルチェック（仕様追加1）：
 ///   ゲージは**1往復だけ**動く。枠は2つあり、
@@ -80,8 +81,8 @@ public class SkillCheckZone
 ///   枠の中心に近いほど強く投げる（通常／強い／非常に強い）。
 ///
 /// ミス（仕様改善2）：
-///   **ゲージが通り過ぎた**か、**枠の外で押した**場合はミス。
-///   ほんの少しだけプレイヤー側へ引き寄せるだけで、引っ張りを終了する。
+///   **枠の外で押した**場合は、レールの終点からほんの少しプレイヤー側へ引き寄せる。
+///   クリックしないままゲージが終わった場合は、物資には触れずフックだけを外す。
 ///
 /// 投げる方向は、**投げた瞬間にプレイヤーが向いている方向**を基準にする（仕様改善3）。
 /// 釣り上げたときの向きではないので、引っ張っている間に振り向けば行き先も変わる。
@@ -216,7 +217,7 @@ public class ThrowController : MonoBehaviour
     [SerializeField] private float heavyDragSeconds = 0.6f;
 
     [Header("引き寄せの動き")]
-    [Tooltip("引き寄せ〜スキルチェックが終わるまでの秒数。短いほど難しい")]
+    [Tooltip("スキルチェックゲージが左端から右端まで動く秒数。短いほど難しい")]
     [SerializeField] private float skillCheckDuration = 1.6f;
 
     [Tooltip("プレイヤーの足元から、物資が通り越す高さ（メートル）")]
@@ -303,10 +304,13 @@ public class ThrowController : MonoBehaviour
     private bool distanceBasedPullActive;
     private float armDelay;   // Begin 直後の1入力を誤爆しないための短い待ち
     private float timer;
+    private float skillCheckTimer;
+    private Coroutine typeAReelRoutine;
     private float distancePullElapsed;
     private Vector3 reelStart;
     private bool targetGravityWas;
     private bool targetKinematicWas;
+    private const float TypeAReelDuration = 0.18f;
     private AnchorGimmick anchorTarget;
     private CharacterController pullingPlayer;
     private FishingPlayerController pullingPlayerMovement;
@@ -447,6 +451,11 @@ public class ThrowController : MonoBehaviour
     {
         playerMap?.Disable();
         SetAnchorGravitySuppressed(false);
+        if (typeAReelRoutine != null && target != null && !target.IsVanished)
+        {
+            RestorePhysics(target.Body);
+        }
+        StopTypeAReelRoutine();
     }
 
     /// <summary>HookController から呼ばれる。引き寄せとスキルチェックを開始する。</summary>
@@ -457,6 +466,7 @@ public class ThrowController : MonoBehaviour
         pullableTarget = null;
         active = true;
         timer = 0f;
+        skillCheckTimer = 0f;
         armDelay = 0.12f;
         heavy = false;
         heavyWeight = 1f;
@@ -486,8 +496,7 @@ public class ThrowController : MonoBehaviour
         if (target != null)
         {
             distancePullElapsed = 0f;
-            bool waitForTypeAClick = style == ThrowStyle.SweepOnce && !distanceBasedPullActive;
-            if (!waitForTypeAClick)
+            if (style != ThrowStyle.SweepOnce || distanceBasedPullActive)
             {
                 // **持っている間は、自分の体に当たらないようにする**（2026/9/30）。
                 // タイプAはクリックするまで物理・座標に触れないため、ここでは実行しない。
@@ -568,6 +577,11 @@ public class ThrowController : MonoBehaviour
             return;
         }
 
+        if (typeAReelRoutine != null)
+        {
+            return;
+        }
+
         if (contestTarget != null)
         {
             UpdateContest();
@@ -622,19 +636,25 @@ public class ThrowController : MonoBehaviour
             return;
         }
 
-        timer += Time.deltaTime;
+        if (style == ThrowStyle.TwoButtons)
+        {
+            timer += Time.deltaTime;
+            if (armDelay > 0f)
+            {
+                armDelay -= Time.deltaTime;
+            }
+            UpdateTwoButtons();
+            return;
+        }
+
+        // タイプAは timer を0のまま保ち、ゲージだけ別の時間で進める。
+        skillCheckTimer += Time.deltaTime;
         if (armDelay > 0f)
         {
             armDelay -= Time.deltaTime;
         }
 
-        if (style == ThrowStyle.TwoButtons)
-        {
-            UpdateTwoButtons();
-            return;
-        }
-
-        float t =Mathf.Clamp01(timer / Mathf.Max(0.1f, skillCheckDuration));
+        float t = Mathf.Clamp01(skillCheckTimer / Mathf.Max(0.1f, skillCheckDuration));
 
         if (hook != null && hook.UI != null)
         {
@@ -648,7 +668,7 @@ public class ThrowController : MonoBehaviour
         }
 
         // ゲージが1往復して通り過ぎたらミス（仕様改善2）
-        if (timer >= skillCheckDuration)
+        if (skillCheckTimer >= skillCheckDuration)
         {
             if (style == ThrowStyle.SweepOnce && !distanceBasedPullActive)
             {
@@ -1808,7 +1828,8 @@ public class ThrowController : MonoBehaviour
     /// <summary>押された瞬間のゲージ位置を、どの枠に入ったかで判定する。</summary>
     private void Resolve(float t)
     {
-        if (style == ThrowStyle.SweepOnce)
+        bool typeA = style == ThrowStyle.SweepOnce;
+        if (typeA)
         {
             PrepareTypeAThrowAtClick();
         }
@@ -1826,23 +1847,96 @@ public class ThrowController : MonoBehaviour
 
                 if (distance <= zone.perfectWindow)
                 {
-                    FinishAsThrow(zone, ThrowTier.Perfect);
+                    if (typeA)
+                    {
+                        typeAReelRoutine = StartCoroutine(TypeAReelAndFinish(zone, ThrowTier.Perfect, true));
+                    }
+                    else
+                    {
+                        FinishAsThrow(zone, ThrowTier.Perfect);
+                    }
                     return;
                 }
                 if (distance <= zone.goodWindow)
                 {
-                    FinishAsThrow(zone, ThrowTier.Good);
+                    if (typeA)
+                    {
+                        typeAReelRoutine = StartCoroutine(TypeAReelAndFinish(zone, ThrowTier.Good, true));
+                    }
+                    else
+                    {
+                        FinishAsThrow(zone, ThrowTier.Good);
+                    }
                     return;
                 }
                 if (distance <= zone.hitWindow)
                 {
-                    FinishAsThrow(zone, ThrowTier.Normal);
+                    if (typeA)
+                    {
+                        typeAReelRoutine = StartCoroutine(TypeAReelAndFinish(zone, ThrowTier.Normal, true));
+                    }
+                    else
+                    {
+                        FinishAsThrow(zone, ThrowTier.Normal);
+                    }
                     return;
                 }
             }
         }
 
-        FinishAsMiss("枠の外で押した");
+        if (typeA)
+        {
+            typeAReelRoutine = StartCoroutine(TypeAReelAndFinish(null, ThrowTier.Normal, false));
+        }
+        else
+        {
+            FinishAsMiss("枠の外で押した");
+        }
+    }
+
+    /// <summary>タイプAはクリック後、現在位置からレールを高速で一巡してから投げる。</summary>
+    private IEnumerator TypeAReelAndFinish(SkillCheckZone zone, ThrowTier tier, bool success)
+    {
+        UpdateReelPosition(0f);
+        float elapsed = 0f;
+
+        while (elapsed < TypeAReelDuration)
+        {
+            if (target == null || target.IsVanished)
+            {
+                typeAReelRoutine = null;
+                AbandonPull();
+                yield break;
+            }
+
+            if (GamePause.BlocksInput)
+            {
+                yield return null;
+                continue;
+            }
+
+            if (hook != null && hook.IsStunned)
+            {
+                typeAReelRoutine = null;
+                FinishAsMiss("スタンしたため");
+                yield break;
+            }
+
+            elapsed += Time.deltaTime;
+            UpdateReelPosition(Mathf.Clamp01(elapsed / TypeAReelDuration));
+            yield return null;
+        }
+
+        UpdateReelPosition(1f);
+        typeAReelRoutine = null;
+        if (success)
+        {
+            FinishAsThrow(zone, tier);
+        }
+        else
+        {
+            FinishAsMiss("枠の外で押した");
+        }
     }
 
     private void FinishAsThrow(SkillCheckZone zone, ThrowTier tier)
@@ -1952,6 +2046,8 @@ public class ThrowController : MonoBehaviour
         {
             return;
         }
+
+        StopTypeAReelRoutine();
 
         // 横取りの待ち（ほかの人の物資にくっついているだけ）なら、物理には触らずにやめる
         if (contestTarget != null)
@@ -2102,6 +2198,7 @@ public class ThrowController : MonoBehaviour
 
     private void EndPull()
     {
+        StopTypeAReelRoutine();
         SetAnchorGravitySuppressed(false);
         target.SetHooked(false);
         target = null;
@@ -2134,6 +2231,17 @@ public class ThrowController : MonoBehaviour
     {
         body.isKinematic = targetKinematicWas;
         body.useGravity = targetGravityWas;
+    }
+
+    private void StopTypeAReelRoutine()
+    {
+        if (typeAReelRoutine == null)
+        {
+            return;
+        }
+
+        StopCoroutine(typeAReelRoutine);
+        typeAReelRoutine = null;
     }
 
     /// <summary>タイプAでクリックされた瞬間の物資の位置を取り、投げ処理を始める。</summary>
