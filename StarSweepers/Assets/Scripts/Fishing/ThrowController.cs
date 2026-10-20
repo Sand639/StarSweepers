@@ -2253,11 +2253,14 @@ public class ThrowController : MonoBehaviour
         }
 
         Rigidbody body = target.Body;
-        // フック命中後は物理・座標に触れず、クリック時点の現在地を記録する。
-        reelStart = body.position;
+        // フック命中後は物理・座標に触れず、クリック時点で画面に表示されている位置を記録する。
+        // Rigidbody の補間中は body.position と transform.position が一時的に異なるため、
+        // 物理を止めた直後にレール始点へ巻き戻って見えないよう、Transform 側を基準にする。
+        reelStart = target.transform.position;
         targetGravityWas = body.useGravity;
         targetKinematicWas = body.isKinematic;
         ThrowPassThrough.Hold(target.gameObject, hook.PlayerRoot.GetComponent<CharacterController>());
+        body.position = reelStart;
         body.linearVelocity = Vector3.zero;
         body.angularVelocity = Vector3.zero;
         body.useGravity = false;
