@@ -307,6 +307,7 @@ public class ThrowController : MonoBehaviour
     private Vector3 reelStart;
     private bool targetGravityWas;
     private bool targetKinematicWas;
+    private bool typeAReelPhysicsPending;
     private AnchorGimmick anchorTarget;
     private CharacterController pullingPlayer;
     private FishingPlayerController pullingPlayerMovement;
@@ -453,6 +454,7 @@ public class ThrowController : MonoBehaviour
     public void Begin(HookableObject hookable)
     {
         distanceBasedPullActive = false;
+        typeAReelPhysicsPending = false;
         target = hookable;
         pullableTarget = null;
         active = true;
@@ -502,9 +504,15 @@ public class ThrowController : MonoBehaviour
                 target.Body.isKinematic = false;
                 target.Body.useGravity = targetGravityWas;
             }
+            else if (style == ThrowStyle.SweepOnce)
+            {
+                // タイプAは、最初のレール移動が始まるまで物理を生かしておく。
+                // 動く床に乗った物資が、フック命中の瞬間に止まるのを防ぐ。
+                typeAReelPhysicsPending = true;
+            }
             else
             {
-                // タイプAは従来どおり、決めたレール上を通すため物理を止める。
+                // 宇宙ごみ式は従来どおり、決めた軌道へ乗せるため物理を止める。
                 target.Body.linearVelocity = Vector3.zero;
                 target.Body.angularVelocity = Vector3.zero;
                 target.Body.useGravity = false;
@@ -627,6 +635,7 @@ public class ThrowController : MonoBehaviour
 
         float t =Mathf.Clamp01(timer / Mathf.Max(0.1f, skillCheckDuration));
 
+        BeginTypeAReelIfNeeded();
         UpdateReelPosition(t);
 
         if (hook != null && hook.UI != null)
@@ -2090,6 +2099,7 @@ public class ThrowController : MonoBehaviour
         pullingPlayerMovement = null;
         active = false;
         distanceBasedPullActive = false;
+        typeAReelPhysicsPending = false;
         heavy = false;
         heavyWeight = 1f;
 
@@ -2112,8 +2122,25 @@ public class ThrowController : MonoBehaviour
     /// <summary>引き寄せのために止めていた物理を元に戻す。</summary>
     private void RestorePhysics(Rigidbody body)
     {
+        typeAReelPhysicsPending = false;
         body.isKinematic = targetKinematicWas;
         body.useGravity = targetGravityWas;
+    }
+
+    /// <summary>タイプAの等速レールへ入る直前に、物資の物理を止める。</summary>
+    private void BeginTypeAReelIfNeeded()
+    {
+        if (!typeAReelPhysicsPending || target == null)
+        {
+            return;
+        }
+
+        Rigidbody body = target.Body;
+        body.linearVelocity = Vector3.zero;
+        body.angularVelocity = Vector3.zero;
+        body.useGravity = false;
+        body.isKinematic = true;
+        typeAReelPhysicsPending = false;
     }
 
     private float ForceOf(ThrowTier tier)
