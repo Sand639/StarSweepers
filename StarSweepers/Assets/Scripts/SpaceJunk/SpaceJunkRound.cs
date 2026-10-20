@@ -92,45 +92,64 @@ public partial class SpaceJunkRound : NetworkBehaviour
 
     [Tooltip("② 自分のチームへカメラが寄る秒数")]
     [Min(0f)]
-    [SerializeField] private float introZoomSeconds = 1.5f;
+    [SerializeField] private float introZoomSeconds = 1f;
 
-    [Tooltip("③ 3・2・1 のカウントダウンの秒数")]
+    [Tooltip("② 寄ったときの、チームの中央から後ろ（マップの外側）への距離（水平）。味方が離れているほど、自動で少し足す")]
+    [Min(0f)]
+    [SerializeField] private float introCloseDistance = 8f;
+
+    [Tooltip("② 寄ったときの高さ（チームの中央から）")]
+    [SerializeField] private float introCloseHeight = 3.5f;
+
+    [Tooltip("③ 寄ったあと、止まっている秒数")]
+    [Min(0f)]
+    [SerializeField] private float introHoldBeforeOrbitSeconds = 0.5f;
+
+    [Tooltip("④ ② と同じ距離・高さのまま、チームの中央を中心に回る秒数（0 で回らない）")]
+    [Min(0f)]
+    [SerializeField] private float introTeamOrbitSeconds = 1.5f;
+
+    [Tooltip("④ チームの中央を中心に回る角度（度）")]
+    [SerializeField] private float introTeamOrbitDegrees = 250f;
+
+    [Tooltip("⑤ 回ったあと、止まっている秒数")]
+    [Min(0f)]
+    [SerializeField] private float introHoldAfterOrbitSeconds = 1f;
+
+    [Tooltip("⑥ 全体カメラ（ふだんのカメラ）の位置へ移る秒数")]
+    [Min(0f)]
+    [SerializeField] private float introReturnSeconds = 1f;
+
+    [Tooltip("④ が始まってから、3・2・1 のカウントダウンが始まるまでの秒数")]
+    [Min(0f)]
+    [SerializeField] private float introCountdownDelaySeconds = 1f;
+
+    [Tooltip("3・2・1 のカウントダウンの秒数。終わったら START!（ここから動ける）")]
     [Min(0f)]
     [SerializeField] private float introCountdownSeconds = 3f;
-
-    [Tooltip("カウントダウンが始まると同時に、チームの中央を中心に回る秒数")]
-    [Min(0f)]
-    [SerializeField] private float introTeamOrbitSeconds = 2f;
-
-    [Tooltip("カウントダウン中に、チームの中央を中心に回る角度（度）")]
-    [SerializeField] private float introTeamOrbitDegrees = 220f;
-
-    [Tooltip("チームの周りを回るときの、チームの中央からの距離（水平）")]
-    [Min(0f)]
-    [SerializeField] private float introTeamOrbitDistance = 5f;
-
-    [Tooltip("チームの周りを回るときの高さ（② で寄ったとき（3.5）より少し下）")]
-    [SerializeField] private float introTeamOrbitHeight = 1.5f;
-
-    [Tooltip("回ったあと、全体カメラ（ふだんのカメラ）の位置へ戻る秒数。回る＋戻るがカウントダウンより長ければ、START のあとも戻り続ける")]
-    [Min(0f)]
-    [SerializeField] private float introReturnSeconds = 1.7f;
 
     public float IntroFlyoverSeconds => introFlyoverSeconds;
     public Vector3 IntroLookCenter => introLookCenter;
     public float IntroFlyoverTilt => introFlyoverTilt;
     public float IntroFlyoverDegrees => introFlyoverDegrees;
     public float IntroZoomSeconds => introZoomSeconds;
-    public float IntroCountdownSeconds => introCountdownSeconds;
+    public float IntroCloseDistance => introCloseDistance;
+    public float IntroCloseHeight => introCloseHeight;
+    public float IntroHoldBeforeOrbitSeconds => introHoldBeforeOrbitSeconds;
     public float IntroTeamOrbitSeconds => introTeamOrbitSeconds;
     public float IntroTeamOrbitDegrees => introTeamOrbitDegrees;
-    public float IntroTeamOrbitDistance => introTeamOrbitDistance;
-    public float IntroTeamOrbitHeight => introTeamOrbitHeight;
+    public float IntroHoldAfterOrbitSeconds => introHoldAfterOrbitSeconds;
     public float IntroReturnSeconds => introReturnSeconds;
+    public float IntroCountdownDelaySeconds => introCountdownDelaySeconds;
+    public float IntroCountdownSeconds => introCountdownSeconds;
 
-    /// <summary>演出の長さ（① マップの紹介〜START まで。読み込み待ちは入れない。回る・戻るはカウントダウンの間に行うので入れない）。</summary>
+    /// <summary>
+    /// 演出の長さ（① マップの紹介〜START まで。読み込み待ちは入れない）。
+    /// カウントダウンは ④ の途中から数えるので、④⑤⑥ のカメラの動きはこの中に入ったり、START をまたいだりする。
+    /// </summary>
     private float IntroTotalSeconds =>
-        introFlyoverSeconds + introZoomSeconds + introCountdownSeconds;
+        introFlyoverSeconds + introZoomSeconds + introHoldBeforeOrbitSeconds + introCountdownDelaySeconds +
+        introCountdownSeconds;
 
     /// <summary>
     /// **動き出してよい時刻**（全員で同期された時計 ServerTime）。これより前は始まりの演出中で、誰も動けない。

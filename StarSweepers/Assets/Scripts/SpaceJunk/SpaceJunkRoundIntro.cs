@@ -12,12 +12,15 @@ using UnityEngine.UI;
 /// | 順番 | 何が起きるか | 長さ（初期値） |
 /// | --- | --- | --- |
 /// | ⓪ 読み込み待ち | ① の回り始めの位置で止まったまま。マップの名前と「ラウンド ○」が出る | 1.5 秒 |
-/// | ① マップの紹介 | マップの中央（0,0,0）を向いたまま、真上から 45 度傾けた所を 180 度回る | 5 秒 |
-/// | ② 自分のチームに寄る | 自分のチームの後ろ（マップの外側、少し上）へ寄る | 1.5 秒 |
-/// | ③ カウントダウン | 「3」「2」「1」。**始まると同時に**、下の 1.・2. のカメラの動きをする | 3 秒 |
-/// | 1. チームの周りを回る | ② の位置から、チームの中央を中心に 220 度回る（内側・少し下へ移りながら） | 2 秒 |
-/// | 2. 全体カメラへ戻る | ふだんのカメラ（全体カメラ）の位置へ戻る。START をまたいで続く | 1.7 秒 |
-/// | ④ START! | 動けるようになる。「START!」を出す | 1 秒表示 |
+/// | ① マップの紹介 | マップの中央（0,0,0）を向いたまま、真上から 45 度傾けた所を 180 度回る | 3 秒 |
+/// | ② 自分のチームに寄る | 自分のチームの後ろ（マップの外側、少し上）へ寄る | 1 秒 |
+/// | ③ 止まる | ② の位置で止まる | 0.5 秒 |
+/// | ④ チームの周りを回る | ② と同じ距離・高さのまま、チームの中央を中心に 250 度回る | 1.5 秒 |
+/// | ⑤ 止まる | 回り終わった位置で止まる | 1 秒 |
+/// | ⑥ 全体カメラへ移る | ふだんのカメラ（全体カメラ）の位置へ移る | 1 秒 |
+///
+/// 文字：④ が始まって 1 秒たったら「3」「2」「1」（3 秒）。終わったら「START!」を 1 秒出し、ここから動ける。
+/// （初期値では ⑥ が終わった 0.5 秒あとに START になる）
 ///
 /// 秒数と角度は、マップに置いた <see cref="SpaceJunkRound"/> の「始まりの演出」で変えられる（演出を切ることもできる）。
 /// **時間は全員で同期された時計（ServerTime）で決めている**ので、どのPCでも同じタイミングで START になる。
@@ -31,15 +34,6 @@ public class SpaceJunkRoundIntro : MonoBehaviour
 {
     /// <summary>START! の文字を出しておく秒数。</summary>
     private const float StartTextSeconds = 1f;
-
-    /// <summary>② で寄ったときの、チームの中央から後ろへの距離（水平）。</summary>
-    private const float CloseBack = 6f;
-
-    /// <summary>② で寄ったときの高さ。</summary>
-    private const float CloseHeight = 3.5f;
-
-    /// <summary>チームの周りを回り始めてから、寄った位置の距離と高さから回るときの距離と高さへ移り終わるまでの割合。</summary>
-    private const float OrbitSettle = 0.3f;
 
     private SpaceJunkRound round;
     private Camera introCamera;
@@ -79,13 +73,15 @@ public class SpaceJunkRoundIntro : MonoBehaviour
         double now = round.ServerNow;
         float sinceStart = (float)(now - playStart);
 
+        // 各段階の終わりの時刻（演出の始まりから数えた秒数）。カウントダウンはカメラの動きとは別に、START から逆算する
         float t = (float)(now - round.IntroStartServerTime);
         float flyoverEnd = round.IntroFlyoverSeconds;
         float zoomEnd = flyoverEnd + round.IntroZoomSeconds;
-
-        // ③ のカウントダウンが始まると同時に、チームの周りを回り → 全体カメラへ戻る（START をまたいでもよい）
-        float orbitEnd = zoomEnd + round.IntroTeamOrbitSeconds;
-        float returnEnd = orbitEnd + round.IntroReturnSeconds;
+        float holdEnd = zoomEnd + round.IntroHoldBeforeOrbitSeconds;
+        float orbitEnd = holdEnd + round.IntroTeamOrbitSeconds;
+        float holdAfterEnd = orbitEnd + round.IntroHoldAfterOrbitSeconds;
+        float returnEnd = holdAfterEnd + round.IntroReturnSeconds;
+        float countdown = round.IntroCountdownSeconds;
 
         if ((sinceStart > StartTextSeconds && t >= returnEnd) || round.Phase != SpaceJunkRoundPhase.Playing)
         {
@@ -120,36 +116,47 @@ public class SpaceJunkRoundIntro : MonoBehaviour
         }
         else
         {
-            // ③ 3・2・1 → ④ START!（文字はカメラとは別に、START の時刻で切り替える）
-            ShowTexts(sinceStart < 0f ? Mathf.CeilToInt(-sinceStart).ToString() : "START!", string.Empty);
+            // 文字：カウントダウンの前は何も出さない → 3・2・1 → START!（カメラの動きとは別に、START の時刻で切り替える）
+            string big = sinceStart >= 0f ? "START!"
+                : -sinceStart <= countdown ? Mathf.CeilToInt(-sinceStart).ToString()
+                : string.Empty;
+            ShowTexts(big, string.Empty);
 
-            if (t < orbitEnd)
+            if (t < holdEnd)
             {
-                // 1. チームの周りを回る（② の位置から、内側・少し下へ）
+                // ③ 寄った位置で止まる
+            }
+            else if (t < orbitEnd)
+            {
+                // ④ ② と同じ距離・高さのまま、チームの中央を中心に回る
                 if (hasTeam)
                 {
-                    GetOrbitPose((t - zoomEnd) / Mathf.Max(0.01f, round.IntroTeamOrbitSeconds), team, spread,
+                    GetOrbitPose((t - holdEnd) / Mathf.Max(0.01f, round.IntroTeamOrbitSeconds), team, spread,
                         out position, out rotation);
                 }
             }
             else if (t < returnEnd)
             {
-                // 2. 全体カメラ（ふだんのカメラ）へ戻る
-                Vector3 fromPosition = closePosition;
-                Quaternion fromRotation = closeRotation;
+                // ⑤ 回り終わった位置で止まる → ⑥ 全体カメラ（ふだんのカメラ）へ移る
                 if (hasTeam)
                 {
-                    GetOrbitPose(1f, team, spread, out fromPosition, out fromRotation);
+                    GetOrbitPose(1f, team, spread, out position, out rotation);
                 }
 
-                Camera main = Camera.main;
-                float k = Mathf.SmoothStep(0f, 1f, (t - orbitEnd) / Mathf.Max(0.01f, round.IntroReturnSeconds));
-                position = main != null ? Vector3.Lerp(fromPosition, main.transform.position, k) : fromPosition;
-                rotation = main != null ? Quaternion.Slerp(fromRotation, main.transform.rotation, k) : fromRotation;
+                if (t >= holdAfterEnd)
+                {
+                    Camera main = Camera.main;
+                    float k = Mathf.SmoothStep(0f, 1f, (t - holdAfterEnd) / Mathf.Max(0.01f, round.IntroReturnSeconds));
+                    if (main != null)
+                    {
+                        position = Vector3.Lerp(position, main.transform.position, k);
+                        rotation = Quaternion.Slerp(rotation, main.transform.rotation, k);
+                    }
+                }
             }
             else if (introCamera != null)
             {
-                // 戻り終わったので、演出用のカメラを止める（文字だけ残す）
+                // 移り終わったので、演出用のカメラを止める（文字だけ残す）
                 introCamera.enabled = false;
             }
         }
@@ -246,34 +253,32 @@ public class SpaceJunkRoundIntro : MonoBehaviour
             return;
         }
 
-        Vector3 outward = Outward(team);
-        Vector3 focus = team + Vector3.up * 1f - outward * 2f;
-        position = team + outward * (CloseBack + spread) + Vector3.up * CloseHeight;
-        rotation = Quaternion.LookRotation(focus - position, Vector3.up);
+        GetTeamViewPose(team, spread, Outward(team), out position, out rotation);
     }
 
     /// <summary>
-    /// 1. チームの中央を中心に回るカメラの位置（0〜1）。② で寄った位置から回り始め、
-    /// 回りながら少し下（<see cref="SpaceJunkRound.IntroTeamOrbitHeight"/>）へ下がる。
+    /// ④ チームの中央を中心に回るカメラの位置（0〜1）。② で寄った位置から回り始め、
+    /// **距離と高さは ② のまま、回る角度だけ変える。**
     /// </summary>
     private void GetOrbitPose(float progress, Vector3 team, float spread, out Vector3 position, out Quaternion rotation)
     {
-        progress = Mathf.Clamp01(progress);
         Vector3 outward = Outward(team);
 
         float startAngle = Mathf.Atan2(outward.z, outward.x) * Mathf.Rad2Deg;
-        float angle = startAngle + round.IntroTeamOrbitDegrees * Mathf.SmoothStep(0f, 1f, progress);
-        Vector3 horizontal = new Vector3(Mathf.Cos(angle * Mathf.Deg2Rad), 0f, Mathf.Sin(angle * Mathf.Deg2Rad));
+        float angle = startAngle + round.IntroTeamOrbitDegrees * Mathf.SmoothStep(0f, 1f, Mathf.Clamp01(progress));
+        Vector3 direction = new Vector3(Mathf.Cos(angle * Mathf.Deg2Rad), 0f, Mathf.Sin(angle * Mathf.Deg2Rad));
 
-        // 寄った位置の距離と高さから、回るときの距離と高さへなめらかに移す（いきなり飛ばないように）
-        float settle = Mathf.SmoothStep(0f, 1f, progress / OrbitSettle);
-        float distance = Mathf.Lerp(CloseBack + spread, round.IntroTeamOrbitDistance + spread, settle);
-        float height = Mathf.Lerp(CloseHeight, round.IntroTeamOrbitHeight, settle);
+        GetTeamViewPose(team, spread, direction, out position, out rotation);
+    }
 
-        Vector3 closeFocus = team + Vector3.up * 1f - outward * 2f;
-        Vector3 focus = Vector3.Lerp(closeFocus, team + Vector3.up * 1f, settle);
-
-        position = team + horizontal * distance + Vector3.up * height;
+    /// <summary>
+    /// チームの中央から <paramref name="direction"/>（水平）の向きへ離れ、少し上からチームを見る位置。
+    /// 見る所は、チームの中央より少し奥（カメラと反対側）。
+    /// </summary>
+    private void GetTeamViewPose(Vector3 team, float spread, Vector3 direction, out Vector3 position, out Quaternion rotation)
+    {
+        Vector3 focus = team + Vector3.up * 1f - direction * 2f;
+        position = team + direction * (round.IntroCloseDistance + spread) + Vector3.up * round.IntroCloseHeight;
         rotation = Quaternion.LookRotation(focus - position, Vector3.up);
     }
 
