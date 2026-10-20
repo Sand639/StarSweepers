@@ -45,7 +45,7 @@ MonoBehaviour:
   m_Script: {fileID: 11500000, guid: d5a57f767e5e46a458fc5d3c628d0cbb, type: 3}
   m_Name: 
   m_EditorClassIdentifier: Unity.Netcode.Runtime::Unity.Netcode.NetworkObject
-  GlobalObjectIdHash: 0
+  GlobalObjectIdHash: 861065751
   InScenePlacedSourceGlobalObjectIdHash: 0
   m_InScenePlacedDisabledByDefault: 0
   DeferredDespawnTick: 0
@@ -81,7 +81,7 @@ MonoBehaviour:
   introFlyoverTilt: 45
   introFlyoverDegrees: 180
   introZoomSeconds: 1
-  introCloseDistance: 8
+  introCloseDistance: 10
   introCloseHeight: 3.5
   introHoldBeforeOrbitSeconds: 0.5
   introTeamOrbitSeconds: 1.5
