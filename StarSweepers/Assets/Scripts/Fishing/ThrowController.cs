@@ -635,8 +635,14 @@ public class ThrowController : MonoBehaviour
 
         float t =Mathf.Clamp01(timer / Mathf.Max(0.1f, skillCheckDuration));
 
-        BeginTypeAReelIfNeeded();
-        UpdateReelPosition(t);
+        // タイプAは命中直後の短い猶予中、レール位置を適用せず動く床の物理に任せる。
+        // Rigidbody が動的でも Transform を直接動かすとコンベアの移動を打ち消すため、
+        // 物理を止めるタイミングとレール移動の開始を同じ進捗条件にそろえる。
+        if (!typeAReelPhysicsPending || t > 0.05f)
+        {
+            BeginTypeAReelIfNeeded();
+            UpdateReelPosition(t);
+        }
 
         if (hook != null && hook.UI != null)
         {
@@ -2136,6 +2142,8 @@ public class ThrowController : MonoBehaviour
         }
 
         Rigidbody body = target.Body;
+        // 猶予中に動く床で移動した位置を、レールの開始位置にする。
+        reelStart = target.transform.position;
         body.linearVelocity = Vector3.zero;
         body.angularVelocity = Vector3.zero;
         body.useGravity = false;
