@@ -18,9 +18,24 @@ public enum AimReticleType
 }
 
 /// <summary>
+/// **フックの投げ方**（宇宙ごみ式＝ThrowController の Style が TwoButtons のときだけ効く。2026/10/15）。
+/// </summary>
+public enum ThrowOperationType
+{
+    /// <summary>今までどおり。左（LT）で撃つと引っ張る・右（RT）で撃つと投げる。</summary>
+    TwoButtons = 0,
+
+    /// <summary>
+    /// **ZR（RT）だけで遊ぶ。** 撃って引っ掛けると前へ投げる動きに入り、途中のスキルチェックで押すと後ろへ引っ張る。
+    /// 押さなければそのまま前へ投げる。
+    /// </summary>
+    OneButton = 1
+}
+
+/// <summary>
 /// **設定画面で変えられる値**を、どこからでも見られるようにしたもの。
 ///
-/// 音量・マウス感度・コントローラー操作方法・レティクルを保存する。
+/// 音量・マウス感度・コントローラー操作方法・レティクル・投げ方を保存する。
 ///
 /// | 設定 | 効く場所 |
 /// | **音量** | ゲーム全体（`AudioListener.volume`） |
@@ -39,12 +54,33 @@ public static class GameSettings
     private const string SensitivityKey = "StarSweepers.MouseSensitivity";
     private const string ControllerOperationKey = "StarSweepers.ControllerOperationType";
     private const string AimReticleKey = "StarSweepers.AimReticleType";
+    private const string ThrowOperationKey = "StarSweepers.ThrowOperationType";
 
     private static float volume = 1f;
     private static float mouseSensitivity = 1f;
     private static bool loaded;
     private static ControllerOperationType controllerOperationType = ControllerOperationType.TypeA;
     private static AimReticleType aimReticleType = AimReticleType.TypeA;
+    private static ThrowOperationType throwOperationType = ThrowOperationType.TwoButtons;
+
+    /// <summary>フックの投げ方。TwoButtons が今までの操作。</summary>
+    public static ThrowOperationType ThrowOperation
+    {
+        get
+        {
+            Load();
+            return throwOperationType;
+        }
+        set
+        {
+            Load();
+            throwOperationType = value == ThrowOperationType.OneButton
+                ? ThrowOperationType.OneButton
+                : ThrowOperationType.TwoButtons;
+            PlayerPrefs.SetInt(ThrowOperationKey, (int)throwOperationType);
+            PlayerPrefs.Save();
+        }
+    }
 
     /// <summary>コントローラーの操作方法。タイプAが従来の操作。</summary>
     public static ControllerOperationType ControllerOperation
@@ -138,6 +174,9 @@ public static class GameSettings
         aimReticleType = PlayerPrefs.GetInt(AimReticleKey, 0) == 1
             ? AimReticleType.TypeB
             : AimReticleType.TypeA;
+        throwOperationType = PlayerPrefs.GetInt(ThrowOperationKey, 0) == 1
+            ? ThrowOperationType.OneButton
+            : ThrowOperationType.TwoButtons;
 
         AudioListener.volume = volume;
     }

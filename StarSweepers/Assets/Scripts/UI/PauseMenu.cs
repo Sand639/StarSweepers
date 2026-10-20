@@ -566,7 +566,10 @@ public class PauseMenu : MonoBehaviour
         CreateMenuItem(settingsPage.transform, AimReticleLabel(), 90f - (ItemHeight + ItemGap) * 3f,
             ToggleAimReticle);
 
-        CreateMenuItem(settingsPage.transform, "もどる", 90f - (ItemHeight + ItemGap) * 4f,
+        CreateMenuItem(settingsPage.transform, ThrowOperationLabel(), 90f - (ItemHeight + ItemGap) * 4f,
+            ToggleThrowOperation);
+
+        CreateMenuItem(settingsPage.transform, "もどる", 90f - (ItemHeight + ItemGap) * 5f,
             () => ShowSettings(false));
     }
 
@@ -597,6 +600,22 @@ public class PauseMenu : MonoBehaviour
         GameSettings.AimReticle = GameSettings.AimReticle == AimReticleType.TypeA
             ? AimReticleType.TypeB
             : AimReticleType.TypeA;
+        BuildSettingsPageRefresh();
+    }
+
+    private static string ThrowOperationLabel()
+    {
+        return GameSettings.ThrowOperation == ThrowOperationType.OneButton
+            ? "投げ方：ZRワンボタン"
+            : "投げ方：左右で使い分け";
+    }
+
+    // 投げ方の切り替え（宇宙ごみ式のプレイヤーだけに効く。2026/10/15）
+    private void ToggleThrowOperation()
+    {
+        GameSettings.ThrowOperation = GameSettings.ThrowOperation == ThrowOperationType.TwoButtons
+            ? ThrowOperationType.OneButton
+            : ThrowOperationType.TwoButtons;
         BuildSettingsPageRefresh();
     }
 
