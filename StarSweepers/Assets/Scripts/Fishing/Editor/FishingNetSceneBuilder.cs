@@ -11,6 +11,12 @@ using UnityEngine.InputSystem;
 /// **通信のための上乗せだけ**をこちらに分けてある。
 /// こうしておくと、1人用のシーンを作る処理に手を入れずにオンラインを足せる。
 ///
+/// 使っているツール：<see cref="FishingOnlineSetup"/>（ロビー＋会場）・<see cref="FishingMapSetup"/>（マップ）・
+/// <see cref="FishingSpawnerSetup"/>（物資のプレハブ）。ほかの遊びのツール（`SpaceJunkSetup`）も `NetworkTickRate` を使っている。
+///
+/// ⚠ 1人用と**同じ形の物を、こちらでもう一度作っている**所が多い（壁とゴール・フック・糸・スタンの印・物資・爆発物）。
+/// 形や色を変えるときは、`FishingSceneBuilder` の同じ部品もそろえること。
+///
 /// ※ Editor フォルダにあるため、ゲームのビルドには含まれない。
 /// </summary>
 internal static class FishingNetSceneBuilder
@@ -52,16 +58,14 @@ internal static class FishingNetSceneBuilder
         // ---- 通信の部品 ----
         root.AddComponent<NetworkObject>();
 
-        NetworkTransform networkTransform = root.AddComponent<NetworkTransform>();
-        networkTransform.AuthorityMode = NetworkTransform.AuthorityModes.Owner;
-        networkTransform.SyncScaleX = false;
-        networkTransform.SyncScaleY = false;
-        networkTransform.SyncScaleZ = false;
-        networkTransform.PositionMaxInterpolationTime = PlayerInterpolationTime;
-        networkTransform.RotationMaxInterpolationTime = PlayerInterpolationTime;
+        // 自分のプレイヤーは自分のPCで動かし、その位置をほかの人へ送る
+        NetworkTransform networkTransform = AddOwnerNetworkTransform(root, PlayerInterpolationTime);
+        // 毎フレーム送る小さな変化は、届かなくても次ですぐ追いつくので、確実さより速さを選ぶ
         networkTransform.UseUnreliableDeltas = true;
 
         // ---- 体 ----
+        // 背の高さ 2m・太さ（半径）0.4m で、足元が原点に来るようにする（1人用のプレイヤーと同じ大きさ）。
+        // 50度までの坂は登れ、0.3m までの段差は乗り越えられる
         CharacterController controller = root.AddComponent<CharacterController>();
         controller.height = 2f;
         controller.radius = 0.4f;
@@ -69,6 +73,7 @@ internal static class FishingNetSceneBuilder
         controller.slopeLimit = 50f;
         controller.stepOffset = 0.3f;
 
+        // 見た目のカプセル。ぶつかる判定は CharacterController が受け持つので、カプセルの当たり判定は消す
         GameObject body = GameObject.CreatePrimitive(PrimitiveType.Capsule);
         body.name = "Body";
         body.transform.SetParent(root.transform, false);
@@ -88,48 +93,17 @@ internal static class FishingNetSceneBuilder
         frontRenderer.sharedMaterial = bodyMaterial;
 
         // ---- 手元・糸・フック ----
+        // 手元は足元から高さ 1m、体の前へ 0.6m の所（1人用と同じ）
         GameObject hand = new GameObject("HandPoint");
         hand.transform.SetParent(root.transform, false);
         hand.transform.localPosition = new Vector3(0f, 1.0f, 0.6f);
 
-        GameObject lineObject = new GameObject("HookLine");
-        lineObject.transform.SetParent(root.transform, false);
-        LineRenderer lineRenderer = lineObject.AddComponent<LineRenderer>();
-        lineRenderer.widthMultiplier = 0.06f;
-        lineRenderer.numCapVertices = 2;
-        lineRenderer.textureMode = LineTextureMode.Tile;
-        lineRenderer.shadowCastingMode = UnityEngine.Rendering.ShadowCastingMode.Off;
-        lineRenderer.sharedMaterial = FishingSceneBuilder.GetOrCreateMaterial(
-            FishingSceneBuilder.MaterialFolder + "/Rope.mat", new Color(0.9f, 0.9f, 0.8f));
-        HookLine hookLine = lineObject.AddComponent<HookLine>();
+        HookLine hookLine = CreatePlayerLine(root.transform);
 
-        GameObject hookObject = GameObject.CreatePrimitive(PrimitiveType.Sphere);
-        hookObject.name = "Hook";
-        hookObject.transform.SetParent(root.transform, false);
-        hookObject.transform.localPosition = new Vector3(0f, 1.0f, 0.6f);
-        hookObject.transform.localScale = new Vector3(0.4f, 0.4f, 0.4f);
-        hookObject.GetComponent<MeshRenderer>().sharedMaterial =
-            FishingSceneBuilder.GetOrCreateMaterial(
-                FishingSceneBuilder.MaterialFolder + "/FishingHook.mat",
-                new Color(0.85f, 0.85f, 0.9f));
-        hookObject.GetComponent<SphereCollider>().isTrigger = true;
-        Rigidbody hookBody = hookObject.AddComponent<Rigidbody>();
-        hookBody.isKinematic = true;
-        hookBody.useGravity = false;
-        HookProjectile hookProjectile = hookObject.AddComponent<HookProjectile>();
+        HookProjectile hookProjectile = CreatePlayerHook(root.transform);
 
         // ---- スタンの印 ----
-        GameObject stunMarker = GameObject.CreatePrimitive(PrimitiveType.Cube);
-        stunMarker.name = "StunMarker";
-        stunMarker.transform.SetParent(root.transform, false);
-        stunMarker.transform.localPosition = new Vector3(0f, 2.45f, 0f);
-        stunMarker.transform.localScale = new Vector3(0.5f, 0.12f, 0.12f);
-        stunMarker.GetComponent<MeshRenderer>().sharedMaterial =
-            FishingSceneBuilder.GetOrCreateMaterial(
-                FishingSceneBuilder.MaterialFolder + "/FishingStunMark.mat",
-                new Color(1f, 0.25f, 0.2f));
-        Object.DestroyImmediate(stunMarker.GetComponent<Collider>());
-        stunMarker.SetActive(false);
+        GameObject stunMarker = CreateStunMarker(root.transform);
 
         // ---- 操作のスクリプト ----
         PlayerAimController aim = root.AddComponent<PlayerAimController>();
@@ -142,6 +116,7 @@ internal static class FishingNetSceneBuilder
         FishingNetPlayer netPlayer = root.AddComponent<FishingNetPlayer>();
 
         // ---- 結線 ----
+        // ⚠ "groundMask" などは、つなぎ先のスクリプトのフィールド名（向こうを改名すると静かに壊れる）
         FishingSceneBuilder.SetInt(aim, "groundMask", ~0);
 
         FishingSceneBuilder.SetObjectArray(stun, "bodyRenderers",
@@ -172,7 +147,7 @@ internal static class FishingNetSceneBuilder
         FishingSceneBuilder.SetRef(netPlayer, "characterController", controller);
         FishingSceneBuilder.SetObjectArray(netPlayer, "teamRenderers",
             new Renderer[] { bodyRenderer, frontRenderer });
-        FishingSceneBuilder.SetRef(netPlayer, "hookVisual", hookObject.transform);
+        FishingSceneBuilder.SetRef(netPlayer, "hookVisual", hookProjectile.transform);
         FishingSceneBuilder.SetRef(netPlayer, "line", hookLine);
         FishingSceneBuilder.SetRef(netPlayer, "handPoint", hand.transform);
 
@@ -180,6 +155,69 @@ internal static class FishingNetSceneBuilder
         Object.DestroyImmediate(root);
 
         return saved;
+    }
+
+    /// <summary>
+    /// 手元とフックをつなぐ糸を、プレイヤーの子として作る（太さ 0.06m）。
+    ///
+    /// ※ 1人用の <c>FishingSceneBuilder.CreateLine</c> とは素材の選び方が少し違う。
+    /// こちらは `Rope.mat` が無ければ **`Rope.mat` という名前で**作る（1人用は `FishingLine.mat` を作る）。
+    /// </summary>
+    private static HookLine CreatePlayerLine(Transform parent)
+    {
+        GameObject lineObject = new GameObject("HookLine");
+        lineObject.transform.SetParent(parent, false);
+        LineRenderer lineRenderer = lineObject.AddComponent<LineRenderer>();
+        lineRenderer.widthMultiplier = 0.06f;
+        lineRenderer.numCapVertices = 2;
+        lineRenderer.textureMode = LineTextureMode.Tile;
+        lineRenderer.shadowCastingMode = UnityEngine.Rendering.ShadowCastingMode.Off;
+        lineRenderer.sharedMaterial = FishingSceneBuilder.GetOrCreateMaterial(
+            FishingSceneBuilder.MaterialFolder + "/Rope.mat", new Color(0.9f, 0.9f, 0.8f));
+        return lineObject.AddComponent<HookLine>();
+    }
+
+    /// <summary>
+    /// フック（直径 0.4m の玉）を、プレイヤーの子として作る。最初は手元（HandPoint）と同じ位置に置く。
+    /// 1人用の <c>FishingSceneBuilder.CreateHook</c> と同じ形・同じ色・同じ当たり判定
+    /// （すり抜ける当たり判定＋物理では動かない Rigidbody。理由はそちらを参照）。
+    /// </summary>
+    private static HookProjectile CreatePlayerHook(Transform parent)
+    {
+        GameObject hookObject = GameObject.CreatePrimitive(PrimitiveType.Sphere);
+        hookObject.name = "Hook";
+        hookObject.transform.SetParent(parent, false);
+        hookObject.transform.localPosition = new Vector3(0f, 1.0f, 0.6f);
+        hookObject.transform.localScale = new Vector3(0.4f, 0.4f, 0.4f);
+        hookObject.GetComponent<MeshRenderer>().sharedMaterial =
+            FishingSceneBuilder.GetOrCreateMaterial(
+                FishingSceneBuilder.MaterialFolder + "/FishingHook.mat",
+                new Color(0.85f, 0.85f, 0.9f));
+        hookObject.GetComponent<SphereCollider>().isTrigger = true;
+        Rigidbody hookBody = hookObject.AddComponent<Rigidbody>();
+        hookBody.isKinematic = true;
+        hookBody.useGravity = false;
+        return hookObject.AddComponent<HookProjectile>();
+    }
+
+    /// <summary>
+    /// 頭の上（足元から 2.45m）に浮かぶ、横長の赤い棒（幅 0.5m）を作る。ふだんは隠しておき、スタン中だけ出す。
+    /// 1人用の <c>FishingSceneBuilder.WireStun</c> で作る印と同じ形・同じ色。
+    /// </summary>
+    private static GameObject CreateStunMarker(Transform parent)
+    {
+        GameObject stunMarker = GameObject.CreatePrimitive(PrimitiveType.Cube);
+        stunMarker.name = "StunMarker";
+        stunMarker.transform.SetParent(parent, false);
+        stunMarker.transform.localPosition = new Vector3(0f, 2.45f, 0f);
+        stunMarker.transform.localScale = new Vector3(0.5f, 0.12f, 0.12f);
+        stunMarker.GetComponent<MeshRenderer>().sharedMaterial =
+            FishingSceneBuilder.GetOrCreateMaterial(
+                FishingSceneBuilder.MaterialFolder + "/FishingStunMark.mat",
+                new Color(1f, 0.25f, 0.2f));
+        Object.DestroyImmediate(stunMarker.GetComponent<Collider>());
+        stunMarker.SetActive(false);
+        return stunMarker;
     }
 
     // ------------------------------------------------------------
@@ -205,6 +243,13 @@ internal static class FishingNetSceneBuilder
         CreateNetworkWallWithPocket("West", 3, 270f, wallMaterial, padMaterial);
     }
 
+    /// <summary>
+    /// 1辺ぶんの壁と、その中央のゴールを作る。<paramref name="yaw"/> で向きを決め、ローカルの +Z を「外向き」として組む。
+    ///
+    /// **壁の形（位置・大きさ・名前）は、1人用の <c>FishingSceneBuilder.CreateWallWithPocket</c> と同じ**にしてある。
+    /// 違うのはゴールの部品（<see cref="FishingNetPocket"/>＋NetworkObject）だけ。
+    /// 数値の意味はそちらのコメントを参照。形を変えるときは両方そろえること。
+    /// </summary>
     private static void CreateNetworkWallWithPocket(string name, int pocketIndex, float yaw,
         Material wallMaterial, Material padMaterial)
     {
@@ -254,6 +299,7 @@ internal static class FishingNetSceneBuilder
 
         trigger.AddComponent<NetworkObject>();
 
+        // ⚠ "pocketIndex"・"padRenderer" は FishingNetPocket のフィールド名（向こうを改名すると静かに壊れる）
         FishingNetPocket pocket = trigger.AddComponent<FishingNetPocket>();
         FishingSceneBuilder.SetInt(pocket, "pocketIndex", pocketIndex);
         FishingSceneBuilder.SetRef(pocket, "padRenderer", pad.GetComponent<MeshRenderer>());
@@ -263,7 +309,10 @@ internal static class FishingNetSceneBuilder
     // オンライン用の物資と爆発物
     // ------------------------------------------------------------
 
-    /// <summary>プレイヤーの周りに、円形に物資を並べる（オンライン用）。</summary>
+    /// <summary>
+    /// プレイヤーの周りに、円形に物資を並べる（オンライン用）。並べ方は 1人用の <c>FishingSceneBuilder.CreateSupplyRing</c> と同じ。
+    /// ※ 今はどのツールからも呼ばれていない（オンライン会場の物資は、スポナーが出す形に変わったため）。
+    /// </summary>
     public static void CreateNetworkSupplyRing(int count, float radius)
     {
         for (int i = 0; i < count; i++)
@@ -290,7 +339,10 @@ internal static class FishingNetSceneBuilder
         return supply;
     }
 
-    /// <summary>爆発する物資を1つ置く（オンライン用）。</summary>
+    /// <summary>
+    /// 爆発する物資を1つ置く（オンライン用）。スポナー用のプレハブもこれで作る。
+    /// 見た目と点数0は 1人用の <c>FishingSceneBuilder.CreateBomb</c> と同じで、通信の部品が足してある。
+    /// </summary>
     public static GameObject CreateNetworkBomb(string name, Vector3 position, ExplosionEffect explosionPrefab)
     {
         Material bodyMaterial = FishingSceneBuilder.GetOrCreateMaterial(
@@ -325,7 +377,10 @@ internal static class FishingNetSceneBuilder
         return bomb;
     }
 
-    /// <summary>物資に、物理と通信の部品をまとめて付ける。</summary>
+    /// <summary>
+    /// 物資に、物理と通信の部品をまとめて付ける。<paramref name="mass"/> は重さ（kg）。
+    /// 空気の抵抗（Damping）は 1人用の物資と同じ値。
+    /// </summary>
     private static HookableObject AddSupplyParts(GameObject supply, float mass)
     {
         Rigidbody body = supply.AddComponent<Rigidbody>();
@@ -339,16 +394,30 @@ internal static class FishingNetSceneBuilder
 
         // **持ち主が動かす形。** 引き寄せ中は引っ掛けた人が持ち主になり、
         // 投げたあとはホストが持ち主に戻る（FishingNetSupply が入れ替える）
-        NetworkTransform networkTransform = supply.AddComponent<NetworkTransform>();
-        networkTransform.AuthorityMode = NetworkTransform.AuthorityModes.Owner;
-        networkTransform.SyncScaleX = false;
-        networkTransform.SyncScaleY = false;
-        networkTransform.SyncScaleZ = false;
-        networkTransform.PositionMaxInterpolationTime = SupplyInterpolationTime;
-        networkTransform.RotationMaxInterpolationTime = SupplyInterpolationTime;
+        AddOwnerNetworkTransform(supply, SupplyInterpolationTime);
 
         supply.AddComponent<FishingNetSupply>();
 
         return hookable;
+    }
+
+    /// <summary>
+    /// 位置と向きを全員の画面にそろえる部品（NetworkTransform）を付ける。
+    ///
+    /// ・**持ち主（Owner）が動かし、その結果をほかの人へ送る**形にする（ホストが全部動かす形ではない）。
+    /// ・大きさは変わらないので送らない（通信量を減らすため）。
+    /// ・<paramref name="interpolationTime"/>（秒）は、届いた位置をなめらかにつなぐための待ち時間。
+    ///   短いほど反応がよく、長いほど動きがなめらかになる。
+    /// </summary>
+    private static NetworkTransform AddOwnerNetworkTransform(GameObject target, float interpolationTime)
+    {
+        NetworkTransform networkTransform = target.AddComponent<NetworkTransform>();
+        networkTransform.AuthorityMode = NetworkTransform.AuthorityModes.Owner;
+        networkTransform.SyncScaleX = false;
+        networkTransform.SyncScaleY = false;
+        networkTransform.SyncScaleZ = false;
+        networkTransform.PositionMaxInterpolationTime = interpolationTime;
+        networkTransform.RotationMaxInterpolationTime = interpolationTime;
+        return networkTransform;
     }
 }

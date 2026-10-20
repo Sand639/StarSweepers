@@ -84,6 +84,8 @@ public static class FishingMapSetup
     /// <param name="description">Console に出す、このマップの説明。</param>
     private static void CreateMap(string scenePath, System.Action<Transform, Transform> buildStage, string description)
     {
+        // 開いているシーンに保存していない変更があれば、保存するか尋ねる（「キャンセル」なら何もしない）。
+        // Unity を開かずに動かすとき（バッチ実行）は尋ねられないので飛ばす
         if (!Application.isBatchMode && !EditorSceneManager.SaveCurrentModifiedScenesIfUserWantsTo())
         {
             return;
@@ -108,6 +110,7 @@ public static class FishingMapSetup
         GameObject stage = new GameObject("Stage");
         GameObject obstacles = new GameObject("Obstacles");
 
+        // 床と壁を作る処理は、シーンの一番上に物を置く。置く前の一覧を控えておき、増えた物だけを Stage の中へ移す
         List<GameObject> before = RootObjects(scene);
         FishingSceneBuilder.CreateGround();
         FishingNetSceneBuilder.CreateNetworkPocketWalls();
@@ -117,29 +120,7 @@ public static class FishingMapSetup
         buildStage(stage.transform, obstacles.transform);
 
         // ---- ここから下は遊ぶための仕組み（消さない）----
-        GameObject matchObject = new GameObject("FishingMatch");
-        matchObject.AddComponent<NetworkObject>();
-        matchObject.AddComponent<FishingMatch>();
-
-        GameObject hudObject = new GameObject("FishingHUD");
-        hudObject.AddComponent<FishingStatusUI>();
-        FishingMatchUI matchUI = hudObject.AddComponent<FishingMatchUI>();
-        FishingSceneBuilder.SetString(matchUI, "lobbySceneName", LobbySceneName);
-
-        GameObject cameraObject = new GameObject("Main Camera");
-        cameraObject.tag = "MainCamera";
-        cameraObject.transform.position = new Vector3(0f, 16f, -9f);
-        cameraObject.transform.rotation = Quaternion.Euler(60f, 0f, 0f);
-        Camera camera = cameraObject.AddComponent<Camera>();
-        camera.nearClipPlane = 0.1f;
-        camera.farClipPlane = 500f;
-        cameraObject.AddComponent<AudioListener>();
-        cameraObject.AddComponent<TopDownCameraFollow>();
-
-        // 物資と爆発物は、今あるオンライン用のプレハブを使う（作り直さない）
-        FishingSpawnerSetup.CreateSpawner(supplyPrefab, bombPrefab);
-
-        FishingSceneBuilder.CreateUI();
+        CreatePlaySystems(supplyPrefab, bombPrefab);
 
         EditorSceneManager.MarkSceneDirty(scene);
         EditorSceneManager.SaveScene(scene, scenePath);
@@ -163,6 +144,43 @@ public static class FishingMapSetup
         CheckOpenMap();
     }
 
+    /// <summary>
+    /// **遊ぶための仕組み**（どのマップでも同じ物）を置く。シーンの並び順は
+    /// FishingMatch → FishingHUD → Main Camera → FishingObjectSpawner → HookUI（この順番で作る）。
+    /// ここで置く物は、`CheckOpenMap` の点検で「そろっているか」を確かめている物でもある。
+    /// </summary>
+    private static void CreatePlaySystems(GameObject supplyPrefab, GameObject bombPrefab)
+    {
+        // 試合のまとめ役。全員のPCで同じ物として扱うので NetworkObject を付ける
+        GameObject matchObject = new GameObject("FishingMatch");
+        matchObject.AddComponent<NetworkObject>();
+        matchObject.AddComponent<FishingMatch>();
+
+        // 点数・残り時間・結果の表示。結果の画面の「ロビーへ戻る」で、lobbySceneName のシーンへ全員を戻す
+        // ⚠ "lobbySceneName" は FishingMatchUI のフィールド名（向こうを改名すると静かに壊れる）
+        GameObject hudObject = new GameObject("FishingHUD");
+        hudObject.AddComponent<FishingStatusUI>();
+        FishingMatchUI matchUI = hudObject.AddComponent<FishingMatchUI>();
+        FishingSceneBuilder.SetString(matchUI, "lobbySceneName", LobbySceneName);
+
+        // 見下ろしカメラ。位置と角度は FishingSceneBuilder.CreateCamera と同じ（理由はそちらを参照）。
+        // 追う相手は、自分のプレイヤーが生まれた時点で決まるので、ここでは空のまま
+        GameObject cameraObject = new GameObject("Main Camera");
+        cameraObject.tag = "MainCamera";
+        cameraObject.transform.position = new Vector3(0f, 16f, -9f);
+        cameraObject.transform.rotation = Quaternion.Euler(60f, 0f, 0f);
+        Camera camera = cameraObject.AddComponent<Camera>();
+        camera.nearClipPlane = 0.1f;
+        camera.farClipPlane = 500f;
+        cameraObject.AddComponent<AudioListener>();
+        cameraObject.AddComponent<TopDownCameraFollow>();
+
+        // 物資と爆発物は、今あるオンライン用のプレハブを使う（作り直さない）
+        FishingSpawnerSetup.CreateSpawner(supplyPrefab, bombPrefab);
+
+        FishingSceneBuilder.CreateUI();
+    }
+
     // ------------------------------------------------------------
     // 雛形のステージ（まっさらなマップ）
     // ------------------------------------------------------------
@@ -173,6 +191,8 @@ public static class FishingMapSetup
         Material obstacleMaterial = FishingSceneBuilder.GetOrCreateMaterial(
             FishingObstacleTestSetup.ObstacleMaterialPath, new Color(0.55f, 0.3f, 0.75f));
 
+        // 北寄り（中心から 12m）に、幅 6m の板を置く。左右 9m ずつを、秒速 3m で行き来し、端で 0.5秒止まる。
+        // stage は使わない（床・壁・ゴールは CreateMap で入れてある）
         GameObject sample = FishingObstacleTestSetup.CreateObstacle(
             "Obstacle_Sample", new Vector3(0f, 0f, 12f), 0f,
             new Vector3(6f, 1.2f, 1f), obstacleMaterial,
@@ -239,6 +259,7 @@ public static class FishingMapSetup
     /// </summary>
     private static void BuildBattleStage(Transform stage, Transform obstacles)
     {
+        // 四方の壁と同じ素材（FishingSceneBuilder の壁と同じパス・同じ色）
         Material wallMaterial = FishingSceneBuilder.GetOrCreateMaterial(
             FishingSceneBuilder.MaterialFolder + "/FishingWall.mat", new Color(0.5f, 0.55f, 0.62f));
         Material obstacleMaterial = FishingSceneBuilder.GetOrCreateMaterial(
@@ -325,6 +346,7 @@ public static class FishingMapSetup
             usedNames.Add(Path.GetFileNameWithoutExtension(path));
         }
 
+        // 空いている番号が見つかるまで 01, 02, … と順に試す（マップの数は有限なので、必ずどこかで見つかる）
         for (int number = 1; ; number++)
         {
             string name = $"{prefix}{number:00}";
@@ -338,6 +360,7 @@ public static class FishingMapSetup
         }
     }
 
+    /// <summary>シーンの一番上（親の無い物）の一覧を、今の時点で写し取る。</summary>
     private static List<GameObject> RootObjects(Scene scene)
     {
         return new List<GameObject>(scene.GetRootGameObjects());
@@ -390,13 +413,15 @@ public static class FishingMapSetup
     /// <summary>今開いているシーンの NetworkObject すべてに番号を付けさせる。戻り値は、それでも 0 のままの数。</summary>
     private static int EnsureNetworkIds()
     {
+        // NetworkObject の OnValidate は、ふつうのコードからは呼べないので、名前（文字列）で探して呼ぶ。
+        // ⚠ Netcode の更新でこの名前が変わると、validate が null になり、**エラーも出さずに何もしなくなる**
         System.Reflection.MethodInfo validate = typeof(NetworkObject).GetMethod("OnValidate",
             System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic |
             System.Reflection.BindingFlags.Public);
 
         int remaining = 0;
 
-        foreach (NetworkObject networkObject in Object.FindObjectsByType<NetworkObject>(FindObjectsInactive.Include, FindObjectsSortMode.None))
+        foreach (NetworkObject networkObject in FindAllInScene<NetworkObject>())
         {
             // Netcode が番号を付けるときに使う処理を、そのまま呼ぶ
             validate?.Invoke(networkObject, null);
@@ -411,7 +436,12 @@ public static class FishingMapSetup
         return remaining;
     }
 
-    /// <summary>NetworkObject の番号を読む（外から直接読めない項目なので、保存される値として読む）。</summary>
+    /// <summary>
+    /// NetworkObject の番号を読む（外から直接読めない項目なので、保存される値として読む）。
+    /// 項目が見つからないときは -1 を返す。
+    /// ⚠ `"GlobalObjectIdHash"` は Netcode 側の項目名。Netcode の更新で名前が変わると -1 が返り、
+    /// **「0 ではない＝番号あり」と見なされて、点検をすり抜ける**。
+    /// </summary>
     private static long ReadNetworkId(NetworkObject networkObject)
     {
         SerializedProperty property = new SerializedObject(networkObject).FindProperty("GlobalObjectIdHash");
@@ -430,6 +460,7 @@ public static class FishingMapSetup
             return;
         }
 
+        // 番号付けのためにマップを1枚ずつ開くので、終わったら元のシーンを開き直せるよう控えておく
         string openScenePath = SceneManager.GetActiveScene().path;
 
         // 複製したマップなどで、通信の部品の番号が 0 のまま残っていないかも直しておく
@@ -454,6 +485,10 @@ public static class FishingMapSetup
     /// ロビー・最初の会場・すべてのマップを、ビルドのシーン一覧に入れる。
     /// **Netcode でシーンをまとめて切り替えるには、一覧に入っている必要がある。**
     /// ロビーは起動時に開くよう先頭へ置く。戻り値は新しく入れた（または有効に戻した）数。
+    ///
+    /// ※ 実際の動きは「**一覧に無い物を、ロビー → 最初の会場 → マップの順に後ろへ足す**」だけで、並べ替えはしない。
+    /// ロビーが先頭になるのは、一覧が空だった（または先頭にすでにロビーがある）場合だけ。
+    /// すでに一覧に入っている物の順番は変えない（何度実行しても増えない）。
     /// </summary>
     public static int RegisterMapsInBuildSettings()
     {
@@ -470,6 +505,7 @@ public static class FishingMapSetup
                 continue;
             }
 
+            // EditorBuildSettingsScene はクラスなので、見つけた物の enabled を書き換えると一覧の中身も変わる
             EditorBuildSettingsScene existing = scenes.Find(entry => entry.path == path);
 
             if (existing == null)
@@ -519,6 +555,12 @@ public static class FishingMapSetup
     // 点検
     // ------------------------------------------------------------
 
+    /// <summary>
+    /// 今開いているマップを点検し、結果を Console に出す（バッチ実行でなければ、ダイアログでも出す）。
+    ///
+    /// 「直したほうがよい所」（problems）と、「知っておくとよいこと」（notes：物資が降る範囲など）を分けて集める。
+    /// **シーンは書き換えない**（調べるだけ）。マップを作った直後にも自動で呼ばれる。
+    /// </summary>
     [MenuItem("Tools/StarSweepers/開いている釣りマップを点検する")]
     public static void CheckOpenMap()
     {
@@ -555,6 +597,10 @@ public static class FishingMapSetup
         }
     }
 
+    /// <summary>
+    /// ロビーのマップ選びに出る条件（名前が `FishingMap` で始まる・ビルドの一覧に入っている）を満たしているか。
+    /// 最初の会場（`FishingOnline.unity`）だけは、名前が違ってもよい。
+    /// </summary>
     private static void CheckSceneName(Scene scene, List<string> problems)
     {
         if (string.IsNullOrEmpty(scene.path))
@@ -577,9 +623,13 @@ public static class FishingMapSetup
         }
     }
 
+    /// <summary>
+    /// 遊ぶための仕組み（<see cref="CreatePlaySystems"/> で置く物）がそろっているか。
+    /// あわせて、**マップに置いてはいけない物**（NetworkManager・プレイヤー）が無いかも確かめる。
+    /// </summary>
     private static void CheckSystems(List<string> problems)
     {
-        FishingMatch[] matches = Object.FindObjectsByType<FishingMatch>(FindObjectsInactive.Include, FindObjectsSortMode.None);
+        FishingMatch[] matches = FindAllInScene<FishingMatch>();
         if (matches.Length != 1)
         {
             problems.Add($"FishingMatch（試合のまとめ役）はちょうど1つ必要です（今：{matches.Length}）。");
@@ -592,14 +642,14 @@ public static class FishingMapSetup
         // **カメラと耳が二重になっていないか。**
         // 空のシーンから作ると、最初からある Main Camera を消し忘れたまま
         // 撮影用のプレハブを置いてしまいやすい。音が二重になり、どちらが写るかも決まらない
-        Camera[] cameras = Object.FindObjectsByType<Camera>(FindObjectsInactive.Include, FindObjectsSortMode.None);
+        Camera[] cameras = FindAllInScene<Camera>();
         if (cameras.Length > 1)
         {
             problems.Add($"カメラが {cameras.Length} 個あります。**追いかけるカメラ1つだけ**にしてください" +
                          "（空のシーンに元からある Main Camera を消し忘れていませんか）。");
         }
 
-        AudioListener[] listeners = Object.FindObjectsByType<AudioListener>(FindObjectsInactive.Include, FindObjectsSortMode.None);
+        AudioListener[] listeners = FindAllInScene<AudioListener>();
         if (listeners.Length > 1)
         {
             problems.Add($"音を聞く部品（AudioListener）が {listeners.Length} 個あります。1つにしてください。");
@@ -611,13 +661,13 @@ public static class FishingMapSetup
         RequireOne<TopDownCameraFollow>("TopDownCameraFollow の付いたカメラ", problems);
 
         // プレイヤーはロビーから連れてくるので、マップの中に置いてはいけない物
-        if (Object.FindObjectsByType<NetworkManager>(FindObjectsInactive.Include, FindObjectsSortMode.None).Length > 0)
+        if (FindAllInScene<NetworkManager>().Length > 0)
         {
             problems.Add("NetworkManager が置かれています。**マップには置かない**（ロビーから連れてくる）。");
         }
 
         int zeroIds = 0;
-        foreach (NetworkObject networkObject in Object.FindObjectsByType<NetworkObject>(FindObjectsInactive.Include, FindObjectsSortMode.None))
+        foreach (NetworkObject networkObject in FindAllInScene<NetworkObject>())
         {
             if (ReadNetworkId(networkObject) == 0)
             {
@@ -630,25 +680,37 @@ public static class FishingMapSetup
                          "シーンを保存（Ctrl+S）するか、`釣りのマップをビルドの一覧に登録し直す` を実行してください。");
         }
 
-        if (Object.FindObjectsByType<FishingPlayerController>(FindObjectsInactive.Include, FindObjectsSortMode.None).Length > 0)
+        if (FindAllInScene<FishingPlayerController>().Length > 0)
         {
             problems.Add("プレイヤーが置かれています。**マップには置かない**（ロビーで生まれた本体がそのまま来る）。");
         }
     }
 
+    /// <summary>
+    /// 型 <typeparamref name="T"/> の部品が**1つ以上**あるか（0個のときだけ問題にする。2つ以上あっても問題にはしない）。
+    /// </summary>
     private static void RequireOne<T>(string label, List<string> problems) where T : Object
     {
-        int count = Object.FindObjectsByType<T>(FindObjectsInactive.Include, FindObjectsSortMode.None).Length;
+        int count = FindAllInScene<T>().Length;
         if (count == 0)
         {
             problems.Add($"{label} がありません。");
         }
     }
 
+    /// <summary>
+    /// 今開いているシーンから、型 <typeparamref name="T"/> の部品をすべて探す。
+    /// **隠れている（非アクティブの）物も含める**（番号付けや点検で見落とさないため）。並び順は決まっていない。
+    /// </summary>
+    private static T[] FindAllInScene<T>() where T : Object
+    {
+        return Object.FindObjectsByType<T>(FindObjectsInactive.Include, FindObjectsSortMode.None);
+    }
+
     /// <summary>ゴールが4つあり、Pocket Index が 0〜3 で重なっていないか。</summary>
     private static void CheckPockets(List<string> problems)
     {
-        FishingNetPocket[] pockets = Object.FindObjectsByType<FishingNetPocket>(FindObjectsInactive.Include, FindObjectsSortMode.None);
+        FishingNetPocket[] pockets = FindAllInScene<FishingNetPocket>();
 
         if (pockets.Length != FishingTeams.PocketCount)
         {
@@ -690,9 +752,16 @@ public static class FishingMapSetup
         }
     }
 
+    /// <summary>
+    /// 物資を降らせる係がちょうど1つあり、出す物にオンライン用のプレハブが入っているか。
+    /// あわせて、物資が降る範囲を notes に書き出す。
+    ///
+    /// ⚠ `"supplyPrefab"`・`"bombPrefab"`・`"areaHalfSize"` は FishingObjectSpawner のフィールド名。
+    /// **向こうを改名すると、ここは NullReferenceException で止まる**（コンパイルエラーにはならない）。
+    /// </summary>
     private static void CheckSpawner(List<string> problems, List<string> notes)
     {
-        FishingObjectSpawner[] spawners = Object.FindObjectsByType<FishingObjectSpawner>(FindObjectsInactive.Include, FindObjectsSortMode.None);
+        FishingObjectSpawner[] spawners = FindAllInScene<FishingObjectSpawner>();
 
         if (spawners.Length != 1)
         {
@@ -710,6 +779,10 @@ public static class FishingMapSetup
                   "（スポナーを選ぶとシーン画面に枠が出る。**ステージの広さを変えたら Area Half Size も合わせる**）");
     }
 
+    /// <summary>
+    /// スポナーの <paramref name="field"/> に、オンライン用（NetworkObject 付き）のプレハブが入っているか。
+    /// <paramref name="label"/> は Inspector に出る項目名で、問題の文に使う。
+    /// </summary>
     private static void CheckSpawnPrefab(SerializedObject spawner, string field, string label, List<string> problems)
     {
         GameObject prefab = spawner.FindProperty(field).objectReferenceValue as GameObject;
@@ -731,6 +804,8 @@ public static class FishingMapSetup
     private static void CheckSpawnRing(List<string> problems, List<string> notes)
     {
         float radius = ReadSpawnRadius();
+        // 再生していないエディタでは、置いた物を動かしても当たり判定の位置がすぐには追いつかない。
+        // 下の Raycast が今の位置で当たるよう、先にそろえておく
         Physics.SyncTransforms();
 
         for (int i = 0; i < FishingTeams.MaxPlayers; i++)
@@ -738,6 +813,8 @@ public static class FishingMapSetup
             float angle = i * (360f / FishingTeams.MaxPlayers);
             Vector3 point = Quaternion.Euler(0f, angle, 0f) * (Vector3.forward * radius);
 
+            // 高さ 30m から真下へ 60m（高さ -30m まで）光線を飛ばし、最初に当たった物を見る。
+            // すり抜ける当たり判定（ゴールの判定など）は無視する
             if (!Physics.Raycast(point + Vector3.up * 30f, Vector3.down, out RaycastHit hit, 60f,
                     Physics.DefaultRaycastLayers, QueryTriggerInteraction.Ignore))
             {
@@ -745,6 +822,7 @@ public static class FishingMapSetup
                 continue;
             }
 
+            // 当たった高さが床（高さ0）から ±0.3m を超えていたら、何かが上に乗っている／床が低すぎる
             if (hit.point.y > 0.3f)
             {
                 string what = hit.collider.GetComponentInParent<MovingObstacle>() != null ? "動く障害物" : "物";
@@ -759,6 +837,11 @@ public static class FishingMapSetup
         notes.Add($"プレイヤーが出てくる場所：中心 (0, 0) から半径 {radius:0.#}m の円の上（床は高さ0。ここはふさがない）");
     }
 
+    /// <summary>
+    /// プレイヤーが出てくる円の半径（m）を、オンライン用プレイヤーのプレハブから読む。
+    /// 読めなければ <see cref="DefaultSpawnRadius"/> を使う。
+    /// ⚠ `"spawnRadius"` は FishingNetPlayer のフィールド名（向こうを改名すると、いつも初期値の 6m で点検してしまう）。
+    /// </summary>
     private static float ReadSpawnRadius()
     {
         GameObject prefab = AssetDatabase.LoadAssetAtPath<GameObject>(FishingNetSceneBuilder.OnlinePlayerPrefabPath);

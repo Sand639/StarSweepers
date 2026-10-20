@@ -17,6 +17,9 @@ using UnityEngine.InputSystem;
 ///   ・**爆発物2個**（釣り上げてから5秒で爆発。物資は消滅、プレイヤーはスタン）
 ///   ・チャージ量とスキルチェックのゲージ、点数・カウントダウン・スタンの表示
 ///
+/// ※ 2026/9/15 から、物資と爆発物は**決まった数を置かず、スポナー（FishingObjectSpawner）が次々に降らせる**形に変わった。
+///   上の「物資8個」「爆発物2個」は、その前の中身（`制作ログ.md` 9/15 を参照）。
+///
 /// フックの操作だけを切り離して確かめたいときは、
 /// 「Tools > StarSweepers > 釣りフックの検証シーンを作る」の最小構成シーンを使う
 /// （<see cref="FishingHookTestSetup"/>。**こちらのシーンは上書きしない**）。
@@ -28,6 +31,10 @@ public static class FishingArenaTestSetup
 {
     private const string ScenePath = FishingSceneBuilder.SceneFolder + "/FishingArenaTest.unity";
 
+    /// <summary>
+    /// シーンを作って保存する。シーンの並び順は、下で作る順番そのまま
+    /// （明かり → 床 → FishingHUD → 四方の壁 → プレイヤー → カメラ → フック → スポナー → HookUI）。
+    /// </summary>
     [MenuItem("Tools/StarSweepers/釣りフックのステージ検証シーンを作る")]
     public static void CreateScene()
     {

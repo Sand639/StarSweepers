@@ -2,10 +2,34 @@ using NUnit.Framework;
 using UnityEditor;
 using UnityEngine;
 
+/// <summary>
+/// **フックで引っ張ると動く大きなブロック（<see cref="MovableBlock"/>）の自動テスト。**（EditMode のテスト）
+///
+/// 動かし方：Unity のメニュー「Window > General > Test Runner」を開き、**EditMode** のタブで実行する。
+/// 再生しなくても動く（シーンも開かない）。テストの中で一時的に作った物は、`finally` で必ず消している。
+///
+/// 確かめていること：
+///   ・動く向きの決め方（プレイヤーの方向へ／引いた柱の向きへ）の計算が合っているか
+///   ・フックが当たった当たり判定（柱）から、引っ張れる物が見つかるか
+///   ・引っ張りが「完成」したときだけブロックが動くか
+///   ・プレハブ `MovableBlock.prefab` に、4辺の柱が正しく付いているか
+///
+/// ⚠ テストの中で `FindProperty("moveMode")` のように、ブロックや柱の**インスペクターの項目名を文字列で**指定している。
+/// `MovableBlock` / `MovableBlockPullPoint` のフィールドを改名すると、テストが NullReferenceException で失敗する。
+///
+/// ※ Editor フォルダにあるため、ゲームのビルドには含まれない。
+/// </summary>
 public class MovableBlockTests
 {
+    /// <summary>
+    /// 確かめるプレハブの場所。**プレハブを移したら、ここも直す**（直さないと最後のテストが失敗する）。
+    /// </summary>
     private const string PrefabPath = "Assets/Scenes/Test/Sou/MovableBlock.prefab";
 
+    /// <summary>
+    /// 動く向きの決め方は2つ、柱の位置は4つだけで、名前も変わっていないか。
+    /// （名前や数が変わると、インスペクターで選んでいた値がずれたり、ほかのテストの前提が崩れたりするため、見張っている）
+    /// </summary>
     [Test]
     public void BlockEnumsContainOnlyTheTwoModesAndFourSides()
     {
@@ -17,6 +41,10 @@ public class MovableBlockTests
             Is.EqualTo(new[] { "Front", "Back", "Left", "Right" }));
     }
 
+    /// <summary>
+    /// 「人によって引っ掛けてよいかが変わる物」（<see cref="IPlayerAwareHookPullable"/>）で、
+    /// 物が「だめ」と答えたときだけフックが掛からないか。中身は下の <see cref="PlayerAwarePullableFake"/>（テスト用の偽物）。
+    /// </summary>
     [Test]
     public void PlayerAwarePullableRejectsOnlyThePlayerItDisallows()
     {
@@ -41,6 +69,9 @@ public class MovableBlockTests
         }
     }
 
+    /// <summary>
+    /// ふつうのブロックの柱は「人による条件」を持たないので、ふだんの条件だけで、誰のフックでも掛かるか。
+    /// </summary>
     [Test]
     public void NormalMovableBlockPullPointKeepsUsingGeneralHookCondition()
     {
@@ -65,6 +96,9 @@ public class MovableBlockTests
         }
     }
 
+    /// <summary>
+    /// 引っ張りの情報（<see cref="HookPullContext"/>）が、渡した「引っ張った人の体の根元」をそのまま持っているか（別の物にすり替わらないか）。
+    /// </summary>
     [Test]
     public void HookPullContextKeepsTheExactPlayerRoot()
     {
@@ -82,9 +116,14 @@ public class MovableBlockTests
         }
     }
 
+    /// <summary>
+    /// 「プレイヤーの方向へ動く」決め方で、**高さの差は無視して、水平な向きだけ**になるか。
+    /// プレイヤーは (3, 7, 4) にいるので、高さ 7 を捨てた (3, 0, 4) を長さ1にした (0.6, 0, 0.8) が正解。
+    /// </summary>
     [Test]
     public void TowardPlayerUsesHorizontalDirectionFromBlockToPlayer()
     {
+        // 引数は順に：決め方・ブロックの向き・引いた柱・ブロックの位置・プレイヤーの位置
         Vector3 direction = MovableBlock.CalculateMoveDirection(
             MovableBlockMoveMode.TowardPlayer,
             Quaternion.identity,
@@ -95,6 +134,10 @@ public class MovableBlockTests
         Assert.That(Vector3.Distance(direction, new Vector3(0.6f, 0f, 0.8f)), Is.LessThan(0.0001f));
     }
 
+    /// <summary>
+    /// 「引いた柱の向きへ動く」決め方で、回っていないブロックなら Front＝+Z（北）、Back＝-Z、Left＝-X、Right＝+X になるか。
+    /// プレイヤーの位置（-20, 5, -20）は、この決め方では**使われない**ことも一緒に確かめている。
+    /// </summary>
     [TestCase(MovableBlockPullSide.Front, 0f, 0f, 1f)]
     [TestCase(MovableBlockPullSide.Back, 0f, 0f, -1f)]
     [TestCase(MovableBlockPullSide.Left, -1f, 0f, 0f)]
@@ -115,6 +158,9 @@ public class MovableBlockTests
         Assert.That(Vector3.Distance(direction, new Vector3(expectedX, expectedY, expectedZ)), Is.LessThan(0.0001f));
     }
 
+    /// <summary>
+    /// ブロックを右へ 90度回すと、Front の柱の向き（もとは +Z）も一緒に回って +X になるか。
+    /// </summary>
     [Test]
     public void FourDirectionsRotatesWithBlock()
     {
@@ -128,6 +174,10 @@ public class MovableBlockTests
         Assert.That(Vector3.Distance(direction, Vector3.right), Is.LessThan(0.0001f));
     }
 
+    /// <summary>
+    /// フックが掛かっただけではブロックは動かず、**引っ張りが完成したとき（CompletePull）に初めて** 2m 動くか。
+    /// 動いたあとは、フックが外れた扱いに戻るか。
+    /// </summary>
     [Test]
     public void PullPointCompletesPullOnlyWhenHookCallsCompletion()
     {
@@ -138,6 +188,8 @@ public class MovableBlockTests
         {
             root.AddComponent<Rigidbody>().isKinematic = true;
             MovableBlock block = root.AddComponent<MovableBlock>();
+            // 「柱の向きへ 2m、時間 0 秒（その場で一気に）動く」設定にする。
+            // ⚠ "moveMode" などは MovableBlock のフィールド名（改名するとここが失敗する）
             SerializedObject serializedBlock = new SerializedObject(block);
             serializedBlock.FindProperty("moveMode").enumValueIndex = (int)MovableBlockMoveMode.FourDirections;
             serializedBlock.FindProperty("moveDistance").floatValue = 2f;
@@ -167,6 +219,9 @@ public class MovableBlockTests
         }
     }
 
+    /// <summary>
+    /// フックが柱の当たり判定に当たったとき、その柱（引っ張れる物）が見つかるか。
+    /// </summary>
     [Test]
     public void HookFindsPullableFromTheColliderItHit()
     {
@@ -191,6 +246,10 @@ public class MovableBlockTests
         }
     }
 
+    /// <summary>
+    /// ゲージが確定したとき、ThrowController がブロックの柱に「引っ張り完成」を伝え、ブロックが動くか。
+    /// 今度は Right の柱なので、+X へ 2m 動けば正解。
+    /// </summary>
     [Test]
     public void ThrowControllerCallsPullableWhenPullIsCompleted()
     {
@@ -229,6 +288,9 @@ public class MovableBlockTests
         }
     }
 
+    /// <summary>
+    /// 実際のプレハブに、Front / Back / Left / Right という名前の柱が4つあり、それぞれ正しく設定されているか。
+    /// </summary>
     [Test]
     public void MovableBlockPrefabHasFourNamedTriggerPullPoints()
     {
@@ -242,6 +304,11 @@ public class MovableBlockTests
         AssertPullPoint(prefab.transform, "Right", MovableBlockPullSide.Right);
     }
 
+    /// <summary>
+    /// <paramref name="childName"/> という名前の柱が、すり抜ける BoxCollider と MovableBlockPullPoint を持ち、
+    /// 向きが <paramref name="expectedSide"/> になっているか。
+    /// 失敗したときの文は中国語（「拉點不存在」＝柱が無い、「沒有」＝付いていない、「必須是 Trigger」＝すり抜ける判定にすること）。
+    /// </summary>
     private static void AssertPullPoint(Transform root, string childName, MovableBlockPullSide expectedSide)
     {
         Transform child = root.Find(childName);
@@ -259,6 +326,11 @@ public class MovableBlockTests
     }
 }
 
+/// <summary>
+/// **テスト専用の偽物。** 「人によって引っ掛けてよいか」の答えを、<see cref="CanHook"/> で自由に切り替えられる。
+/// 本物の物件を用意しなくても、<see cref="HookController.CanHookPullable"/> の判断だけを確かめるために使う。
+/// Editor フォルダにあるので、ゲームのビルドには含まれない。
+/// </summary>
 public sealed class PlayerAwarePullableFake : MonoBehaviour, IHookPullable, IPlayerAwareHookPullable
 {
     public bool CanHook { get; set; }

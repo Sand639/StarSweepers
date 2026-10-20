@@ -43,11 +43,14 @@ public static class FishingHookTestSetup
         HookProjectile hook = FishingSceneBuilder.CreateHook();
         HookLine line = FishingSceneBuilder.CreateLine(player);
 
+        // 物資6個を、中心から 7.5m の円の上に並べる（消えても6秒で戻ってくる）
         FishingSceneBuilder.CreateSupplyRing(6, 7.5f);
 
         HookChargeUI ui = FishingSceneBuilder.CreateUI();
 
-        FishingSceneBuilder.WirePlayer(player, camera, hook, line, ui, inputActions, null, null);
+        // このシーンには点数の仕組みが無いので、点数の表示と点数表はつながない
+        FishingSceneBuilder.WirePlayer(player, camera, hook, line, ui, inputActions,
+            statusUI: null, scoreBoard: null);
 
         EditorSceneManager.MarkSceneDirty(scene);
         EditorSceneManager.SaveScene(scene, ScenePath);

@@ -27,11 +27,20 @@ using UnityEngine.InputSystem;
 /// </summary>
 public static class FishingOnlineSetup
 {
+    // ※ 同じ場所を FishingMapSetup・FishingSpawnerSetup・FishingOnlineBuilder も持っている。
+    //   シーンの場所や名前を変えるときは、すべてそろえること
     private const string LobbyScenePath = FishingSceneBuilder.SceneFolder + "/FishingLobby.unity";
     private const string OnlineScenePath = FishingSceneBuilder.SceneFolder + "/FishingOnline.unity";
+
+    // シーンを切り替えるときに使う名前（拡張子なし）。上のパスのファイル名と同じにしておく
     private const string OnlineSceneName = "FishingOnline";
     private const string LobbySceneName = "FishingLobby";
 
+    /// <summary>
+    /// ロビーと会場のシーン、オンライン用プレイヤーのプレハブをまとめて作り直す。
+    /// **2つのシーンは毎回まるごと作り直す**ので、手で置いた物は消える
+    /// （手で作り変えたいマップは `FishingMapSetup` の `釣りの新しいマップを作る` で作る）。
+    /// </summary>
     [MenuItem("Tools/StarSweepers/釣りのオンライン用シーンを作る（ロビー＋会場）")]
     public static void CreateAll()
     {
@@ -68,12 +77,17 @@ public static class FishingOnlineSetup
     // ロビーのシーン
     // ------------------------------------------------------------
 
+    /// <summary>
+    /// ロビーのシーンを作って保存する。<paramref name="playerPrefab"/> は、つないだ人ごとに生まれるプレイヤーのプレハブ。
+    /// シーンの並び順は Directional Light → Ground → Main Camera → NetworkManager。
+    /// </summary>
     private static void CreateLobbyScene(GameObject playerPrefab)
     {
         var scene = EditorSceneManager.NewScene(NewSceneSetup.EmptyScene, NewSceneMode.Single);
 
         FishingSceneBuilder.CreateLight();
 
+        // ロビーの床は会場より小さい 20m 四方（Plane は大きさ1倍で 10m 四方）。素材は会場の床と同じ
         Material groundMaterial = FishingSceneBuilder.GetOrCreateMaterial(
             FishingSceneBuilder.MaterialFolder + "/TestGround.mat", new Color(0.72f, 0.72f, 0.72f));
         GameObject ground = GameObject.CreatePrimitive(PrimitiveType.Plane);
@@ -82,6 +96,7 @@ public static class FishingOnlineSetup
         ground.GetComponent<MeshRenderer>().sharedMaterial = groundMaterial;
 
         // ロビーのカメラ。**追従は付けない**（ロビーでは全体が見えていればよい）
+        // 高さ 12m・後ろへ 12m から、45度見下ろす
         GameObject cameraObject = new GameObject("Main Camera");
         cameraObject.tag = "MainCamera";
         cameraObject.transform.position = new Vector3(0f, 12f, -12f);
@@ -91,9 +106,26 @@ public static class FishingOnlineSetup
         cameraObject.AddComponent<AudioListener>();
 
         // ---- 通信のまとめ役 ----
+        CreateLobbyNetworkManager(playerPrefab);
+
+        EditorSceneManager.MarkSceneDirty(scene);
+        EditorSceneManager.SaveScene(scene, LobbyScenePath);
+    }
+
+    /// <summary>
+    /// ロビーの NetworkManager（通信のまとめ役）を作る。
+    /// 既存の接続画面（LAN／インターネット／1人で練習）と、ロビー表示・ゲーム開始ボタンも、このオブジェクトに付ける。
+    ///
+    /// **NetworkManager はロビーにだけ置く。** 会場やマップへは、ロビーからそのまま連れていく
+    /// （マップの点検 <c>FishingMapSetup.CheckOpenMap</c> でも、マップに置かれていたら問題として出す）。
+    /// </summary>
+    private static void CreateLobbyNetworkManager(GameObject playerPrefab)
+    {
         GameObject managerObject = new GameObject("NetworkManager");
         NetworkManager manager = managerObject.AddComponent<NetworkManager>();
         UnityTransport transport = managerObject.AddComponent<UnityTransport>();
+        // つなぎ先の初期値は「このPC自身」（127.0.0.1）の 7777番。
+        // 実際のつなぎ先は、接続画面（LanConnectionUi）や起動時の指定（LanAutoStart の -host / -client）で書き換わる
         transport.SetConnectionData("127.0.0.1", 7777);
 
         // ⚠ **AddComponent した直後の NetworkManager は、NetworkConfig が null。**
@@ -127,17 +159,18 @@ public static class FishingOnlineSetup
         FishingLobbyUI lobbyUI = managerObject.AddComponent<FishingLobbyUI>();
         FishingSceneBuilder.SetString(lobbyUI, "gameSceneName", OnlineSceneName);
 
+        // NetworkConfig を直接書き換えたので、「変更あり」の印を付けて保存に含める
         EditorUtility.SetDirty(manager);
-
-        EditorSceneManager.MarkSceneDirty(scene);
-        EditorSceneManager.SaveScene(scene, LobbyScenePath);
     }
 
     // ------------------------------------------------------------
     // 釣り会場のシーン
     // ------------------------------------------------------------
 
-    /// <summary>釣り会場のシーンを作る。あわせてオンライン用プレイヤーのプレハブも用意して返す。</summary>
+    /// <summary>
+    /// 釣り会場のシーンを作る。あわせてオンライン用プレイヤーのプレハブも用意して返す。
+    /// 中身は `FishingMapSetup` で作るマップとほぼ同じ（遊ぶための仕組みは同じ。床の上の物が無い）。
+    /// </summary>
     private static GameObject CreateOnlineScene(InputActionAsset inputActions)
     {
         var scene = EditorSceneManager.NewScene(NewSceneSetup.EmptyScene, NewSceneMode.Single);
@@ -167,6 +200,7 @@ public static class FishingOnlineSetup
         FishingNetSceneBuilder.CreateNetworkPocketWalls();
 
         // ---- 見下ろしカメラ（追う相手は、自分のプレイヤーが生まれた時点で決まる）----
+        // 位置と角度は FishingSceneBuilder.CreateCamera と同じ（理由はそちらを参照）
         GameObject cameraObject = new GameObject("Main Camera");
         cameraObject.tag = "MainCamera";
         cameraObject.transform.position = new Vector3(0f, 16f, -9f);
@@ -218,6 +252,11 @@ public static class FishingOnlineSetup
         }
     }
 
+    /// <summary>
+    /// <paramref name="path"/> のシーンが一覧に無ければ後ろに足し、無効になっていれば有効に戻す。
+    /// 一覧を変えたら true を返す（実際に Build Settings へ書き戻すのは呼び出し側）。
+    /// ※ `FishingMapSetup.RegisterMapsInBuildSettings` も同じ考え方で、マップまでまとめて登録している。
+    /// </summary>
     private static bool AddSceneIfMissing(List<EditorBuildSettingsScene> scenes, string path)
     {
         foreach (EditorBuildSettingsScene entry in scenes)
