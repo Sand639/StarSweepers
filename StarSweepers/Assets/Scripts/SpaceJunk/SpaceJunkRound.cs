@@ -109,8 +109,8 @@ public partial class SpaceJunkRound : NetworkBehaviour
     [Min(0f)]
     [SerializeField] private float introTeamOrbitSeconds = 1.5f;
 
-    [Tooltip("④ チームの中央を中心に回る角度（度）")]
-    [SerializeField] private float introTeamOrbitDegrees = 250f;
+    [Tooltip("④ チームの中央を中心に回る角度（度）。マイナスにすると逆向きに回る")]
+    [SerializeField] private float introTeamOrbitDegrees = -110f;
 
     [Tooltip("⑤ 回ったあと、止まっている秒数")]
     [Min(0f)]
