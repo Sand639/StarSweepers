@@ -1,209 +1,172 @@
-using Unity.Netcode;
-using Unity.Netcode.Components;
 using UnityEditor;
 using UnityEditor.SceneManagement;
 using UnityEngine;
+using UnityEngine.InputSystem;
 
 /// <summary>
-/// **宇宙ごみを集めるボット（<see cref="SpaceJunkBot"/>）**のツール。（試作・2026/10/21）
+/// **宇宙ごみを集めるボット（<see cref="SpaceJunkBot"/>）**の検証シーンを作るツール。（試作・2026/10/21）
 ///
 /// | メニュー | すること |
 /// | --- | --- |
-/// | `Tools > StarSweepers > 宇宙ごみのボット > プレハブを作る（無ければ）` | `Assets/Prefabs/SpaceJunk/Online/SpaceJunkBot.prefab` を作る。**あれば作り直さない** |
 /// | `Tools > StarSweepers > 宇宙ごみのボット > 検証シーンを作り直す` | `Assets/Scenes/Test/SpaceJunkBotTest.unity` を作る（あれば上書き） |
-/// | `Tools > StarSweepers > 宇宙ごみのボット > 開いているシーンに置く` | 開いているシーン（マップ）にボットを1体置く。**保存はしない**（置き場所とチームを決めてから自分で保存する） |
+///
+/// シーンには、**人が操作するプレイヤー1人と、ボット2体（青・赤）**を置く。
+/// ボットの体は**人と同じ作りのプレイヤー**（釣りの検証シーンと同じ <see cref="FishingSceneBuilder.CreatePlayer"/>）に、
+/// 見えないコントローラー（<see cref="VirtualPlayerInput"/>）とボットの頭（<see cref="SpaceJunkBot"/>）を足しただけ。
+/// 投げ方は全員、宇宙ごみ式（<see cref="ThrowStyle.TwoButtons"/>）にする。
+///
+/// つながずに動く（オンラインの試合にボットを出す仕組みはまだ無い）。
 ///
 /// ※ Editor フォルダにあるため、ゲームのビルドには含まれない。
 /// </summary>
 public static class SpaceJunkBotSetup
 {
-    private const string PrefabPath = "Assets/Prefabs/SpaceJunk/Online/SpaceJunkBot.prefab";
     private const string ScenePath = "Assets/Scenes/Test/SpaceJunkBotTest.unity";
 
-    /// <summary>プレハブを作る。**すでにあれば作り直さない**（手で調整した値や見た目が消えないように）。</summary>
-    [MenuItem("Tools/StarSweepers/宇宙ごみのボット/プレハブを作る（無ければ）")]
-    public static void CreatePrefabMenu()
-    {
-        GameObject prefab = GetOrCreatePrefab();
-        Selection.activeObject = prefab;
-        EditorGUIUtility.PingObject(prefab);
-    }
+    /// <summary>ゴールの目印の位置（北と南の壁の手前）。床は 40m 四方（<see cref="FishingSceneBuilder.CreateGround"/>）。</summary>
+    private const float GoalZ = 16f;
 
     /// <summary>
     /// 検証シーンを新しく作って保存する。
-    /// 床・光・見下ろすカメラ・ゴールの目印2つ・ボット2体（青と赤）・素材12個を置く。
-    /// つないでいなくても動く（ボットはそのPCで考える）。**ゴールの目印は点を数えない**（運んで投げ込むところまでを見る）。
+    /// 床・壁・光・全体を見下ろすカメラ・ゴールの目印2つ・人のプレイヤー・ボット2体・素材14個を置く。
+    /// **ゴールの目印は点を数えない**（ボットが運んで投げ込むところまでを見る）。
     /// </summary>
     [MenuItem("Tools/StarSweepers/宇宙ごみのボット/検証シーンを作り直す")]
     public static void CreateTestScene()
     {
-        GameObject prefab = GetOrCreatePrefab();
         if (!EditorSceneManager.SaveCurrentModifiedScenesIfUserWantsTo())
         {
             return;
         }
 
+        InputActionAsset inputActions = FishingSceneBuilder.LoadInputActions();
+        if (inputActions == null)
+        {
+            Debug.LogError("入力の設定（InputSystem_Actions）が見つからないので、検証シーンを作れませんでした。");
+            return;
+        }
+
         var scene = EditorSceneManager.NewScene(NewSceneSetup.EmptyScene, NewSceneMode.Single);
 
-        GameObject lightObject = new GameObject("Directional Light");
-        Light light = lightObject.AddComponent<Light>();
-        light.type = LightType.Directional;
-        light.intensity = 1f;
-        light.shadows = LightShadows.Soft;
-        lightObject.transform.rotation = Quaternion.Euler(50f, -30f, 0f);
+        FishingSceneBuilder.CreateLight();
+        FishingSceneBuilder.CreateGround();
+        FishingSceneBuilder.CreatePlainWalls();
 
-        // Plane はもともと 10m 四方なので、3倍で 30m 四方の床になる
-        GameObject ground = GameObject.CreatePrimitive(PrimitiveType.Plane);
-        ground.name = "Ground";
-        ground.transform.localScale = new Vector3(3f, 1f, 3f);
-
-        // ----- カメラ（斜め上から全体を見下ろす） -----
+        // ----- カメラ（動かない。斜め上から床全体を見下ろす）-----
+        // ボットは「このカメラに映っている画面のどこにカーソルを置くか」で狙うので、全体が映るカメラにしておく
         GameObject cameraObject = new GameObject("Main Camera");
         cameraObject.tag = "MainCamera";
         Camera camera = cameraObject.AddComponent<Camera>();
         camera.clearFlags = CameraClearFlags.SolidColor;
         camera.backgroundColor = new Color(0.08f, 0.09f, 0.16f);
         camera.fieldOfView = 55f;
-        cameraObject.transform.position = new Vector3(0f, 22f, -18f);
-        cameraObject.transform.LookAt(Vector3.zero);
+        camera.farClipPlane = 500f;
+        cameraObject.AddComponent<AudioListener>();
+        cameraObject.transform.position = new Vector3(0f, 34f, -26f);
+        cameraObject.transform.LookAt(new Vector3(0f, 0f, -1f));
 
-        // ----- ゴールの目印（北＝青、南＝赤）とボット -----
-        Transform blueGoal = CreateGoalMarker("Goal_Blue", new Vector3(0f, 0f, 11f), 0);
-        Transform redGoal = CreateGoalMarker("Goal_Red", new Vector3(0f, 0f, -11f), 1);
+        // ----- ゴールの目印（北＝青、南＝赤）-----
+        Transform blueGoal = CreateGoalMarker("Goal_Blue", new Vector3(0f, 0f, GoalZ), 0);
+        Transform redGoal = CreateGoalMarker("Goal_Red", new Vector3(0f, 0f, -GoalZ), 1);
 
-        CreateBot(prefab, "Bot_Blue", new Vector3(-3f, 0f, 6f), 0, blueGoal);
-        CreateBot(prefab, "Bot_Red", new Vector3(3f, 0f, -6f), 1, redGoal);
+        // ----- 人のプレイヤー（いつもどおりマウス・コントローラーで動かせる。ゲージも出る）-----
+        GameObject human = CreateBody("Player", new Vector3(0f, 0f, 0f), camera, inputActions,
+            FishingSceneBuilder.CreateUI());
 
-        // ----- 素材（毎回同じ並びになるよう、乱数の種を決めておく） -----
+        // ----- ボット（同じ作りの体に、見えないコントローラーと頭を足す。ゲージの表示は無し）-----
+        CreateBot("Bot_Blue", new Vector3(-8f, 0f, 6f), 0, blueGoal, camera, inputActions);
+        CreateBot("Bot_Red", new Vector3(8f, 0f, -6f), 1, redGoal, camera, inputActions);
+
+        // ----- 素材（毎回同じ並びになるよう、乱数の種を決めておく）-----
         Random.State oldState = Random.state;
         Random.InitState(1021);
-        for (int i = 0; i < 12; i++)
+        for (int i = 0; i < 14; i++)
         {
-            Vector3 position = new Vector3(Random.Range(-12f, 12f), 0.5f, Random.Range(-7f, 7f));
+            Vector3 position = new Vector3(Random.Range(-15f, 15f), 0.5f, Random.Range(-10f, 10f));
             CreateTestMaterial($"Material_{i:00}", position, SpaceJunkMaterials.FromIndex(i % 3));
         }
         Random.state = oldState;
+
+        Selection.activeGameObject = human;
 
         EditorSceneManager.SaveScene(scene, ScenePath);
         AssetDatabase.SaveAssets();
 
         Debug.Log($"宇宙ごみのボットの検証シーンを作りました：{ScenePath}\n" +
-                  "再生すると、青と赤のボットが近くの素材を頭の上に持ち上げ、自分の色のゴールの目印へ放り込む。\n" +
-                  "（このシーンのゴールは目印だけなので、点は数えない。点の入り方はタイトルから遊んで確かめる）");
-    }
-
-    /// <summary>
-    /// **開いているシーンに、ボットを1体置く。** シーンビューで見ている場所に置き、選んだ状態にする。
-    /// 通信の番号を付け直すので、宇宙ごみのマップに置いてもそのまま使える。**保存はしない。**
-    /// </summary>
-    [MenuItem("Tools/StarSweepers/宇宙ごみのボット/開いているシーンに置く")]
-    public static void PlaceInOpenScene()
-    {
-        GameObject prefab = GetOrCreatePrefab();
-        var scene = EditorSceneManager.GetActiveScene();
-
-        GameObject bot = (GameObject)PrefabUtility.InstantiatePrefab(prefab, scene);
-        bot.name = "SpaceJunkBot";
-
-        if (SceneView.lastActiveSceneView != null)
-        {
-            Vector3 pivot = SceneView.lastActiveSceneView.pivot;
-            bot.transform.position = new Vector3(pivot.x, 0f, pivot.z);
-        }
-
-        SpaceJunkFixedCameraSetup.RefreshNetworkIds();
-        Undo.RegisterCreatedObjectUndo(bot, "ボットを置く");
-        Selection.activeGameObject = bot;
-        EditorSceneManager.MarkSceneDirty(scene);
-
-        Debug.Log($"{scene.name} にボットを置きました（まだ保存していません）。\n" +
-                  "置き場所を動かし、インスペクターの Team（0=青 / 1=赤 / 2=緑 / 3=黄）を決めてから Ctrl+S で保存してください。\n" +
-                  "※ 人と共有しているマップなら、触る前に Discord で一声かけること。");
+                  "再生すると、青と赤のボットが**プレイヤーと同じ操作（スティック・カーソル・RT）だけで**、\n" +
+                  "近くの素材を右で撃って持ち上げ、ゲージを見て自分の色のゴールの印へ投げる。\n" +
+                  "あなたも Player を動かして一緒に遊べる（このシーンのゴールは目印だけなので、点は数えない）。");
     }
 
     // ------------------------------------------------------------
-    // プレハブ
+    // 体とボット
     // ------------------------------------------------------------
 
     /// <summary>
-    /// プレハブを作る（あればそれを返す）。
-    /// 根元に「歩く体（CharacterController）・通信の印・位置を配る部品・ボットの頭」、子に見た目（カプセルと顔の板）を付ける。
+    /// プレイヤーの体を1つ作る（フック・糸・操作の部品つき）。投げ方は宇宙ごみ式にする。
+    /// <paramref name="ui"/> はゲージの表示。ボットには要らないので null でよい。
     /// </summary>
-    private static GameObject GetOrCreatePrefab()
+    private static GameObject CreateBody(string name, Vector3 position, Camera camera,
+        InputActionAsset inputActions, HookChargeUI ui)
     {
-        GameObject existing = AssetDatabase.LoadAssetAtPath<GameObject>(PrefabPath);
-        if (existing != null)
-        {
-            return existing;
-        }
+        GameObject body = FishingSceneBuilder.CreatePlayer();
+        body.name = name;
+        body.transform.position = position;
 
-        GameObject root = new GameObject("SpaceJunkBot");
+        HookProjectile hook = FishingSceneBuilder.CreateHook();
+        hook.name = $"{name}_Hook";
+        HookLine line = FishingSceneBuilder.CreateLine(body);
 
-        // 足元が原点、高さ2mの体
-        CharacterController controller = root.AddComponent<CharacterController>();
-        controller.height = 2f;
-        controller.radius = 0.45f;
-        controller.center = new Vector3(0f, 1f, 0f);
+        FishingSceneBuilder.WirePlayer(body, camera, hook, line, ui, inputActions, null, null);
 
-        root.AddComponent<NetworkObject>();
+        // ※ ThrowController の style の名前を変えると、ここが null で落ちる
+        SerializedObject thrower = new SerializedObject(body.GetComponent<ThrowController>());
+        thrower.FindProperty("style").enumValueIndex = (int)ThrowStyle.TwoButtons;
+        thrower.ApplyModifiedPropertiesWithoutUndo();
 
-        // ボットはホストが動かすので、**ホストが位置を配る**形にする。傾かないので縦以外の回転と大きさは送らない
-        NetworkTransform networkTransform = root.AddComponent<NetworkTransform>();
-        networkTransform.AuthorityMode = NetworkTransform.AuthorityModes.Server;
-        networkTransform.SyncRotAngleX = false;
-        networkTransform.SyncRotAngleZ = false;
-        networkTransform.SyncScaleX = false;
-        networkTransform.SyncScaleY = false;
-        networkTransform.SyncScaleZ = false;
-
-        // ----- 見た目。当たり判定は根元の CharacterController だけにする -----
-        GameObject body = GameObject.CreatePrimitive(PrimitiveType.Capsule);
-        body.name = "Body";
-        body.transform.SetParent(root.transform, false);
-        body.transform.localPosition = new Vector3(0f, 1f, 0f);
-        body.transform.localScale = new Vector3(0.9f, 1f, 0.9f);
-        Object.DestroyImmediate(body.GetComponent<Collider>());
-
-        // どちらを向いているか分かるように、顔の位置に板を付ける
-        GameObject face = GameObject.CreatePrimitive(PrimitiveType.Cube);
-        face.name = "Face";
-        face.transform.SetParent(root.transform, false);
-        face.transform.localPosition = new Vector3(0f, 1.5f, 0.38f);
-        face.transform.localScale = new Vector3(0.6f, 0.25f, 0.15f);
-        Object.DestroyImmediate(face.GetComponent<Collider>());
-
-        SpaceJunkBot bot = root.AddComponent<SpaceJunkBot>();
-
-        // bodyRenderer は private なので、名前を指定して書き込む。
-        // ※ SpaceJunkBot の bodyRenderer の名前を変えると、ここが null で落ちる
-        SerializedObject serialized = new SerializedObject(bot);
-        serialized.FindProperty("bodyRenderer").objectReferenceValue = body.GetComponent<Renderer>();
-        serialized.ApplyModifiedPropertiesWithoutUndo();
-
-        GameObject prefab = PrefabUtility.SaveAsPrefabAsset(root, PrefabPath);
-        Object.DestroyImmediate(root);
-
-        Debug.Log($"宇宙ごみのボットのプレハブを作りました：{PrefabPath}");
-        return prefab;
+        return body;
     }
 
-    // ------------------------------------------------------------
-    // 検証シーンの部品
-    // ------------------------------------------------------------
-
-    /// <summary>ボットを置き、チームと運ぶ先（ゴールの目印）を決める。</summary>
-    private static void CreateBot(GameObject prefab, string name, Vector3 position, int team, Transform goal)
+    /// <summary>ボットを1体作る。チームの色に塗り、運ぶ先（ゴールの目印）を決める。</summary>
+    private static void CreateBot(string name, Vector3 position, int team, Transform goal,
+        Camera camera, InputActionAsset inputActions)
     {
-        GameObject bot = (GameObject)PrefabUtility.InstantiatePrefab(prefab);
-        bot.name = name;
-        bot.transform.position = position;
+        GameObject body = CreateBody(name, position, camera, inputActions, null);
+
+        body.AddComponent<VirtualPlayerInput>();
+        SpaceJunkBot bot = body.AddComponent<SpaceJunkBot>();
 
         // ※ SpaceJunkBot の team・goalOverride の名前を変えると、ここが null で落ちる
-        SerializedObject serialized = new SerializedObject(bot.GetComponent<SpaceJunkBot>());
+        SerializedObject serialized = new SerializedObject(bot);
         serialized.FindProperty("team").intValue = team;
         serialized.FindProperty("goalOverride").objectReferenceValue = goal;
         serialized.ApplyModifiedPropertiesWithoutUndo();
+
+        // 狙い方の表示（画面左下）は、人のプレイヤーのぶんだけ出す（ボットのぶんが重ならないように）
+        HookAimAssist aimAssist = body.GetComponent<HookAimAssist>();
+        if (aimAssist != null)
+        {
+            SerializedObject assist = new SerializedObject(aimAssist);
+            assist.FindProperty("showPanel").boolValue = false;
+            assist.ApplyModifiedPropertiesWithoutUndo();
+        }
+
+        // チームの色に塗る（Body の下の見た目だけ）。色はシーンの中に持たせる
+        Transform look = body.transform.Find("Body");
+        if (look != null)
+        {
+            foreach (Renderer renderer in look.GetComponentsInChildren<Renderer>(true))
+            {
+                Material material = new Material(renderer.sharedMaterial);
+                material.color = SpaceJunkTeams.TeamColor(team);
+                renderer.sharedMaterial = material;
+            }
+        }
     }
+
+    // ------------------------------------------------------------
+    // ゴールの目印と素材
+    // ------------------------------------------------------------
 
     /// <summary>
     /// ゴールの目印（チームの色の丸い板）。**当たり判定も点を数える仕組みも無い**ただの印。

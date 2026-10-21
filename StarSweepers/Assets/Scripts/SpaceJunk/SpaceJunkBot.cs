@@ -1,36 +1,40 @@
 using System.Collections.Generic;
-using Unity.Netcode;
 using UnityEngine;
 
 /// <summary>
-/// **宇宙ごみを集めるボット（NPC）。** 試作・2026/10/21（大槻さんの依頼。「最初は簡易的なものでよい」）
+/// **宇宙ごみを集めるボット（NPC）の頭。** 試作・2026/10/21（大槻さんの依頼）
 ///
-/// ## 何をするか
+/// ## プレイヤーと同じ操作しかしない
 ///
-/// 1. いちばん近い素材（<see cref="SpaceJunkMaterial"/> が付いた物）へ歩いていく
-/// 2. 手が届いたら**頭の上に持ち上げる**
-/// 3. 自分のチームのゴールへ歩き、**投げる距離まで来たら放物線で放り込む**
-/// 4. 1 に戻る
+/// ボットは物を直接動かさない。**プレイヤーの体（移動・狙い・フック・投げるの部品が付いた体）に乗って、
+/// 見えないコントローラー（<see cref="VirtualPlayerInput"/>）を操作するだけ。**
+/// 操作は**操作タイプA・投げ方「左右で使い分け」**と同じ（PCの設定がタイプBやZRワンボタンでも、ボットはこの操作）。
 ///
-/// 点はプレイヤーと同じく <see cref="SpaceJunkGoal"/> が数える（ゴールの中に決めた秒数いつづけたら1点）。
+/// | ボットがすること | プレイヤーで言うと |
+/// | --- | --- |
+/// | 素材の近くの「投げればゴールに届く場所」まで歩く | 左スティック |
+/// | 素材にカーソルを合わせる | 右スティック（マウス） |
+/// | RT を押して溜め、届く長さになったら離す | RT（右クリック）長押し → 離す |
+/// | 持ち上げている間に、カーソルをゴールへ向ける | 右スティック |
+/// | 投げるゲージが、ゴールまでちょうど届く位置に来たら RT | RT |
 ///
-/// ## 横取りできる
+/// ボットが読むのは、**プレイヤーが画面で見ているものと同じ情報だけ**
+/// （素材とゴールの場所、自分のフックの溜め具合、投げるゲージの位置）。
 ///
-/// 持ち上げている素材も、**プレイヤーがフックで引っ掛ければ奪える**（ボットは手を離して次の素材を探す）。
+/// ## 届かないときは中継する
 ///
-/// ## 考えるのはホストだけ
+/// 素材がゴールから遠すぎて1回では届かないときは、**ゴールに向けて思いきり投げて近づける**（次にまた拾う）。
 ///
-/// ボットの頭（どこへ行くか・何を持つか）は**ホストのPCだけ**で動かす。
-/// ほかのPCには、ボットの位置は `NetworkTransform`、素材の位置は素材側の `NetworkTransform` で届く。
-/// **つないでいないとき（検証シーン）は、そのPCで動く。**
+/// ## 考えるのは、その体を操作するPCだけ
 ///
-/// ## 道は探さない
+/// オンラインの体（<see cref="FishingNetPlayer"/>）なら、持ち主のPCだけで考える。つないでいなければそのPCで考える。
+/// **いまはオンラインの試合にボットを出す仕組みはまだ無い**（検証シーンで、つながずに動かす）。
 ///
-/// 目的地へ**まっすぐ**歩くだけ（簡易版）。穴や壁は避けない。
-/// 進めなくなったら、その素材をしばらくあきらめて別の素材を探す。落ちたら最初の場所へ戻る。
+/// 入力を書き込んでから操作の部品が読むよう、**ほかの部品より先に動く**（DefaultExecutionOrder）。
 /// </summary>
-[RequireComponent(typeof(CharacterController))]
-public class SpaceJunkBot : NetworkBehaviour
+[DefaultExecutionOrder(-50)]
+[RequireComponent(typeof(VirtualPlayerInput))]
+public class SpaceJunkBot : MonoBehaviour
 {
     [Header("チーム")]
     [Tooltip("どのチームのゴールへ運ぶか（0=青 / 1=赤 / 2=緑 / 3=黄）。そのチームのゴールが無いマップでは何もしない")]
@@ -39,35 +43,45 @@ public class SpaceJunkBot : NetworkBehaviour
     [Tooltip("ゴールを直接決める（検証シーン用）。入っていれば、チームに関係なくここへ運ぶ")]
     [SerializeField] private Transform goalOverride;
 
-    [Tooltip("チームの色に塗る見た目。空なら色を変えない")]
-    [SerializeField] private Renderer bodyRenderer;
+    [Header("参照（空なら同じ体から自動で探す）")]
+    [SerializeField] private HookController hook;
+    [SerializeField] private ThrowController thrower;
 
-    [Header("歩く")]
-    [Tooltip("歩く速さ（m/秒）")]
-    [SerializeField] private float moveSpeed = 3.5f;
+    [Tooltip("カーソルの位置を決めるときに使うカメラ。空なら Camera.main（プレイヤーの狙いと同じカメラ）")]
+    [SerializeField] private Camera viewCamera;
 
-    [Tooltip("向きを変える速さ（度/秒）")]
-    [SerializeField] private float turnSpeed = 540f;
+    [Header("フックを撃つ")]
+    [Tooltip("フックの届く長さ（最大）のうち、どこまでを使うか（0〜1）。小さいほど近づいてから撃つ")]
+    [Range(0.3f, 1f)]
+    [SerializeField] private float hookReachUse = 0.8f;
 
-    [Header("拾う")]
-    [Tooltip("素材にここまで近づいたら（水平の距離、m）持ち上げる")]
-    [SerializeField] private float pickupDistance = 1.6f;
+    [Tooltip("素材にこれより近いと撃ちにくいので、この距離（m）は離れて撃つ")]
+    [SerializeField] private float minHookDistance = 2.5f;
 
-    [Tooltip("持ち上げた素材を置く高さ（足元から、m）")]
-    [SerializeField] private float carryHeight = 2.6f;
+    [Tooltip("同じ素材を続けて外したら、その素材をしばらくあきらめる回数")]
+    [SerializeField] private int missesBeforeGiveUp = 2;
+
+    [Header("投げる")]
+    [Tooltip("投げて届く最大の距離のうち、どこまでを使うか（0〜1）。小さいほどゴールの近くまで寄ってから投げる")]
+    [Range(0.3f, 1f)]
+    [SerializeField] private float throwRangeUse = 0.85f;
+
+    [Tooltip("飛ぶ距離の見積もりの補正（1 で計算どおり）。いつも手前に落ちるなら大きく、奥へ行きすぎるなら小さくする")]
+    [SerializeField] private float throwDistanceScale = 1f;
+
+    [Tooltip("ゲージを押す位置のぶれ（ゲージ全体を1とした幅）。大きいほど下手になる。0 で毎回ぴったり")]
+    [Range(0f, 0.3f)]
+    [SerializeField] private float gaugeError = 0.04f;
 
     [Tooltip("ゴールからこの距離（m）より近い素材は拾わない（もうすぐ点になる物を持ち出さないため）")]
     [SerializeField] private float ignoreNearGoalDistance = 2.5f;
 
-    [Header("投げる")]
-    [Tooltip("ゴールまでこの距離（水平、m）に来たら投げる")]
-    [SerializeField] private float throwDistance = 4f;
-
-    [Tooltip("投げた素材の横向きの速さ（m/秒）。小さいほど高く山なりに飛ぶ")]
-    [SerializeField] private float throwHorizontalSpeed = 6f;
+    [Header("間合い")]
+    [Tooltip("撃つ場所に着いてから、撃ち始めるまでの秒数（考えている時間）")]
+    [SerializeField] private float thinkSeconds = 0.25f;
 
     [Tooltip("投げたあと、次の素材を探し始めるまでの秒数")]
-    [SerializeField] private float afterThrowPause = 0.6f;
+    [SerializeField] private float afterThrowPause = 0.5f;
 
     [Header("困ったとき")]
     [Tooltip("この秒数のあいだ目的地へ近づけなかったら、その素材をあきらめる")]
@@ -76,29 +90,37 @@ public class SpaceJunkBot : NetworkBehaviour
     [Tooltip("あきらめた素材を、また狙うまでの秒数")]
     [SerializeField] private float giveUpSeconds = 6f;
 
-    [Tooltip("この高さより下に落ちたら、最初の場所へ戻る（プレイヤーと同じ -8m）")]
-    [SerializeField] private float fallResetHeight = -8f;
-
     /// <summary>どのボットかが狙っている素材。**2体が同じ素材を取り合わない**ために使う。</summary>
     private static readonly HashSet<HookableObject> Reserved = new HashSet<HookableObject>();
 
-    private CharacterController controller;
-    private Vector3 startPosition;
-    private Quaternion startRotation;
-    private float verticalSpeed;
+    private VirtualPlayerInput pad;
+    private FishingNetPlayer netPlayer;
 
-    /// <summary>狙っている素材（持ち上げる前）。</summary>
+    /// <summary>狙っている素材。</summary>
     private HookableObject target;
-
-    /// <summary>持ち上げている素材。</summary>
-    private HookableObject carried;
 
     /// <summary>あきらめた素材と、また狙ってよくなる時刻。</summary>
     private readonly Dictionary<HookableObject, float> givenUp = new Dictionary<HookableObject, float>();
 
+    /// <summary>今の素材を続けて外した回数。</summary>
+    private int misses;
+
+    /// <summary>撃ってから、何かに引っ掛かったか（フックが戻ってきたとき、外したかどうかの判断に使う）。</summary>
+    private bool hookedSinceFire;
+
+    /// <summary>直前のフレームのフックの段階。</summary>
+    private HookController.HookPhase lastPhase;
+
+    /// <summary>この時刻までは何もしない（考えている・投げたあとの一息）。</summary>
     private float pauseUntil;
 
-    // 進めなくなったかを見るための、前回の「目的地までの距離」と、その時刻
+    /// <summary>撃つ場所に着いた時刻（着いてから <see cref="thinkSeconds"/> 待ってから撃つ）。着いていなければ -1。</summary>
+    private float arrivedAt = -1f;
+
+    /// <summary>今回の投げでゲージを押す位置。投げるゲージが出た瞬間に決める。-1 ならまだ決めていない。</summary>
+    private float pressAt = -1f;
+
+    // 進めなくなったかを見るための、いちばん縮んだ「目的地までの距離」と、その時刻
     private float bestDistance = float.MaxValue;
     private float bestDistanceTime;
 
@@ -107,38 +129,44 @@ public class SpaceJunkBot : NetworkBehaviour
 
     private void Awake()
     {
-        controller = GetComponent<CharacterController>();
-        startPosition = transform.position;
-        startRotation = transform.rotation;
+        pad = GetComponent<VirtualPlayerInput>();
+        netPlayer = GetComponent<FishingNetPlayer>();
 
-        if (bodyRenderer != null)
+        if (hook == null)
         {
-            bodyRenderer.material.color = SpaceJunkTeams.TeamColor(team);
+            hook = GetComponent<HookController>();
+        }
+
+        if (thrower == null)
+        {
+            thrower = GetComponent<ThrowController>();
+        }
+
+        if (hook == null || thrower == null)
+        {
+            Debug.LogError($"{name}: ボットはプレイヤーの体（HookController と ThrowController が付いた物）に付けてください。", this);
+            enabled = false;
         }
     }
 
-    public override void OnDestroy()
+    private void OnDisable()
     {
-        Drop();
         SetTarget(null);
+    }
 
+    private void OnDestroy()
+    {
         // シーンを移ると素材ごと消えるので、消えた物の印を片付けておく
         Reserved.RemoveWhere(item => item == null);
-        base.OnDestroy();
     }
 
     /// <summary>
     /// **このPCでボットを考えさせてよいか。**
-    /// つないでいる → ホストだけ。つないでいない（検証シーン）→ このPCで動かす。
+    /// オンラインの体なら持ち主のPCだけ。つないでいない体なら、このPCで動かす。
     /// </summary>
     private bool CanThink()
     {
-        if (IsSpawned)
-        {
-            return IsServer;
-        }
-
-        return NetworkManager.Singleton == null || !NetworkManager.Singleton.IsListening;
+        return netPlayer == null || !netPlayer.IsSpawned || netPlayer.IsOwner;
     }
 
     private void Update()
@@ -148,88 +176,225 @@ public class SpaceJunkBot : NetworkBehaviour
             return;
         }
 
-        if (transform.position.y < fallResetHeight)
+        // ボタンは「押した瞬間」だけ意味があるので、押したら次のフレームで必ず離す
+        // （溜めている間だけは、下の HandleCharging が押し続ける）
+        pad.SetPull(false);
+        if (hook.Phase != HookController.HookPhase.Charging)
         {
-            ResetToStart();
+            pad.SetThrow(false);
+        }
+
+        // ラウンドの始まりの演出中・ラウンドの合間・試合の外は、何もしない
+        if (!SpaceJunkRound.PlayAllowed || !FishingMatch.PlayAllowed || GamePause.BlocksInput)
+        {
+            pad.Move = Vector2.zero;
+            pad.SetThrow(false);
             return;
         }
 
-        // ラウンドの始まりの演出中・ラウンドの合間は止まる（持っている物も離す）
-        if (!SpaceJunkRound.PlayAllowed)
+        TrackHookResult();
+
+        // ---- 画面にゲージが出ていたら、それに応える ----
+        if (thrower.IsThrowGaugeShowing)
         {
-            Drop();
-            SetTarget(null);
-            Move(Vector3.zero);
+            pad.Move = Vector2.zero;
+            HandleThrowGauge();
             return;
         }
 
-        if (Time.time < pauseUntil)
+        pressAt = -1f;
+
+        if (thrower.IsPullGaugeShowing)
         {
-            Move(Vector3.zero);
+            // 横取りの待ちなどで「引っ張る」ゲージが出た。真ん中あたりで LT を押す
+            pad.Move = Vector2.zero;
+            float gauge = thrower.GaugePosition;
+            if (gauge > 0.45f && gauge < 0.55f)
+            {
+                pad.SetPull(true);
+            }
             return;
         }
 
-        if (carried != null)
+        switch (hook.Phase)
         {
-            CarryToGoal();
-        }
-        else
-        {
-            GoToMaterial();
+            case HookController.HookPhase.Charging:
+                HandleCharging();
+                break;
+
+            case HookController.HookPhase.Idle:
+                if (Time.time >= pauseUntil)
+                {
+                    HandleSeek();
+                }
+                else
+                {
+                    pad.Move = Vector2.zero;
+                }
+                break;
+
+            default:
+                // 飛んでいる・戻っている・持ち上げている途中。止まって、持ち上げ中ならゴールを向いておく
+                pad.Move = Vector2.zero;
+                if (hook.Phase == HookController.HookPhase.Attached && GoalPosition().HasValue)
+                {
+                    PointAt(GoalPosition().Value);
+                }
+                break;
         }
     }
 
-    /// <summary>持ち上げている素材を頭の上に置き続ける（物理の計算に合わせて動かす）。</summary>
-    private void FixedUpdate()
+    // ------------------------------------------------------------
+    // 撃った結果を見る（外したら数える）
+    // ------------------------------------------------------------
+
+    private void TrackHookResult()
     {
-        // 横取りされた直後は、もう引っ掛けた人が動かしているので触らない（手を離すのは Update で行う）
-        if (carried == null || !CanThink() || !IsStillMine(carried))
+        HookController.HookPhase phase = hook.Phase;
+
+        if (phase == HookController.HookPhase.Attached)
         {
-            return;
+            hookedSinceFire = true;
         }
 
-        carried.Body.MovePosition(transform.position + Vector3.up * carryHeight);
+        if (lastPhase == HookController.HookPhase.Charging && phase == HookController.HookPhase.Flying)
+        {
+            hookedSinceFire = false;
+        }
+
+        // 戻ってきた。一度も引っ掛からなかったなら「外した」
+        if (lastPhase != HookController.HookPhase.Idle && phase == HookController.HookPhase.Idle && !hookedSinceFire)
+        {
+            misses++;
+            if (target != null && misses >= missesBeforeGiveUp)
+            {
+                givenUp[target] = Time.time + giveUpSeconds;
+                SetTarget(null);
+            }
+        }
+
+        lastPhase = phase;
     }
 
     // ------------------------------------------------------------
-    // 素材を探して拾う
+    // 素材を探して、撃つ場所まで歩く
     // ------------------------------------------------------------
 
-    private void GoToMaterial()
+    private void HandleSeek()
     {
+        Vector3? goal = GoalPosition();
+        if (!goal.HasValue)
+        {
+            // 自分のチームのゴールが無い（チーム数が足りないマップなど）。何もしない
+            pad.Move = Vector2.zero;
+            return;
+        }
+
         if (!IsPickable(target))
         {
-            SetTarget(FindNearestMaterial());
+            SetTarget(FindNearestMaterial(goal.Value));
         }
 
         if (target == null)
         {
-            Move(Vector3.zero);
+            pad.Move = Vector2.zero;
             return;
         }
 
-        float distance = FlatDistance(transform.position, target.transform.position);
+        Vector3 itemPosition = target.transform.position;
+        Vector3 standAt = StandPoint(itemPosition, goal.Value, out bool canReachGoal);
+        float toStand = FlatDistance(transform.position, standAt);
+        float toItem = FlatDistance(transform.position, itemPosition);
 
-        if (distance <= pickupDistance)
+        // **ここから撃ってよいか。** 素材にフックが届き、近すぎず、投げればゴールにちょうど届く
+        // （1回で届かないときは、撃つ場所に着いたか）
+        float toGoal = FlatDistance(transform.position, goal.Value);
+        bool inHookRange = toItem <= HookReach() && toItem >= minHookDistance * 0.8f;
+        bool throwReaches = canReachGoal
+            ? toGoal <= MaxThrowDistance(target) * throwRangeUse && toGoal >= MinThrowDistance(target)
+            : toStand < 1f;
+
+        if (inHookRange && throwReaches)
         {
-            PickUp(target);
+            pad.Move = Vector2.zero;
+            PointAt(itemPosition);
+
+            if (arrivedAt < 0f)
+            {
+                arrivedAt = Time.time;
+            }
+
+            // 着いてすぐには撃たない（体の向きがそろうのを待つ）
+            if (Time.time - arrivedAt >= thinkSeconds)
+            {
+                pad.SetThrow(true); // RT を押して溜め始める
+            }
             return;
         }
 
-        if (IsStuck(distance))
+        arrivedAt = -1f;
+
+        if (IsStuck(toStand))
         {
             givenUp[target] = Time.time + giveUpSeconds;
             SetTarget(null);
+            pad.Move = Vector2.zero;
             return;
         }
 
-        Move(target.transform.position - transform.position);
+        WalkTo(standAt);
+    }
+
+    /// <summary>
+    /// **どこに立って撃つか。** 素材とゴールを結ぶ線の上で、「素材にフックが届き」「投げればゴールにちょうど届く」場所。
+    ///
+    /// - ふつう … 素材からゴールのほうへ寄った所（素材を背にしてゴールへ投げる）
+    /// - 素材がゴールに近すぎる … いちばん弱く投げても飛びすぎるので、**素材の向こう側**（ゴールから離れる側）に立つ
+    /// - 1回では届かないほど遠い … フックが届くいちばんゴール寄りの場所（そこから思いきり投げて中継する）
+    /// </summary>
+    private Vector3 StandPoint(Vector3 item, Vector3 goal, out bool canReachGoal)
+    {
+        Vector3 toGoal = goal - item;
+        toGoal.y = 0f;
+        float itemToGoal = toGoal.magnitude;
+
+        float reach = HookReach();
+        float throwMax = MaxThrowDistance(target) * throwRangeUse;
+        float throwMin = MinThrowDistance(target);
+
+        // 素材からゴールのほうへ、どれだけ寄った所に立つか（マイナスなら素材の向こう側）。
+        // 立った場所からゴールまでは「itemToGoal − along」なので、それが throwMin〜throwMax に入るようにする
+        float nearest = itemToGoal - throwMax;  // これより手前（素材寄り）に立つと届かない
+        float farthest = itemToGoal - throwMin; // これよりゴール寄りに立つと飛びすぎる
+
+        float along;
+        canReachGoal = true;
+
+        if (Mathf.Max(minHookDistance, nearest) <= farthest)
+        {
+            along = Mathf.Max(minHookDistance, nearest);
+            if (along > reach)
+            {
+                // 1回では届かない。届くいちばんゴール寄りから中継する
+                canReachGoal = false;
+                along = reach;
+            }
+        }
+        else
+        {
+            // ゴールに近すぎる。素材の向こう側に回る
+            along = Mathf.Clamp(Mathf.Min(farthest, -minHookDistance), -reach, -minHookDistance);
+        }
+
+        Vector3 direction = itemToGoal > 0.01f ? toGoal / itemToGoal : Vector3.forward;
+        Vector3 point = item + direction * along;
+        point.y = transform.position.y;
+        return point;
     }
 
     /// <summary>拾ってよい素材のうち、いちばん近いもの。無ければ null。</summary>
-    private HookableObject FindNearestMaterial()
+    private HookableObject FindNearestMaterial(Vector3 goal)
     {
-        Vector3? goal = GoalPosition();
         HookableObject nearest = null;
         float nearestDistance = float.MaxValue;
 
@@ -246,7 +411,7 @@ public class SpaceJunkBot : NetworkBehaviour
             }
 
             // もうゴールの近くにある物は、そのまま点になるので触らない
-            if (goal.HasValue && FlatDistance(item.transform.position, goal.Value) < ignoreNearGoalDistance)
+            if (FlatDistance(item.transform.position, goal) < ignoreNearGoalDistance)
             {
                 continue;
             }
@@ -263,11 +428,10 @@ public class SpaceJunkBot : NetworkBehaviour
     }
 
     /// <summary>
-    /// **ボットが拾ってよい素材か。**
-    /// 素材であること・消えていないこと・誰も引っ掛けていないこと・重いデブリでないこと・
-    /// いまホストが動かしている（誰かの手元で動いていない）こと。
+    /// **狙ってよい素材か。** 素材であること・消えていないこと・誰も引っ掛けていないこと・
+    /// 重いデブリでないこと（右で撃つと引っ掛からないため）。
     /// </summary>
-    private bool IsPickable(HookableObject item)
+    private static bool IsPickable(HookableObject item)
     {
         if (item == null || item.IsVanished || item.IsHooked)
         {
@@ -280,106 +444,144 @@ public class SpaceJunkBot : NetworkBehaviour
         }
 
         FishingNetSupply netSupply = item.GetComponent<FishingNetSupply>();
-        if (netSupply != null && netSupply.IsSpawned && (netSupply.IsClaimed || !netSupply.IsOwner))
-        {
-            return false;
-        }
-
-        return true;
-    }
-
-    /// <summary>素材を持ち上げる。物理を止めて、自分の体とはぶつからないようにする。</summary>
-    private void PickUp(HookableObject item)
-    {
-        carried = item;
-        SetTarget(null);
-        Reserved.Add(item);
-
-        if (!item.Body.isKinematic)
-        {
-            item.Body.linearVelocity = Vector3.zero;
-            item.Body.angularVelocity = Vector3.zero;
-        }
-        item.Body.isKinematic = true;
-
-        SetIgnoreCollision(item, true);
-        ResetStuck();
+        return netSupply == null || !netSupply.IsSpawned || !netSupply.IsClaimed;
     }
 
     // ------------------------------------------------------------
-    // ゴールへ運んで投げる
+    // フックを溜めて撃つ
     // ------------------------------------------------------------
 
-    private void CarryToGoal()
+    /// <summary>RT を押したまま、素材まで届く長さになったら離す。</summary>
+    private void HandleCharging()
     {
-        // **プレイヤーに横取りされた／消えた**ら、手を離して次を探す
-        if (!IsStillMine(carried))
+        pad.Move = Vector2.zero;
+
+        if (target == null)
         {
-            Forget();
+            pad.SetThrow(false); // 狙う物が無くなった。その場で撃ってしまう
             return;
         }
 
+        Vector3 itemPosition = target.transform.position;
+        PointAt(itemPosition);
+
+        float need = FlatDistance(hook.HandPoint != null ? hook.HandPoint.position : transform.position, itemPosition) + 0.5f;
+        bool longEnough = hook.ReachAtCurrentCharge >= need || hook.Charge >= 1f;
+
+        pad.SetThrow(!longEnough);
+    }
+
+    // ------------------------------------------------------------
+    // 頭上に持って、ゲージを見て投げる
+    // ------------------------------------------------------------
+
+    /// <summary>
+    /// 投げるゲージが出ている間。カーソルをゴールへ向け、**ゴールまでちょうど届く強さになる位置**で RT を押す。
+    /// ゲージは左端から右端へ1回だけ動き、真ん中ほど強い。ボットはいつも**真ん中より右側**で押す
+    /// （出た直後は押しても効かない時間があるので、左側は使わない）。
+    /// </summary>
+    private void HandleThrowGauge()
+    {
         Vector3? goal = GoalPosition();
         if (!goal.HasValue)
         {
-            // 自分のチームのゴールが無い（チーム数が足りないマップなど）。持ったまま待つ
-            Move(Vector3.zero);
-            return;
+            return; // 押さなければ、右端で後ろへ落とす
         }
 
-        float distance = FlatDistance(transform.position, goal.Value);
+        PointAt(goal.Value);
 
-        if (distance <= throwDistance)
+        if (pressAt < 0f)
         {
-            ThrowTo(goal.Value);
-            return;
+            HookableObject held = hook.AttachedItem;
+            float distance = FlatDistance(transform.position, goal.Value);
+            float accuracy = AccuracyFor(distance, held, goal.Value.y);
+
+            // 真ん中（0.5）から、強さを落とすぶんだけ右へずらす。押し損ねて右端（後ろへ落とす）にならないよう 0.95 まで
+            pressAt = Mathf.Clamp(0.5f + (1f - accuracy) * 0.5f + Random.Range(-gaugeError, gaugeError), 0.5f, 0.95f);
         }
 
-        if (IsStuck(distance))
+        if (thrower.GaugePosition >= pressAt)
         {
-            // ゴールへ近づけない。その場に落として、しばらくその素材はあきらめる
-            HookableObject item = carried;
-            Drop();
-            givenUp[item] = Time.time + giveUpSeconds;
-            return;
+            pad.SetThrow(true);
+            pressAt = -1f;
+            pauseUntil = Time.time + afterThrowPause;
+            misses = 0;
+            SetTarget(null);
         }
-
-        Move(goal.Value - transform.position);
     }
 
-    /// <summary>持っている素材が、まだボットの物か（横取りされていない・消えていない）。</summary>
-    private static bool IsStillMine(HookableObject item)
+    /// <summary>ゴールまで <paramref name="distance"/> m 投げるには、ゲージの真ん中にどれだけ近づければよいか（0〜1）。</summary>
+    private float AccuracyFor(float distance, HookableObject held, float goalHeight)
     {
-        if (item == null || item.IsVanished || item.IsHooked)
+        float best = 1f;
+        float bestError = float.MaxValue;
+
+        for (int i = 0; i <= 50; i++)
         {
-            return false;
+            float accuracy = i / 50f;
+            float error = Mathf.Abs(EstimateThrowDistance(accuracy, held, goalHeight) - distance);
+            if (error < bestError)
+            {
+                bestError = error;
+                best = accuracy;
+            }
         }
 
-        FishingNetSupply netSupply = item.GetComponent<FishingNetSupply>();
-        return netSupply == null || !netSupply.IsSpawned || (!netSupply.IsClaimed && netSupply.IsOwner);
+        return best;
+    }
+
+    /// <summary>いちばん強く投げたときに届く距離（m）の見積もり。</summary>
+    private float MaxThrowDistance(HookableObject item)
+    {
+        return EstimateThrowDistance(1f, item, transform.position.y);
+    }
+
+    /// <summary>いちばん弱く投げた（ゲージの端で押した）ときに届く距離（m）の見積もり。少し余裕を足してある。</summary>
+    private float MinThrowDistance(HookableObject item)
+    {
+        return EstimateThrowDistance(0f, item, transform.position.y) * 1.1f;
     }
 
     /// <summary>
-    /// **ゴールへ放物線で放り込む。**
-    /// 飛ぶ時間を「水平の距離 ÷ 横向きの速さ」で決め、その時間でちょうど届く上向きの速さを計算する。
+    /// **ゲージを押した位置（真ん中への近さ）から、投げた物が飛ぶ水平の距離を見積もる。**
+    /// 投げる力（<see cref="ThrowController.ThrowForceAtEdge"/>〜<see cref="ThrowController.ThrowForceAtCenter"/>）を
+    /// 物の重さで割って速さにし、頭上の高さから放物線で落ちるまでの距離を出す（空気の抵抗も大まかに入れる）。
     /// </summary>
-    private void ThrowTo(Vector3 goal)
+    private float EstimateThrowDistance(float accuracy, HookableObject item, float landHeight)
     {
-        HookableObject item = carried;
-        Release();
+        float mass = 1f;
+        float damping = 0f;
+        float startHeight = transform.position.y + 2.6f; // 頭上の高さ（ThrowController の Overhead Height の初期値）
 
-        Vector3 from = item.transform.position;
-        Vector3 flat = new Vector3(goal.x - from.x, 0f, goal.z - from.z);
-        float time = Mathf.Max(0.4f, flat.magnitude / Mathf.Max(0.1f, throwHorizontalSpeed));
+        if (item != null && item.Body != null)
+        {
+            mass = Mathf.Max(0.01f, item.Body.mass);
+            damping = item.Body.linearDamping;
+            if (hook.Phase == HookController.HookPhase.Attached)
+            {
+                startHeight = item.transform.position.y;
+            }
+        }
 
-        // y = vy*t + g*t*t/2 を vy について解く（g は下向きなのでマイナス）
-        float rise = goal.y - from.y;
-        float verticalVelocity = rise / time - 0.5f * Physics.gravity.y * time;
+        float force = Mathf.Lerp(thrower.ThrowForceAtEdge, thrower.ThrowForceAtCenter, accuracy);
+        float horizontal = force / mass;
+        float vertical = thrower.ThrowLift / mass;
+        float gravity = Mathf.Max(0.1f, -Physics.gravity.y);
+        float height = Mathf.Max(0f, startHeight - landHeight);
 
-        item.Body.linearVelocity = flat / time + Vector3.up * verticalVelocity;
+        // height + vertical*t - gravity*t*t/2 = 0 の、正のほうの t（落ちるまでの秒数）
+        float time = (vertical + Mathf.Sqrt(vertical * vertical + 2f * gravity * height)) / gravity;
 
-        pauseUntil = Time.time + afterThrowPause;
+        float distance = damping > 0.001f
+            ? horizontal * (1f - Mathf.Exp(-damping * time)) / damping
+            : horizontal * time;
+
+        return distance * throwDistanceScale;
     }
+
+    // ------------------------------------------------------------
+    // ゴール
+    // ------------------------------------------------------------
 
     /// <summary>
     /// 運ぶ先（ゴールの真ん中）。Goal Override があればそこ、無ければ**自分のチームが持っているゴール**。
@@ -405,60 +607,57 @@ public class SpaceJunkBot : NetworkBehaviour
     }
 
     // ------------------------------------------------------------
-    // 手を離す
+    // コントローラーの操作
     // ------------------------------------------------------------
 
-    /// <summary>持っている素材を、その場に落とす。</summary>
-    private void Drop()
-    {
-        if (carried == null)
-        {
-            return;
-        }
-
-        HookableObject item = carried;
-        Release();
-
-        if (item != null)
-        {
-            item.Body.linearVelocity = Vector3.zero;
-        }
-    }
-
-    /// <summary>素材の物理を動かし直し、ぶつかるようにも戻して、手放す。</summary>
-    private void Release()
-    {
-        HookableObject item = carried;
-        Forget();
-
-        if (item == null)
-        {
-            return;
-        }
-
-        item.Body.isKinematic = false;
-        item.Body.angularVelocity = Vector3.zero;
-    }
-
     /// <summary>
-    /// 持っている素材のことを忘れる（物理には触らない）。
-    /// **横取りされたとき用。** そのときは物理を動かすのは引っ掛けた人の係なので、こちらからはいじらない。
+    /// <paramref name="destination"/> へ向かって左スティックを倒す。カーソルも行き先に置く（体が進む方を向く）。
+    /// スティックは**画面の上下左右**なので、カメラの水平の向きのぶんだけ逆に回してから入れる。
     /// </summary>
-    private void Forget()
+    private void WalkTo(Vector3 destination)
     {
-        if (carried != null)
+        Vector3 direction = destination - transform.position;
+        direction.y = 0f;
+
+        if (direction.sqrMagnitude < 0.0001f)
         {
-            SetIgnoreCollision(carried, false);
-            Reserved.Remove(carried);
+            pad.Move = Vector2.zero;
+            return;
         }
 
-        carried = null;
-        ResetStuck();
+        Camera view = Camera.main;
+        float yaw = view != null ? view.transform.eulerAngles.y : 0f;
+        Vector3 stick = Quaternion.Euler(0f, -yaw, 0f) * direction.normalized;
+
+        pad.Move = new Vector2(stick.x, stick.z);
+        PointAt(destination);
+    }
+
+    /// <summary>カーソルを、地面の <paramref name="worldPoint"/> が映っている画面の位置に置く。</summary>
+    private void PointAt(Vector3 worldPoint)
+    {
+        Camera view = viewCamera != null ? viewCamera : Camera.main;
+        if (view == null)
+        {
+            return;
+        }
+
+        Vector3 screen = view.WorldToScreenPoint(worldPoint);
+        if (screen.z > 0f)
+        {
+            pad.SetPointer(screen);
+        }
     }
 
     // ------------------------------------------------------------
     // 小さな部品
     // ------------------------------------------------------------
+
+    /// <summary>フックが届く長さ（使うぶんだけ）。</summary>
+    private float HookReach()
+    {
+        return hook.MaxRange * hookReachUse;
+    }
 
     /// <summary>狙う素材を変える（ほかのボットに「狙っている」と知らせる印も付け替える）。</summary>
     private void SetTarget(HookableObject item)
@@ -468,12 +667,14 @@ public class SpaceJunkBot : NetworkBehaviour
             return;
         }
 
-        if (target != null && target != carried)
+        if (target != null)
         {
             Reserved.Remove(target);
         }
 
         target = item;
+        misses = 0;
+        arrivedAt = -1f;
 
         if (target != null)
         {
@@ -481,33 +682,6 @@ public class SpaceJunkBot : NetworkBehaviour
         }
 
         ResetStuck();
-    }
-
-    /// <summary>
-    /// 水平の向き <paramref name="direction"/> へ歩く（ゼロなら止まる）。重力もここでかける。
-    /// </summary>
-    private void Move(Vector3 direction)
-    {
-        direction.y = 0f;
-
-        if (controller.isGrounded && verticalSpeed < 0f)
-        {
-            verticalSpeed = -1f; // 地面に押しつけておく（坂で浮かないように）
-        }
-        verticalSpeed += Physics.gravity.y * Time.deltaTime;
-
-        Vector3 velocity = Vector3.up * verticalSpeed;
-
-        if (direction.sqrMagnitude > 0.0001f)
-        {
-            direction.Normalize();
-            velocity += direction * moveSpeed;
-
-            Quaternion look = Quaternion.LookRotation(direction, Vector3.up);
-            transform.rotation = Quaternion.RotateTowards(transform.rotation, look, turnSpeed * Time.deltaTime);
-        }
-
-        controller.Move(velocity * Time.deltaTime);
     }
 
     /// <summary>
@@ -529,34 +703,6 @@ public class SpaceJunkBot : NetworkBehaviour
     {
         bestDistance = float.MaxValue;
         bestDistanceTime = Time.time;
-    }
-
-    /// <summary>落ちたとき：持っている物を離し、最初の場所へ戻る。</summary>
-    private void ResetToStart()
-    {
-        Drop();
-        SetTarget(null);
-        verticalSpeed = 0f;
-
-        // CharacterController が付いていると位置を書き換えられないので、いったん切る
-        controller.enabled = false;
-        transform.SetPositionAndRotation(startPosition, startRotation);
-        controller.enabled = true;
-    }
-
-    /// <summary>持ち上げた素材と自分の体がぶつからないようにする（頭の上で引っかからないため）。</summary>
-    private void SetIgnoreCollision(HookableObject item, bool ignore)
-    {
-        // 消える途中（シーンを移るときなど）は、体のほうが先に消えていることがある
-        if (item == null || controller == null)
-        {
-            return;
-        }
-
-        foreach (Collider part in item.GetComponentsInChildren<Collider>(true))
-        {
-            Physics.IgnoreCollision(controller, part, ignore);
-        }
     }
 
     private static float FlatDistance(Vector3 a, Vector3 b)
