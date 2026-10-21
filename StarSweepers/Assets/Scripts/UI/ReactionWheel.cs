@@ -21,9 +21,11 @@ using UnityEngine.UI;
 /// **Bubble** に、頭の上に出す係（プレイヤーに付けた <see cref="ReactionBubble"/>）を渡すと、頭の上にも出す（検証シーン用）。
 /// 円の見た目は再生したときにこのスクリプトが作るので、Canvas などを置く必要はない。
 ///
+/// 開いている間は <see cref="IsOpen"/> が true になり、狙い（<see cref="PlayerAimController"/>）が止まる。
+/// 閉じたら、マウスカーソルを開く前の位置へ戻す。
+///
 /// ## まだやっていないこと
 ///
-/// - 開いている間も、マウスや右スティックで狙いが動く（<see cref="IsOpen"/> を見て止めてもらう必要がある）
 /// - 1台のPCで複数人（席ごとの入力）には対応していない（どのコントローラーの RB でも開く）
 /// </summary>
 public class ReactionWheel : MonoBehaviour
@@ -91,6 +93,10 @@ public class ReactionWheel : MonoBehaviour
 
     /// <summary>B で取り消した。ボタンを離すまで開き直さない。</summary>
     private bool cancelled;
+
+    /// <summary>開く前のマウスカーソルの位置（閉じたら戻す）。</summary>
+    private Vector2 savedCursor;
+    private bool hasSavedCursor;
     private Vector2 pointer;
     private int selected = -1;
 
@@ -190,6 +196,14 @@ public class ReactionWheel : MonoBehaviour
         pointer = Vector2.zero;
         wheelRoot.SetActive(true);
         Select(-1);
+
+        // 開く前のマウスカーソルの位置を覚えておく（閉じたら戻し、狙いが選んだ方向へ飛ばないようにする）
+        Mouse mouse = Mouse.current;
+        hasSavedCursor = mouse != null;
+        if (hasSavedCursor)
+        {
+            savedCursor = mouse.position.ReadValue();
+        }
     }
 
     private void Close()
@@ -197,6 +211,7 @@ public class ReactionWheel : MonoBehaviour
         if (open)
         {
             IsOpen = false;
+            RestoreCursor();
         }
 
         open = false;
@@ -204,6 +219,27 @@ public class ReactionWheel : MonoBehaviour
         {
             wheelRoot.SetActive(false);
         }
+    }
+
+    /// <summary>
+    /// 円を選ぶためにマウスを動かしていたら、カーソルを開く前の位置へ戻す。
+    /// 狙い（<see cref="PlayerAimController"/>）は円が開いている間止まっているので、戻せば閉じたあとも同じ所を狙う。
+    /// </summary>
+    private void RestoreCursor()
+    {
+        Mouse mouse = Mouse.current;
+        if (!hasSavedCursor || mouse == null || Cursor.lockState == CursorLockMode.Locked)
+        {
+            hasSavedCursor = false;
+            return;
+        }
+
+        if ((mouse.position.ReadValue() - savedCursor).sqrMagnitude > 1f)
+        {
+            mouse.WarpCursorPosition(savedCursor);
+        }
+
+        hasSavedCursor = false;
     }
 
     private void Choose(int index)
