@@ -393,21 +393,52 @@ public class InternetConnection : MonoBehaviour
 
         Message = "サーバーを探しています…";
 
-        try
+        for (int attempt = 1; ; attempt++)
         {
-            QuerySessionsResults results = await MultiplayerService.Instance.QuerySessionsAsync(new QuerySessionsOptions());
-            State = Phase.Idle;
-            Message = string.Empty;
-            return results != null && results.Sessions != null
-                ? new List<ISessionInfo>(results.Sessions)
-                : new List<ISessionInfo>();
-        }
-        catch (Exception error)
-        {
-            Fail("サーバーの一覧を取れませんでした", error);
-            return null;
+            // 前の問い合わせから間が空いていなければ、空くまで待つ
+            // （一覧の取り直しの直後にクイックプレイを押すと、続けて問い合わせることになり 429 で断られるため）
+            float wait = lastQueryTime + QueryIntervalSeconds - Time.unscaledTime;
+            if (wait > 0f)
+            {
+                await Task.Delay(Mathf.CeilToInt(wait * 1000f));
+            }
+
+            lastQueryTime = Time.unscaledTime;
+
+            try
+            {
+                QuerySessionsResults results = await MultiplayerService.Instance.QuerySessionsAsync(new QuerySessionsOptions());
+                State = Phase.Idle;
+                Message = string.Empty;
+                return results != null && results.Sessions != null
+                    ? new List<ISessionInfo>(results.Sessions)
+                    : new List<ISessionInfo>();
+            }
+            catch (SessionException error) when (error.Error == SessionError.RateLimitExceeded && attempt < QueryMaxAttempts)
+            {
+                // 頼みすぎ（429）で断られた。少し待ってからもう一度頼む
+                Debug.LogWarning($"[NET] サーバーの一覧を頼みすぎて断られたので、{QueryRateLimitWaitSeconds:0}秒待ってもう一度探します（{attempt}回目）。");
+                lastQueryTime = Time.unscaledTime + QueryRateLimitWaitSeconds - QueryIntervalSeconds;
+            }
+            catch (Exception error)
+            {
+                Fail("サーバーの一覧を取れませんでした", error);
+                return null;
+            }
         }
     }
+
+    /// <summary>サーバーの一覧を前回頼んだ時刻（Time.unscaledTime の秒）。続けて頼みすぎないために覚えておく。</summary>
+    private float lastQueryTime = float.NegativeInfinity;
+
+    /// <summary>サーバーの一覧を頼む間隔の最低秒数（これより短いと、頼みすぎ（429）で断られやすい）。</summary>
+    private const float QueryIntervalSeconds = 1.5f;
+
+    /// <summary>頼みすぎ（429）で断られたとき、もう一度頼むまで待つ秒数。</summary>
+    private const float QueryRateLimitWaitSeconds = 3f;
+
+    /// <summary>頼みすぎ（429）で断られたとき、最初の1回を含めて何回まで頼むか。</summary>
+    private const int QueryMaxAttempts = 3;
 
     /// <summary>**一覧で選んだ部屋に入る。** タイトル画面のパブリックサーバーの一覧から呼ぶ。</summary>
     public async void JoinGameById(string sessionId, string joinPassword = "")
