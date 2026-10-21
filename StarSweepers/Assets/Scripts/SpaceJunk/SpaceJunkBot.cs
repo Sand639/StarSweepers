@@ -1,5 +1,6 @@
 using System.Collections.Generic;
 using UnityEngine;
+using UnityEngine.AI;
 
 /// <summary>
 /// **宇宙ごみを集めるボット（NPC）の頭。** 試作・2026/10/21（大槻さんの依頼）
@@ -29,6 +30,12 @@ using UnityEngine;
 ///
 /// 投げた物をすぐ拾い直して投げ続けないよう、**自分が投げた素材は狙わない**（ほかの人が引っ掛けたら、また狙ってよい）。
 /// 中継で近づけた物も自分では拾い直さないので、続きはほかの人・ほかのボットに任せる形になる。
+///
+/// ## 壁は回り込み、違う段の素材には上がってから撃つ（2026/10/21・大槻さんの報告：STAGE_07）
+///
+/// マップの当たり判定から**歩ける床の地図**を作り（<see cref="SpaceJunkBotNavMesh"/>）、
+/// 「素材と同じ高さの床」「素材との間に壁が無い」「歩いて行ける」場所を選んで、道の曲がり角を順にたどって歩く。
+/// そういう場所が無い素材（上の段へ上がる道が無いなど）は、しばらくあきらめて別の素材を探す。
 ///
 /// ## 考えるのは、その体を操作するPCだけ
 ///
@@ -140,6 +147,53 @@ public class SpaceJunkBot : MonoBehaviour
     private float bestDistance = float.MaxValue;
     private float bestDistanceTime;
 
+    // ---- 立つ場所と道（Plan で決める。2026/10/21・壁を回り込む・高さを見る） ----
+
+    private CharacterController body;
+
+    /// <summary>素材を撃つために立つ場所（歩ける床の上）。</summary>
+    private Vector3 standPoint;
+
+    /// <summary>立つ場所までの道の曲がり角（最初は出発点）と、いま向かっている角の番号。</summary>
+    private readonly List<Vector3> pathCorners = new List<Vector3>();
+    private int cornerIndex;
+
+    /// <summary>道を決めたときの素材の場所と、次に道を引き直す時刻。</summary>
+    private Vector3 plannedItemPosition;
+    private float replanAt;
+
+    /// <summary>同じ素材で、進めなくなって道を引き直した回数。</summary>
+    private int stuckCount;
+
+    /// <summary>道を調べるときの入れ物（使い回す。Awake で作る）。</summary>
+    private NavMeshPath navPath;
+    private readonly List<HookableObject> candidates = new List<HookableObject>();
+    private static readonly RaycastHit[] rayHits = new RaycastHit[16];
+
+    /// <summary>素材がこれ以上動いたら、道を引き直す（m）。</summary>
+    private const float ReplanMoveDistance = 1f;
+
+    /// <summary>この秒数ごとに、道を引き直す（ほかの人が動かした・地形が動いたときのため）。</summary>
+    private const float ReplanSeconds = 1.5f;
+
+    /// <summary>立つ場所にこれだけ近づいたら「着いた」（m）。</summary>
+    private const float ArriveDistance = 0.7f;
+
+    /// <summary>道の曲がり角にこれだけ近づいたら、次の角へ（m）。</summary>
+    private const float CornerReachDistance = 0.5f;
+
+    /// <summary>1フレームで道を調べる素材の数（多いと重くなる）。</summary>
+    private const int MaxPlanTriesPerFrame = 4;
+
+    /// <summary>立つ床と素材の高さの差がこれより大きければ「違う段」とみなす（m）。</summary>
+    private const float SameLevelHeight = 1f;
+
+    /// <summary>手元（フックが出る所）の、足元からの高さ（m）。</summary>
+    private const float HandHeight = 1f;
+
+    /// <summary>投げるときの頭上の高さ（m。ThrowController の Overhead Height の初期値）。</summary>
+    private const float OverheadHeight = 2.6f;
+
     /// <summary>
     /// どのチームのボットか。**試合の中（オンラインの体）では、ロビーのチーム分けに従う**
     /// （ホストがチームを変えたら、ボットの運ぶ先も変わる）。つないでいない体では Team の値。
@@ -176,6 +230,8 @@ public class SpaceJunkBot : MonoBehaviour
     {
         pad = GetComponent<VirtualPlayerInput>();
         netPlayer = GetComponent<FishingNetPlayer>();
+        body = GetComponent<CharacterController>();
+        navPath = new NavMeshPath();
 
         if (hook == null)
         {
@@ -366,9 +422,21 @@ public class SpaceJunkBot : MonoBehaviour
             return;
         }
 
+        // 歩ける床の地図（マップごとに1回作る）。作れなければ、まっすぐ歩く簡易版になる
+        SpaceJunkBotNavMesh.EnsureBuilt(body);
+
         if (!IsPickable(target))
         {
-            SetTarget(FindNearestMaterial(goal.Value));
+            ChooseTarget(goal.Value);
+        }
+        else if (Time.time >= replanAt ||
+                 FlatDistance(target.transform.position, plannedItemPosition) > ReplanMoveDistance)
+        {
+            // 素材が動いた・しばらくたった。立つ場所と道を引き直す（行けなくなっていたらあきらめる）
+            if (!Plan(target, goal.Value))
+            {
+                GiveUp(target);
+            }
         }
 
         if (target == null)
@@ -378,19 +446,10 @@ public class SpaceJunkBot : MonoBehaviour
         }
 
         Vector3 itemPosition = target.transform.position;
-        Vector3 standAt = StandPoint(itemPosition, goal.Value, out bool canReachGoal);
-        float toStand = FlatDistance(transform.position, standAt);
-        float toItem = FlatDistance(transform.position, itemPosition);
+        float toStand = FlatDistance(transform.position, standPoint);
 
-        // **ここから撃ってよいか。** 素材にフックが届き、近すぎず、投げればゴールにちょうど届く
-        // （1回で届かないときは、撃つ場所に着いたか）
-        float toGoal = FlatDistance(transform.position, goal.Value);
-        bool inHookRange = toItem <= HookReach() && toItem >= minHookDistance * 0.8f;
-        bool throwReaches = canReachGoal
-            ? toGoal <= MaxThrowDistance(target) * throwRangeUse && toGoal >= MinThrowDistance(target)
-            : toStand < 1f;
-
-        if (inHookRange && throwReaches)
+        // **撃つ場所に着いた。** 止まって素材にカーソルを合わせ、少し待ってから撃つ
+        if (toStand < ArriveDistance)
         {
             pad.Move = Vector2.zero;
             PointAt(itemPosition);
@@ -410,15 +469,290 @@ public class SpaceJunkBot : MonoBehaviour
 
         arrivedAt = -1f;
 
-        if (IsStuck(toStand))
+        // 進めなくなったら、まず道を引き直す。それでも進めなければ、その素材をあきらめる
+        if (IsStuck(RemainingPathLength()))
         {
-            givenUp[target] = Time.time + giveUpSeconds;
-            SetTarget(null);
-            pad.Move = Vector2.zero;
-            return;
+            stuckCount++;
+            if (stuckCount >= 2 || !Plan(target, goal.Value))
+            {
+                GiveUp(target);
+                pad.Move = Vector2.zero;
+                return;
+            }
         }
 
-        WalkTo(standAt);
+        FollowPath();
+    }
+
+    /// <summary>
+    /// **次に狙う素材を決める。** 近い順に試し、立つ場所と道が見つかった最初の素材にする
+    /// （壁の向こうで回り込めない物・上の段で行けない物は、しばらくあきらめる）。
+    /// </summary>
+    private void ChooseTarget(Vector3 goal)
+    {
+        SetTarget(null);
+
+        candidates.Clear();
+        foreach (HookableObject item in HookableObject.All)
+        {
+            if (IsCandidate(item, goal))
+            {
+                candidates.Add(item);
+            }
+        }
+
+        Vector3 me = transform.position;
+        candidates.Sort((a, b) =>
+            FlatDistance(me, a.transform.position).CompareTo(FlatDistance(me, b.transform.position)));
+
+        // 1フレームで調べすぎないよう、近い順に数個まで。だめだった物はしばらく外す
+        int tries = Mathf.Min(candidates.Count, MaxPlanTriesPerFrame);
+        for (int i = 0; i < tries; i++)
+        {
+            HookableObject item = candidates[i];
+            if (Plan(item, goal))
+            {
+                SetTarget(item);
+                return;
+            }
+
+            givenUp[item] = Time.time + giveUpSeconds;
+        }
+    }
+
+    /// <summary>狙う候補にしてよい素材か（拾える・ほかのボットが狙っていない・あきらめていない・自分が投げていない・ゴールのすぐ近くでない）。</summary>
+    private bool IsCandidate(HookableObject item, Vector3 goal)
+    {
+        if (!IsPickable(item) || Reserved.Contains(item) || thrownByMe.Contains(item))
+        {
+            return false;
+        }
+
+        if (givenUp.TryGetValue(item, out float until) && Time.time < until)
+        {
+            return false;
+        }
+
+        // もうゴールの近くにある物は、そのまま点になるので触らない
+        return FlatDistance(item.transform.position, goal) >= ignoreNearGoalDistance;
+    }
+
+    /// <summary>
+    /// **素材を撃つための、立つ場所と道を決める。** 見つからなければ false。
+    ///
+    /// 素材のまわりに立つ場所の候補をいくつも作り、次の条件で選ぶ。
+    ///
+    /// | 条件 | なぜ |
+    /// | --- | --- |
+    /// | 歩ける床の上で、**素材と同じ高さ** | 上の段・下の段にある素材は、そこへ上がらないとフックが当たらない |
+    /// | 自分からそこまで**歩いて行ける**（壁は回り込む） | 壁に向かって押し続けないように |
+    /// | そこから素材まで、**間に壁が無い** | 壁があるとフックが当たらない |
+    /// | そこからゴールへ**ちょうど届く距離**・投げる道に壁が無い | 満たさなくても選べるが、点が悪くなる |
+    ///
+    /// 歩ける床の地図が無いときは、素材とゴールを結ぶ線の上の1点だけを使い、まっすぐ歩く（前の簡易版の動き）。
+    /// </summary>
+    private bool Plan(HookableObject item, Vector3 goal)
+    {
+        Vector3 itemPosition = item.transform.position;
+        Vector3 ideal = StandPoint(item, itemPosition, goal);
+
+        plannedItemPosition = itemPosition;
+        replanAt = Time.time + ReplanSeconds;
+        stuckCount = 0;
+        ResetStuck();
+
+        if (!SpaceJunkBotNavMesh.Ready)
+        {
+            standPoint = ideal;
+            pathCorners.Clear();
+            pathCorners.Add(ideal);
+            cornerIndex = 0;
+            return true;
+        }
+
+        if (!SpaceJunkBotNavMesh.TryFindFloor(transform.position, 2f, out Vector3 myFloor))
+        {
+            return false;
+        }
+
+        float reach = HookReach();
+        float throwMax = MaxThrowDistance(item) * throwRangeUse;
+        float throwMin = MinThrowDistance(item);
+        float idealRadius = Mathf.Clamp(FlatDistance(ideal, itemPosition), minHookDistance, reach);
+
+        float bestScore = float.MaxValue;
+        bool found = false;
+
+        // 候補：まず線の上の理想の1点、次に素材のまわりの輪（3つの半径 × 12方向）
+        for (int ring = -1; ring < 3; ring++)
+        {
+            int directions = ring < 0 ? 1 : 12;
+            float radius = ring switch
+            {
+                0 => idealRadius,
+                1 => Mathf.Lerp(minHookDistance, reach, 0.6f),
+                _ => minHookDistance + 0.5f,
+            };
+
+            for (int d = 0; d < directions; d++)
+            {
+                Vector3 candidate = ring < 0
+                    ? new Vector3(ideal.x, itemPosition.y, ideal.z)
+                    : itemPosition + Quaternion.Euler(0f, d * 30f, 0f) * Vector3.forward * radius;
+
+                if (!TryScoreStandPoint(candidate, itemPosition, item, goal, myFloor, reach, throwMin, throwMax,
+                        out Vector3 floor, out float score) || score >= bestScore)
+                {
+                    continue;
+                }
+
+                bestScore = score;
+                standPoint = floor;
+                pathCorners.Clear();
+                pathCorners.AddRange(navPath.corners);
+                found = true;
+            }
+        }
+
+        // 道の最初の点は出発点なので、その次から歩く
+        cornerIndex = pathCorners.Count > 1 ? 1 : 0;
+        return found;
+    }
+
+    /// <summary>
+    /// 立つ場所の候補 <paramref name="candidate"/> を調べ、使えるなら点（小さいほどよい）をつける。
+    /// 使えれば true で、<see cref="navPath"/> にそこまでの道が入る。
+    /// </summary>
+    private bool TryScoreStandPoint(Vector3 candidate, Vector3 itemPosition, HookableObject item, Vector3 goal,
+        Vector3 myFloor, float reach, float throwMin, float throwMax, out Vector3 floor, out float score)
+    {
+        score = float.MaxValue;
+
+        // 歩ける床の上で、素材と同じ高さか（上の段・下の段ではないか）
+        if (!SpaceJunkBotNavMesh.TryFindFloor(candidate, 1.5f, out floor) ||
+            Mathf.Abs(floor.y - itemPosition.y) > SameLevelHeight)
+        {
+            return false;
+        }
+
+        // フックが届く距離か
+        float toItem = FlatDistance(floor, itemPosition);
+        if (toItem > reach || toItem < minHookDistance * 0.8f)
+        {
+            return false;
+        }
+
+        // 素材との間に壁が無いか（手元の高さから見る）
+        if (IsBlocked(floor + Vector3.up * HandHeight, itemPosition))
+        {
+            return false;
+        }
+
+        // 歩いて行けるか（壁は回り込む）
+        if (!SpaceJunkBotNavMesh.TryFindPath(myFloor, floor, navPath))
+        {
+            return false;
+        }
+
+        score = PathLength(navPath.corners);
+
+        // ゴールへちょうど届く距離でなければ減点（中継になる・飛びすぎる）
+        float toGoal = FlatDistance(floor, goal);
+        if (toGoal > throwMax || toGoal < throwMin)
+        {
+            score += 30f;
+        }
+
+        // 頭上からゴールへの間に壁があれば減点
+        if (IsBlocked(floor + Vector3.up * OverheadHeight, goal + Vector3.up * 1.5f))
+        {
+            score += 15f;
+        }
+
+        return true;
+    }
+
+    /// <summary>
+    /// <paramref name="from"/> から <paramref name="to"/> の間に、**壁や床（動かない物）**があるか。
+    /// 素材（狙っている物もほかの物も）・プレイヤーの体・すり抜ける判定・転がる物は数えない。
+    /// </summary>
+    private static bool IsBlocked(Vector3 from, Vector3 to)
+    {
+        Vector3 delta = to - from;
+        int count = Physics.RaycastNonAlloc(from, delta.normalized, rayHits, delta.magnitude, ~0, QueryTriggerInteraction.Ignore);
+
+        for (int i = 0; i < count; i++)
+        {
+            Collider hit = rayHits[i].collider;
+            if (hit == null || hit is CharacterController)
+            {
+                continue;
+            }
+
+            if (hit.GetComponentInParent<HookableObject>() != null || hit.GetComponentInParent<CharacterController>() != null)
+            {
+                continue;
+            }
+
+            Rigidbody body = hit.attachedRigidbody;
+            if (body != null && !body.isKinematic)
+            {
+                continue;
+            }
+
+            return true;
+        }
+
+        return false;
+    }
+
+    /// <summary>道の曲がり角を順にたどって歩く。曲がり角に着いたら次へ。</summary>
+    private void FollowPath()
+    {
+        while (cornerIndex < pathCorners.Count - 1 &&
+               FlatDistance(transform.position, pathCorners[cornerIndex]) < CornerReachDistance)
+        {
+            cornerIndex++;
+        }
+
+        Vector3 next = pathCorners.Count > 0 ? pathCorners[cornerIndex] : standPoint;
+        WalkTo(next);
+    }
+
+    /// <summary>いまの場所から、道の残り（次の曲がり角 → … → 立つ場所）の長さ。</summary>
+    private float RemainingPathLength()
+    {
+        if (pathCorners.Count == 0)
+        {
+            return FlatDistance(transform.position, standPoint);
+        }
+
+        float length = FlatDistance(transform.position, pathCorners[cornerIndex]);
+        for (int i = cornerIndex; i < pathCorners.Count - 1; i++)
+        {
+            length += FlatDistance(pathCorners[i], pathCorners[i + 1]);
+        }
+        return length;
+    }
+
+    private static float PathLength(Vector3[] corners)
+    {
+        float length = 0f;
+        for (int i = 0; i < corners.Length - 1; i++)
+        {
+            length += Vector3.Distance(corners[i], corners[i + 1]);
+        }
+        return length;
+    }
+
+    /// <summary>その素材をしばらくあきらめる。</summary>
+    private void GiveUp(HookableObject item)
+    {
+        if (item != null)
+        {
+            givenUp[item] = Time.time + giveUpSeconds;
+        }
+        SetTarget(null);
     }
 
     /// <summary>
@@ -427,16 +761,18 @@ public class SpaceJunkBot : MonoBehaviour
     /// - ふつう … 素材からゴールのほうへ寄った所（素材を背にしてゴールへ投げる）
     /// - 素材がゴールに近すぎる … いちばん弱く投げても飛びすぎるので、**素材の向こう側**（ゴールから離れる側）に立つ
     /// - 1回では届かないほど遠い … フックが届くいちばんゴール寄りの場所（そこから思いきり投げて中継する）
+    ///
+    /// 壁や高さは見ていない。**理想の1点**として <see cref="Plan"/> が最初に試す（だめなら、まわりの候補を探す）。
     /// </summary>
-    private Vector3 StandPoint(Vector3 item, Vector3 goal, out bool canReachGoal)
+    private Vector3 StandPoint(HookableObject material, Vector3 item, Vector3 goal)
     {
         Vector3 toGoal = goal - item;
         toGoal.y = 0f;
         float itemToGoal = toGoal.magnitude;
 
         float reach = HookReach();
-        float throwMax = MaxThrowDistance(target) * throwRangeUse;
-        float throwMin = MinThrowDistance(target);
+        float throwMax = MaxThrowDistance(material) * throwRangeUse;
+        float throwMin = MinThrowDistance(material);
 
         // 素材からゴールのほうへ、どれだけ寄った所に立つか（マイナスなら素材の向こう側）。
         // 立った場所からゴールまでは「itemToGoal − along」なので、それが throwMin〜throwMax に入るようにする
@@ -444,17 +780,11 @@ public class SpaceJunkBot : MonoBehaviour
         float farthest = itemToGoal - throwMin; // これよりゴール寄りに立つと飛びすぎる
 
         float along;
-        canReachGoal = true;
 
         if (Mathf.Max(minHookDistance, nearest) <= farthest)
         {
-            along = Mathf.Max(minHookDistance, nearest);
-            if (along > reach)
-            {
-                // 1回では届かない。届くいちばんゴール寄りから中継する
-                canReachGoal = false;
-                along = reach;
-            }
+            // 1回では届かないときは、届くいちばんゴール寄りから中継する
+            along = Mathf.Min(Mathf.Max(minHookDistance, nearest), reach);
         }
         else
         {
@@ -466,46 +796,6 @@ public class SpaceJunkBot : MonoBehaviour
         Vector3 point = item + direction * along;
         point.y = transform.position.y;
         return point;
-    }
-
-    /// <summary>拾ってよい素材のうち、いちばん近いもの。無ければ null。</summary>
-    private HookableObject FindNearestMaterial(Vector3 goal)
-    {
-        HookableObject nearest = null;
-        float nearestDistance = float.MaxValue;
-
-        foreach (HookableObject item in HookableObject.All)
-        {
-            if (!IsPickable(item) || Reserved.Contains(item))
-            {
-                continue;
-            }
-
-            if (givenUp.TryGetValue(item, out float until) && Time.time < until)
-            {
-                continue;
-            }
-
-            if (thrownByMe.Contains(item))
-            {
-                continue;
-            }
-
-            // もうゴールの近くにある物は、そのまま点になるので触らない
-            if (FlatDistance(item.transform.position, goal) < ignoreNearGoalDistance)
-            {
-                continue;
-            }
-
-            float distance = FlatDistance(transform.position, item.transform.position);
-            if (distance < nearestDistance)
-            {
-                nearest = item;
-                nearestDistance = distance;
-            }
-        }
-
-        return nearest;
     }
 
     /// <summary>
