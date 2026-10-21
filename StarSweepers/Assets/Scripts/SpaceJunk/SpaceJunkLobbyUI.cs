@@ -182,6 +182,8 @@ public class SpaceJunkLobbyUI : MonoBehaviour
     /// </summary>
     private void DrawLocalPlayers()
     {
+        DrawBots();
+
         GUILayout.BeginHorizontal();
         if (GUILayout.Button("－", GUILayout.Width(32f)))
         {
@@ -239,6 +241,36 @@ public class SpaceJunkLobbyUI : MonoBehaviour
             seats.ResetAssignments();
         }
         GUILayout.EndHorizontal();
+    }
+
+    /// <summary>
+    /// **デバッグ用のボットの数**の「－」「＋」（2026/10/21）。**ホストの画面にだけ**出す。
+    /// ボットはロビーのチーム分けの一覧に「BOT 1」のように入り、人と同じようにチームを動かせる。
+    /// </summary>
+    private void DrawBots()
+    {
+        SpaceJunkSession session = SpaceJunkSession.Current;
+        if (session == null || !session.IsServer)
+        {
+            return;
+        }
+
+        int bots = session.BotCount;
+
+        GUILayout.BeginHorizontal();
+        GUILayout.Label("ボット（デバッグ用）", labelStyle, GUILayout.Width(130f));
+        if (GUILayout.Button("－", GUILayout.Width(32f)))
+        {
+            session.ServerSetBotCount(bots - 1);
+        }
+        GUILayout.Label($"　{bots} 体", labelStyle, GUILayout.Width(56f));
+        if (GUILayout.Button("＋", GUILayout.Width(32f)))
+        {
+            session.ServerSetBotCount(bots + 1);
+        }
+        GUILayout.EndHorizontal();
+
+        GUILayout.Space(6f);
     }
 
     /// <summary>機器がつながっていれば「○」、無ければ「－」。</summary>

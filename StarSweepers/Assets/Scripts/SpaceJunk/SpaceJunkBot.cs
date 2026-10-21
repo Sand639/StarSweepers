@@ -33,7 +33,12 @@ using UnityEngine;
 /// ## 考えるのは、その体を操作するPCだけ
 ///
 /// オンラインの体（<see cref="FishingNetPlayer"/>）なら、持ち主のPCだけで考える。つないでいなければそのPCで考える。
-/// **いまはオンラインの試合にボットを出す仕組みはまだ無い**（検証シーンで、つながずに動かす）。
+///
+/// ## 試合に出す（デバッグ用のボット）
+///
+/// ロビーの「このPCで遊ぶ人数」の小窓で、**ホストがボットの数を決める**（<see cref="SpaceJunkSession.ServerSetBotCount"/>）。
+/// ボットはホストのPCが持ち主のプレイヤーとして出て、ホストのPCでだけ <see cref="AttachTo"/> でこの頭が付く。
+/// チームはロビーのチーム分けに従う（<see cref="Team"/>）。
 ///
 /// 入力を書き込んでから操作の部品が読むよう、**ほかの部品より先に動く**（DefaultExecutionOrder）。
 /// </summary>
@@ -135,8 +140,37 @@ public class SpaceJunkBot : MonoBehaviour
     private float bestDistance = float.MaxValue;
     private float bestDistanceTime;
 
-    /// <summary>どのチームのボットか。</summary>
-    public int Team => team;
+    /// <summary>
+    /// どのチームのボットか。**試合の中（オンラインの体）では、ロビーのチーム分けに従う**
+    /// （ホストがチームを変えたら、ボットの運ぶ先も変わる）。つないでいない体では Team の値。
+    /// </summary>
+    public int Team
+    {
+        get
+        {
+            SpaceJunkSession session = SpaceJunkSession.Current;
+            if (netPlayer != null && netPlayer.IsSpawned && session != null && session.IsSpawned)
+            {
+                return session.TeamOf(netPlayer.PlayerKey);
+            }
+            return team;
+        }
+    }
+
+    /// <summary>
+    /// **プレイヤーの体に、ボットの頭を付ける**（見えないコントローラーも一緒に付く）。
+    /// 試合にボットを足すとき、ホストのPCでだけ呼ぶ（<see cref="SpaceJunkSession.ServerSetBotCount"/>）。
+    /// </summary>
+    public static SpaceJunkBot AttachTo(GameObject body)
+    {
+        if (body.GetComponent<VirtualPlayerInput>() == null)
+        {
+            body.AddComponent<VirtualPlayerInput>();
+        }
+
+        SpaceJunkBot bot = body.GetComponent<SpaceJunkBot>();
+        return bot != null ? bot : body.AddComponent<SpaceJunkBot>();
+    }
 
     private void Awake()
     {
@@ -648,9 +682,10 @@ public class SpaceJunkBot : MonoBehaviour
             return goalOverride.position;
         }
 
+        int myTeam = Team;
         foreach (SpaceJunkGoal goal in SpaceJunkGoal.All)
         {
-            if (goal != null && !goal.IsClosed && goal.OwnerTeam == team)
+            if (goal != null && !goal.IsClosed && goal.OwnerTeam == myTeam)
             {
                 Collider area = goal.GetComponent<Collider>();
                 return area != null ? area.bounds.center : goal.transform.position;
