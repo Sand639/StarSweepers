@@ -114,6 +114,14 @@ public class PlayerAimController : MonoBehaviour
             return;
         }
 
+        // リアクションの円（ReactionWheel）が開いている間は、マウスと右スティックを円の操作に使うので、狙いを止める
+        // （狙点・向き・カーソルを前のまま残す。2026/10/21）
+        if (ReactionWheel.IsOpen)
+        {
+            UpdateReticle();
+            return;
+        }
+
         // 席で読むときは、マウスと右スティックのカーソルを席の側がまとめてくれるので切り替えは要らない
         if (!input.UsesSeat)
         {
