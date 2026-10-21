@@ -165,6 +165,18 @@ public class SpaceJunkBot : MonoBehaviour
     /// <summary>同じ素材で、進めなくなって道を引き直した回数。</summary>
     private int stuckCount;
 
+    /// <summary>道を決めている素材が乗っている床の高さ（Plan の中で使う）。</summary>
+    private float itemGroundHeight;
+
+    /// <summary>素材がこれより速く動いていたら（落ちている・飛んでいる途中）、止まるまで狙わない（m/秒）。</summary>
+    private const float MovingSpeed = 1f;
+
+    /// <summary>立つ場所が見つからなかった素材を、もう一度調べるまでの秒数。</summary>
+    private const float PlanRetrySeconds = 1f;
+
+    /// <summary>素材の下の床を探す深さ（m）。</summary>
+    private const float GroundSearchDepth = 20f;
+
     /// <summary>道を調べるときの入れ物（使い回す。Awake で作る）。</summary>
     private NavMeshPath navPath;
     private readonly List<HookableObject> candidates = new List<HookableObject>();
@@ -429,10 +441,10 @@ public class SpaceJunkBot : MonoBehaviour
         {
             ChooseTarget(goal.Value);
         }
-        else if (Time.time >= replanAt ||
-                 FlatDistance(target.transform.position, plannedItemPosition) > ReplanMoveDistance)
+        else if (!IsMoving(target) &&
+                 (Time.time >= replanAt || FlatDistance(target.transform.position, plannedItemPosition) > ReplanMoveDistance))
         {
-            // 素材が動いた・しばらくたった。立つ場所と道を引き直す（行けなくなっていたらあきらめる）
+            // 素材が動いた・しばらくたった。止まっていれば、立つ場所と道を引き直す（行けなくなっていたらあきらめる）
             if (!Plan(target, goal.Value))
             {
                 GiveUp(target);
@@ -505,7 +517,8 @@ public class SpaceJunkBot : MonoBehaviour
         candidates.Sort((a, b) =>
             FlatDistance(me, a.transform.position).CompareTo(FlatDistance(me, b.transform.position)));
 
-        // 1フレームで調べすぎないよう、近い順に数個まで。だめだった物はしばらく外す
+        // 1フレームで調べすぎないよう、近い順に数個まで。だめだった物は少しのあいだ外す
+        // （長くあきらめると、ラウンドの始まりに何も狙えない時間ができてしまう。2026/10/21・大槻さんの報告）
         int tries = Mathf.Min(candidates.Count, MaxPlanTriesPerFrame);
         for (int i = 0; i < tries; i++)
         {
@@ -516,7 +529,7 @@ public class SpaceJunkBot : MonoBehaviour
                 return;
             }
 
-            givenUp[item] = Time.time + giveUpSeconds;
+            givenUp[item] = Time.time + PlanRetrySeconds;
         }
     }
 
@@ -529,6 +542,13 @@ public class SpaceJunkBot : MonoBehaviour
         }
 
         if (givenUp.TryGetValue(item, out float until) && Time.time < until)
+        {
+            return false;
+        }
+
+        // **落ちている途中・飛んでいる途中の物は、止まるまで待つ**（あきらめはしない）。
+        // ラウンドの始まりは素材が空から降ってくるので、ここで外さないと「届かない」と判断して全部あきらめていた
+        if (IsMoving(item))
         {
             return false;
         }
@@ -575,6 +595,9 @@ public class SpaceJunkBot : MonoBehaviour
             return false;
         }
 
+        // 素材が乗っている床の高さ（立つ場所が同じ段かを比べる相手）
+        itemGroundHeight = GroundHeightUnder(itemPosition);
+
         float reach = HookReach();
         float throwMax = MaxThrowDistance(item) * throwRangeUse;
         float throwMin = MinThrowDistance(item);
@@ -599,6 +622,9 @@ public class SpaceJunkBot : MonoBehaviour
                 Vector3 candidate = ring < 0
                     ? new Vector3(ideal.x, itemPosition.y, ideal.z)
                     : itemPosition + Quaternion.Euler(0f, d * 30f, 0f) * Vector3.forward * radius;
+
+                // 素材が乗っている床の高さで探す（その段の床が見つかるように）
+                candidate.y = itemGroundHeight + 0.2f;
 
                 if (!TryScoreStandPoint(candidate, itemPosition, item, goal, myFloor, reach, throwMin, throwMax,
                         out Vector3 floor, out float score) || score >= bestScore)
@@ -628,9 +654,9 @@ public class SpaceJunkBot : MonoBehaviour
     {
         score = float.MaxValue;
 
-        // 歩ける床の上で、素材と同じ高さか（上の段・下の段ではないか）
+        // 歩ける床の上で、素材が乗っている床と同じ高さか（上の段・下の段ではないか）
         if (!SpaceJunkBotNavMesh.TryFindFloor(candidate, 1.5f, out floor) ||
-            Mathf.Abs(floor.y - itemPosition.y) > SameLevelHeight)
+            Mathf.Abs(floor.y - itemGroundHeight) > SameLevelHeight)
         {
             return false;
         }
@@ -706,6 +732,44 @@ public class SpaceJunkBot : MonoBehaviour
         return false;
     }
 
+    /// <summary>
+    /// <paramref name="point"/> の真下にある、**動かない床の高さ**。素材・プレイヤー・すり抜ける判定・転がる物は床とみなさない。
+    /// 見つからなければ <paramref name="point"/> の高さのまま。
+    /// </summary>
+    private static float GroundHeightUnder(Vector3 point)
+    {
+        int count = Physics.RaycastNonAlloc(point + Vector3.up * 0.5f, Vector3.down, rayHits, GroundSearchDepth, ~0,
+            QueryTriggerInteraction.Ignore);
+
+        float best = float.MaxValue;
+        float height = point.y;
+
+        for (int i = 0; i < count; i++)
+        {
+            Collider hit = rayHits[i].collider;
+            if (hit == null || hit is CharacterController ||
+                hit.GetComponentInParent<HookableObject>() != null || hit.GetComponentInParent<CharacterController>() != null)
+            {
+                continue;
+            }
+
+            Rigidbody body = hit.attachedRigidbody;
+            if (body != null && !body.isKinematic)
+            {
+                continue;
+            }
+
+            // いちばん上の床（線の出発点からいちばん近い当たり）を使う
+            if (rayHits[i].distance < best)
+            {
+                best = rayHits[i].distance;
+                height = rayHits[i].point.y;
+            }
+        }
+
+        return height;
+    }
+
     /// <summary>道の曲がり角を順にたどって歩く。曲がり角に着いたら次へ。</summary>
     private void FollowPath()
     {
@@ -743,6 +807,13 @@ public class SpaceJunkBot : MonoBehaviour
             length += Vector3.Distance(corners[i], corners[i + 1]);
         }
         return length;
+    }
+
+    /// <summary>素材が落ちている途中・飛んでいる途中か（<see cref="MovingSpeed"/> より速く動いている）。</summary>
+    private static bool IsMoving(HookableObject item)
+    {
+        Rigidbody itemBody = item.Body;
+        return itemBody != null && !itemBody.isKinematic && itemBody.linearVelocity.sqrMagnitude > MovingSpeed * MovingSpeed;
     }
 
     /// <summary>その素材をしばらくあきらめる。</summary>
