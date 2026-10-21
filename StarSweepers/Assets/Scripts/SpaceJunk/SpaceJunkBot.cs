@@ -143,6 +143,9 @@ public class SpaceJunkBot : MonoBehaviour
     /// <summary>今回の投げでゲージを押す位置。投げるゲージが出た瞬間に決める。-1 ならまだ決めていない。</summary>
     private float pressAt = -1f;
 
+    /// <summary>今回の投げで投げる先（素材なら自分のゴール、爆弾なら相手のゴールなど）。<see cref="pressAt"/> と一緒に決める。</summary>
+    private Vector3 throwTarget;
+
     // 進めなくなったかを見るための、いちばん縮んだ「目的地までの距離」と、その時刻
     private float bestDistance = float.MaxValue;
     private float bestDistanceTime;
@@ -348,11 +351,13 @@ public class SpaceJunkBot : MonoBehaviour
                 break;
 
             default:
-                // 飛んでいる・戻っている・持ち上げている途中。止まって、持ち上げ中ならゴールを向いておく
+                // 飛んでいる・戻っている・持ち上げている途中。止まって、持ち上げ中なら投げる先を向いておく
+                // （素材なら自分のゴール、爆弾なら相手のゴール）
                 pad.Move = Vector2.zero;
-                if (hook.Phase == HookController.HookPhase.Attached && GoalPosition().HasValue)
+                if (hook.Phase == HookController.HookPhase.Attached &&
+                    TryChooseThrowTarget(hook.AttachedItem, out Vector3 aimAhead))
                 {
-                    PointAt(GoalPosition().Value);
+                    PointAt(aimAhead);
                 }
                 break;
         }
@@ -918,29 +923,29 @@ public class SpaceJunkBot : MonoBehaviour
     // ------------------------------------------------------------
 
     /// <summary>
-    /// 投げるゲージが出ている間。カーソルをゴールへ向け、**ゴールまでちょうど届く強さになる位置**で RT を押す。
+    /// 投げるゲージが出ている間。カーソルを投げる先へ向け、**そこまでちょうど届く強さになる位置**で RT を押す。
     /// ゲージは左端から右端へ1回だけ動き、真ん中ほど強い。ボットはいつも**真ん中より右側**で押す
     /// （出た直後は押しても効かない時間があるので、左側は使わない）。
+    /// 投げる先は <see cref="TryChooseThrowTarget"/>（素材なら自分のゴール、爆弾なら相手のゴール）。
     /// </summary>
     private void HandleThrowGauge()
     {
-        Vector3? goal = GoalPosition();
-        if (!goal.HasValue)
-        {
-            return; // 押さなければ、右端で後ろへ落とす
-        }
-
-        PointAt(goal.Value);
-
         if (pressAt < 0f)
         {
             HookableObject held = hook.AttachedItem;
-            float distance = FlatDistance(transform.position, goal.Value);
-            float accuracy = AccuracyFor(distance, held, goal.Value.y);
+            if (!TryChooseThrowTarget(held, out throwTarget))
+            {
+                return; // 投げる先が無い。押さなければ、右端で後ろへ落とす
+            }
+
+            float distance = FlatDistance(transform.position, throwTarget);
+            float accuracy = AccuracyFor(distance, held, throwTarget.y);
 
             // 真ん中（0.5）から、強さを落とすぶんだけ右へずらす。押し損ねて右端（後ろへ落とす）にならないよう 0.95 まで
             pressAt = Mathf.Clamp(0.5f + (1f - accuracy) * 0.5f + Random.Range(-gaugeError, gaugeError), 0.5f, 0.95f);
         }
+
+        PointAt(throwTarget);
 
         if (thrower.GaugePosition >= pressAt)
         {
@@ -957,6 +962,80 @@ public class SpaceJunkBot : MonoBehaviour
             misses = 0;
             SetTarget(null);
         }
+    }
+
+    /// <summary>
+    /// **頭上に持っている物を、どこへ投げるか。** 決められなければ false。
+    ///
+    /// - 素材 … 自分のチームのゴール
+    /// - **爆弾 … 自分のゴールには入れない**（2026/10/21・大槻さんの依頼）。いちばん近い**相手のゴール**へ投げる。
+    ///   相手のゴールが無ければ（検証シーンなど）、**自分のゴールと反対の向き**へ遠くまで投げる
+    ///
+    /// ボットは爆弾を狙わないが、フックの通り道に爆弾があると、それを引っ掛けてしまうことがある。
+    /// </summary>
+    private bool TryChooseThrowTarget(HookableObject held, out Vector3 target)
+    {
+        Vector3? own = GoalPosition();
+        bool isBomb = held != null && held.GetComponent<ExplosiveObject>() != null;
+
+        if (!isBomb)
+        {
+            target = own ?? transform.position;
+            return own.HasValue;
+        }
+
+        if (TryFindEnemyGoal(out target))
+        {
+            return true;
+        }
+
+        Vector3 away = own.HasValue ? transform.position - own.Value : transform.forward;
+        away.y = 0f;
+        if (away.sqrMagnitude < 0.0001f)
+        {
+            away = transform.forward;
+            away.y = 0f;
+        }
+
+        target = transform.position + away.normalized * (MaxThrowDistance(held) * throwRangeUse);
+        return true;
+    }
+
+    /// <summary>
+    /// いちばん近い**相手のゴール**（閉ざされていない・自分のチームではないゴール）の真ん中。
+    /// Goal Override を使っている（検証シーンの）ボットや、相手のゴールが無いマップでは false。
+    /// </summary>
+    private bool TryFindEnemyGoal(out Vector3 position)
+    {
+        position = default;
+        if (goalOverride != null)
+        {
+            return false;
+        }
+
+        int myTeam = Team;
+        float nearest = float.MaxValue;
+        bool found = false;
+
+        foreach (SpaceJunkGoal goal in SpaceJunkGoal.All)
+        {
+            if (goal == null || goal.IsClosed || goal.OwnerTeam == myTeam)
+            {
+                continue;
+            }
+
+            Collider area = goal.GetComponent<Collider>();
+            Vector3 center = area != null ? area.bounds.center : goal.transform.position;
+            float distance = FlatDistance(transform.position, center);
+            if (distance < nearest)
+            {
+                nearest = distance;
+                position = center;
+                found = true;
+            }
+        }
+
+        return found;
     }
 
     /// <summary>ゴールまで <paramref name="distance"/> m 投げるには、ゲージの真ん中にどれだけ近づければよいか（0〜1）。</summary>
