@@ -15,13 +15,14 @@ using UnityEngine.UI;
 ///
 /// ## 置き方
 ///
-/// 空のオブジェクトに付け、**Bubble** に頭の上に出す係（プレイヤーに付けた <see cref="ReactionBubble"/>）を渡す。
+/// ふつうは **`ReactionSystem.prefab`** の中にある（<see cref="ReactionRelay"/> が選んだものを全員に知らせ、
+/// 画面の端に「名前＋スタンプ」を出す）。
+/// **Bubble** に、頭の上に出す係（プレイヤーに付けた <see cref="ReactionBubble"/>）を渡すと、頭の上にも出す（検証シーン用）。
 /// 円の見た目は再生したときにこのスクリプトが作るので、Canvas などを置く必要はない。
 ///
 /// ## まだやっていないこと
 ///
-/// - 通信：ほかの人の画面には出ない（<see cref="Chosen"/> を受けて知らせる係を作ればよい）
-/// - 開いている間も、マウスでカメラや狙いが動く（<see cref="IsOpen"/> を見て止めてもらう必要がある）
+/// - 開いている間も、マウスで狙いが動く（<see cref="IsOpen"/> を見て止めてもらう必要がある）
 /// - コントローラー・1台のPCで複数人（席ごとの入力）には対応していない
 /// </summary>
 public class ReactionWheel : MonoBehaviour
@@ -97,11 +98,25 @@ public class ReactionWheel : MonoBehaviour
         pressedAt = -1f;
     }
 
+    /// <summary>i 番目のリアクション。番号が範囲の外なら null。</summary>
+    public ReactionEntry EntryAt(int index)
+    {
+        return index >= 0 && index < entries.Length ? entries[index] : null;
+    }
+
     private void Update()
     {
         Mouse mouse = Mouse.current;
         if (mouse == null)
         {
+            return;
+        }
+
+        // ポーズ画面などのメニューが開いている間は使わない（開いていたら閉じる）
+        if (GamePause.BlocksInput || UiPointer.MenuActive)
+        {
+            Close();
+            pressedAt = -1f;
             return;
         }
 
