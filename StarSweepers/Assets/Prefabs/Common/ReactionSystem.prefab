@@ -1,0 +1,117 @@
+%YAML 1.1
+%TAG !u! tag:unity3d.com,2011:
+--- !u!1 &295051190309977318
+GameObject:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  serializedVersion: 6
+  m_Component:
+  - component: {fileID: 2217554465141746413}
+  - component: {fileID: 3556978129691458114}
+  - component: {fileID: 5354180276050450609}
+  - component: {fileID: 4579892174666163123}
+  m_Layer: 0
+  m_Name: ReactionSystem
+  m_TagString: Untagged
+  m_Icon: {fileID: 0}
+  m_NavMeshLayer: 0
+  m_StaticEditorFlags: 0
+  m_IsActive: 1
+--- !u!4 &2217554465141746413
+Transform:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 295051190309977318}
+  serializedVersion: 2
+  m_LocalRotation: {x: 0, y: 0, z: 0, w: 1}
+  m_LocalPosition: {x: 0, y: 0, z: 0}
+  m_LocalScale: {x: 1, y: 1, z: 1}
+  m_ConstrainProportionsScale: 0
+  m_Children: []
+  m_Father: {fileID: 0}
+  m_LocalEulerAnglesHint: {x: 0, y: 0, z: 0}
+--- !u!114 &3556978129691458114
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 295051190309977318}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: 16afd178251549eeb9c9dee83141d655, type: 3}
+  m_Name: 
+  m_EditorClassIdentifier: Assembly-CSharp::ReactionWheel
+  bubble: {fileID: 0}
+  entries:
+  - label: "\u3044\u3044\u306D"
+    color: {r: 0.25, g: 0.65, b: 1, a: 1}
+    icon: {fileID: 0}
+  - label: "\u30CA\u30A4\u30B9\uFF01"
+    color: {r: 1, g: 0.75, b: 0.15, a: 1}
+    icon: {fileID: 0}
+  - label: "\u3053\u3063\u3061\uFF01"
+    color: {r: 0.3, g: 0.85, b: 0.45, a: 1}
+    icon: {fileID: 0}
+  - label: "\u3042\u308A\u304C\u3068"
+    color: {r: 1, g: 0.5, b: 0.7, a: 1}
+    icon: {fileID: 0}
+  - label: "\u52A9\u3051\u3066\uFF01"
+    color: {r: 0.95, g: 0.3, b: 0.25, a: 1}
+    icon: {fileID: 0}
+  - label: "\u3054\u3081\u3093"
+    color: {r: 0.6, g: 0.55, b: 0.9, a: 1}
+    icon: {fileID: 0}
+  - label: "\u7B11"
+    color: {r: 1, g: 0.6, b: 0.25, a: 1}
+    icon: {fileID: 0}
+  - label: "\uFF1F"
+    color: {r: 0.55, g: 0.6, b: 0.65, a: 1}
+    icon: {fileID: 0}
+  holdSeconds: 0.15
+  pointerSensitivity: 1
+  deadZone: 0.3
+  radius: 300
+  gapDegrees: 2
+  segmentColor: {r: 0.08, g: 0.1, b: 0.14, a: 0.75}
+  selectedColor: {r: 1, g: 1, b: 1, a: 0.35}
+--- !u!114 &5354180276050450609
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 295051190309977318}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: 46ed2f97124a4895a41afdcdc40d8310, type: 3}
+  m_Name: 
+  m_EditorClassIdentifier: Assembly-CSharp::ReactionFeed
+  displaySeconds: 3.5
+  maxCards: 5
+  slideSeconds: 0.2
+  firstCardOffset: {x: 24, y: 160}
+  cardSize: {x: 360, y: 96}
+  spacing: 10
+  cardColor: {r: 0.05, g: 0.07, b: 0.1, a: 0.8}
+--- !u!114 &4579892174666163123
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 295051190309977318}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: c6f1c051343f4e7db4485de9b2361085, type: 3}
+  m_Name: 
+  m_EditorClassIdentifier: Assembly-CSharp::ReactionRelay
+  wheel: {fileID: 3556978129691458114}
+  feed: {fileID: 5354180276050450609}
+  allowOffline: 0
+  keepAcrossScenes: 1
+  minIntervalSeconds: 0.5
