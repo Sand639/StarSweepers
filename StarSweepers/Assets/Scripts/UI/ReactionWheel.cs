@@ -8,10 +8,11 @@ using UnityEngine.UI;
 ///
 /// ## 使い方（遊ぶ人）
 ///
-/// 1. **マウスのホイール（中ボタン）を長押し**すると、画面の真ん中に円が出る
-/// 2. 押したまま**マウスを動かした方向**の項目が選ばれる（真ん中に小さな点が動く）
-/// 3. **離すと**、選んだリアクションがプレイヤーの頭の上に出る（<see cref="ReactionBubble"/>）
-///    - 真ん中のあたりで離すと、何も出さずに閉じる
+/// 1. **マウスのホイール（中ボタン）か、コントローラーの RB を長押し**すると、画面の真ん中に円が出る
+/// 2. 押したまま**マウスを動かした方向**か、**右スティックを倒した方向**の項目が選ばれる（真ん中に小さな点が動く）
+/// 3. **離すと**、選んだリアクションを全員に知らせる（<see cref="ReactionRelay"/>）
+///    - マウス：真ん中のあたりで離すと、何も出さずに閉じる
+///    - コントローラー：スティックを戻しても選んだものは残る。**B で取り消し**
 ///
 /// ## 置き方
 ///
@@ -22,8 +23,8 @@ using UnityEngine.UI;
 ///
 /// ## まだやっていないこと
 ///
-/// - 開いている間も、マウスで狙いが動く（<see cref="IsOpen"/> を見て止めてもらう必要がある）
-/// - コントローラー・1台のPCで複数人（席ごとの入力）には対応していない
+/// - 開いている間も、マウスや右スティックで狙いが動く（<see cref="IsOpen"/> を見て止めてもらう必要がある）
+/// - 1台のPCで複数人（席ごとの入力）には対応していない（どのコントローラーの RB でも開く）
 /// </summary>
 public class ReactionWheel : MonoBehaviour
 {
@@ -59,6 +60,10 @@ public class ReactionWheel : MonoBehaviour
     [Tooltip("マウスを動かした量の何倍で、真ん中の点を動かすか")]
     [SerializeField] private float pointerSensitivity = 1f;
 
+    [Tooltip("右スティックをどれだけ倒したら選ぶか（0〜1）")]
+    [Range(0.1f, 0.95f)]
+    [SerializeField] private float stickThreshold = 0.5f;
+
     [Tooltip("真ん中の何割までを「選んでいない」とするか（円の半径に対する割合）")]
     [Range(0.05f, 0.9f)]
     [SerializeField] private float deadZone = 0.3f;
@@ -83,6 +88,9 @@ public class ReactionWheel : MonoBehaviour
     private bool open;
     private float pressedAt = -1f;
     private float openedAt;
+
+    /// <summary>B で取り消した。ボタンを離すまで開き直さない。</summary>
+    private bool cancelled;
     private Vector2 pointer;
     private int selected = -1;
 
@@ -96,6 +104,7 @@ public class ReactionWheel : MonoBehaviour
     {
         Close();
         pressedAt = -1f;
+        cancelled = false;
     }
 
     /// <summary>i 番目のリアクション。番号が範囲の外なら null。</summary>
@@ -107,10 +116,7 @@ public class ReactionWheel : MonoBehaviour
     private void Update()
     {
         Mouse mouse = Mouse.current;
-        if (mouse == null)
-        {
-            return;
-        }
+        Gamepad pad = Gamepad.current;
 
         // ポーズ画面などのメニューが開いている間は使わない（開いていたら閉じる）
         if (GamePause.BlocksInput || UiPointer.MenuActive)
@@ -120,27 +126,48 @@ public class ReactionWheel : MonoBehaviour
             return;
         }
 
-        if (mouse.middleButton.wasPressedThisFrame)
+        // マウスのホイール（中ボタン）か、コントローラーの RB。どちらで押してもよい
+        bool mouseHeld = mouse != null && mouse.middleButton.isPressed;
+        bool padHeld = pad != null && pad.rightShoulder.isPressed;
+        bool held = mouseHeld || padHeld;
+
+        if (held && pressedAt < 0f)
         {
             pressedAt = Time.unscaledTime;
         }
 
-        if (mouse.middleButton.isPressed)
+        if (held)
         {
-            if (!open && pressedAt >= 0f && Time.unscaledTime - pressedAt >= holdSeconds)
+            if (!open && !cancelled && Time.unscaledTime - pressedAt >= holdSeconds)
             {
                 Open();
             }
 
             if (open)
             {
-                MovePointer(mouse.delta.ReadValue());
+                if (mouse != null)
+                {
+                    MovePointer(mouse.delta.ReadValue());
+                }
+
+                if (pad != null)
+                {
+                    AimWithStick(pad.rightStick.ReadValue());
+
+                    // B で取り消し（何も出さずに閉じる。RB を離すまで開き直さない）
+                    if (pad.buttonEast.wasPressedThisFrame)
+                    {
+                        Close();
+                        cancelled = true;
+                    }
+                }
             }
         }
-
-        if (mouse.middleButton.wasReleasedThisFrame)
+        else if (pressedAt >= 0f)
         {
+            // 離した。開いていたら、選んでいたものを出す
             pressedAt = -1f;
+            cancelled = false;
             if (open)
             {
                 int choice = selected;
@@ -201,6 +228,27 @@ public class ReactionWheel : MonoBehaviour
     private void MovePointer(Vector2 delta)
     {
         pointer = Vector2.ClampMagnitude(pointer + delta * pointerSensitivity, radius);
+        SelectByPointer();
+    }
+
+    /// <summary>
+    /// 右スティックを倒した方向の項目を選ぶ。
+    /// **スティックを戻しても選んだものは残る**（スティックを離してから RB を離すことが多いため）。
+    /// </summary>
+    private void AimWithStick(Vector2 stick)
+    {
+        if (stick.magnitude < stickThreshold)
+        {
+            return;
+        }
+
+        pointer = stick.normalized * radius * 0.8f;
+        SelectByPointer();
+    }
+
+    /// <summary>点のある方向の項目を選ぶ。真ん中に近ければ、何も選ばない。</summary>
+    private void SelectByPointer()
+    {
         pointerDot.anchoredPosition = pointer;
 
         if (pointer.magnitude < radius * deadZone)
