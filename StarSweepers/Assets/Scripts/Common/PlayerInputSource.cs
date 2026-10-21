@@ -17,6 +17,10 @@ using UnityEngine.InputSystem.LowLevel;
 /// 付いていなくても、操作スクリプトが <see cref="Get"/> で自動で付ける（初期値は単体操作なので、
 /// **プレハブやシーンを直さなくても今までと同じ動き**になる）。
 /// 複数人で遊ぶときは、プレイヤーごとに <see cref="SeatIndex"/> を 0, 1, … にし、シーンに `InputSeatManager` を置く。
+///
+/// **ボット（NPC）の体には <see cref="VirtualPlayerInput"/> が付く**（2026/10/21）。付いていれば席の設定より優先し、
+/// 本物の機器は一切読まずに、ボットが押した値だけを返す。操作タイプと投げ方も、PCの設定に関係なく
+/// **タイプA・左右で使い分け**に固定する（<see cref="ControllerOperation"/>・<see cref="ThrowOperation"/>）。
 /// </summary>
 [DisallowMultipleComponent]
 public class PlayerInputSource : MonoBehaviour
@@ -42,8 +46,22 @@ public class PlayerInputSource : MonoBehaviour
         }
     }
 
-    /// <summary>席で読むか（1台のPCで複数人）。false なら単体操作。</summary>
-    public bool UsesSeat => seatIndex >= 0;
+    /// <summary>席で読むか（1台のPCで複数人）。false なら単体操作。ボットの体では false。</summary>
+    public bool UsesSeat => seatIndex >= 0 && !UsesVirtual;
+
+    /// <summary>ボットが押す見えないコントローラー。<see cref="VirtualPlayerInput"/> が自分で入る。人の体では null。</summary>
+    public VirtualPlayerInput Virtual { get; set; }
+
+    /// <summary>ボットの体か（本物の機器を読まず、<see cref="Virtual"/> だけを読む）。</summary>
+    public bool UsesVirtual => Virtual != null;
+
+    /// <summary>この体の操作タイプ。ボットはいつもタイプA、人はPCの設定（<see cref="GameSettings.ControllerOperation"/>）。</summary>
+    public ControllerOperationType ControllerOperation =>
+        UsesVirtual ? ControllerOperationType.TypeA : GameSettings.ControllerOperation;
+
+    /// <summary>この体の投げ方。ボットはいつも「左右で使い分け」、人はPCの設定（<see cref="GameSettings.ThrowOperation"/>）。</summary>
+    public ThrowOperationType ThrowOperation =>
+        UsesVirtual ? ThrowOperationType.TwoButtons : GameSettings.ThrowOperation;
 
     /// <summary>
     /// 読んでいる席。単体操作のとき、または席がまだ無い（InputSeatManager が無い・番号が大きすぎる）ときは null。
@@ -94,6 +112,11 @@ public class PlayerInputSource : MonoBehaviour
     /// <summary>移動（-1..1）。単体操作では <paramref name="singleAction"/>（Input Actions の Move）を読む。</summary>
     public Vector2 ReadMove(InputAction singleAction)
     {
+        if (UsesVirtual)
+        {
+            return Virtual.Move;
+        }
+
         if (!UsesSeat)
         {
             return singleAction != null ? singleAction.ReadValue<Vector2>() : Vector2.zero;
@@ -103,11 +126,19 @@ public class PlayerInputSource : MonoBehaviour
         return seat != null ? seat.Move : Vector2.zero;
     }
 
-    /// <summary>このプレイヤーのコントローラ。単体操作では最後に触ったもの（<c>Gamepad.current</c>）。無ければ null。</summary>
+    /// <summary>
+    /// このプレイヤーのコントローラ。単体操作では最後に触ったもの（<c>Gamepad.current</c>）。無ければ null。
+    /// **ボットの体では null**（本物のコントローラーを読ませない。タイプBの操作にもならない）。
+    /// </summary>
     public Gamepad Gamepad
     {
         get
         {
+            if (UsesVirtual)
+            {
+                return null;
+            }
+
             if (!UsesSeat)
             {
                 return Gamepad.current;
@@ -124,6 +155,12 @@ public class PlayerInputSource : MonoBehaviour
     /// </summary>
     public bool TryReadPointer(out Vector2 screenPoint)
     {
+        if (UsesVirtual)
+        {
+            screenPoint = Virtual.Pointer;
+            return Virtual.HasPointer;
+        }
+
         if (!UsesSeat)
         {
             Mouse mouse = Mouse.current;
@@ -147,6 +184,12 @@ public class PlayerInputSource : MonoBehaviour
     /// <summary>Attack が押された瞬間か。単体操作では <paramref name="singleAction"/>（Input Actions の Attack）を読む。</summary>
     public bool AttackPressed(InputAction singleAction)
     {
+        // ボットの Attack は「引っ張る」ボタン（席と同じ考え方）
+        if (UsesVirtual)
+        {
+            return Virtual.PullPressed;
+        }
+
         if (!UsesSeat)
         {
             return singleAction != null && singleAction.WasPressedThisFrame();
@@ -159,6 +202,11 @@ public class PlayerInputSource : MonoBehaviour
     /// <summary>Attack が離された瞬間か。</summary>
     public bool AttackReleased(InputAction singleAction)
     {
+        if (UsesVirtual)
+        {
+            return Virtual.PullReleased;
+        }
+
         if (!UsesSeat)
         {
             return singleAction != null && singleAction.WasReleasedThisFrame();
@@ -169,25 +217,29 @@ public class PlayerInputSource : MonoBehaviour
     }
 
     /// <summary>「引っ張る」ボタン（左クリック／LT）が押された瞬間か。席では Attack ボタン。</summary>
-    public bool PullPressed => UsesSeat
+    public bool PullPressed => UsesVirtual ? Virtual.PullPressed
+        : UsesSeat
         ? SeatPressed(InputSeatButton.Attack)
         : (Mouse.current != null && Mouse.current.leftButton.wasPressedThisFrame)
           || (Gamepad.current != null && Gamepad.current.leftTrigger.wasPressedThisFrame);
 
     /// <summary>「引っ張る」ボタンが離された瞬間か。</summary>
-    public bool PullReleased => UsesSeat
+    public bool PullReleased => UsesVirtual ? Virtual.PullReleased
+        : UsesSeat
         ? SeatReleased(InputSeatButton.Attack)
         : (Mouse.current != null && Mouse.current.leftButton.wasReleasedThisFrame)
           || (Gamepad.current != null && Gamepad.current.leftTrigger.wasReleasedThisFrame);
 
     /// <summary>「投げる」ボタン（右クリック／RT）が押された瞬間か。席では Aim ボタン。</summary>
-    public bool ThrowPressed => UsesSeat
+    public bool ThrowPressed => UsesVirtual ? Virtual.ThrowPressed
+        : UsesSeat
         ? SeatPressed(InputSeatButton.Aim)
         : (Mouse.current != null && Mouse.current.rightButton.wasPressedThisFrame)
           || (Gamepad.current != null && Gamepad.current.rightTrigger.wasPressedThisFrame);
 
     /// <summary>「投げる」ボタンが離された瞬間か。</summary>
-    public bool ThrowReleased => UsesSeat
+    public bool ThrowReleased => UsesVirtual ? Virtual.ThrowReleased
+        : UsesSeat
         ? SeatReleased(InputSeatButton.Aim)
         : (Mouse.current != null && Mouse.current.rightButton.wasReleasedThisFrame)
           || (Gamepad.current != null && Gamepad.current.rightTrigger.wasReleasedThisFrame);
@@ -198,6 +250,12 @@ public class PlayerInputSource : MonoBehaviour
     /// </summary>
     public bool WasPressed(Key key, GamepadButton button)
     {
+        // ボットはこれらのボタンを押せない
+        if (UsesVirtual)
+        {
+            return false;
+        }
+
         if (!UsesSeat)
         {
             Keyboard keyboard = Keyboard.current;

@@ -200,8 +200,9 @@ public class HookAimAssist : MonoBehaviour
     /// <summary>キーボードの 1・2・3 ／ 十字キーで、狙い方を切り替える。</summary>
     private void ReadModeInput()
     {
-        // 1台で複数人（席で読む）ときは、その席のキーボードの 1・2・3 とコントローラの十字キーだけを見る
-        if (input.UsesSeat)
+        // 1台で複数人（席で読む）ときは、その席のキーボードの 1・2・3 とコントローラの十字キーだけを見る。
+        // ボットの体は十字キーを押せない（いつも「押していない」が返る）ので、狙い方は始まったときのまま
+        if (input.UsesSeat || input.UsesVirtual)
         {
             if (input.WasPressed(Key.Digit1, GamepadButton.DpadLeft))
             {

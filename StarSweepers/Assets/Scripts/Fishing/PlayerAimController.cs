@@ -122,8 +122,9 @@ public class PlayerAimController : MonoBehaviour
             return;
         }
 
-        // 席で読むときは、マウスと右スティックのカーソルを席の側がまとめてくれるので切り替えは要らない
-        if (!input.UsesSeat)
+        // 席で読むときは、マウスと右スティックのカーソルを席の側がまとめてくれるので切り替えは要らない。
+        // ボットの体（VirtualPlayerInput）も、本物のマウス・スティックを見ないので切り替えない
+        if (!input.UsesSeat && !input.UsesVirtual)
         {
             UpdateCursorSource();
         }

@@ -462,8 +462,15 @@ public class ThrowController : MonoBehaviour
     /// <summary>いま引き寄せ中か。UI などが参照する。</summary>
     public bool IsPulling => active;
 
-    /// <summary>操作タイプBで距離ベースの引き抜きを使うか。入力方式と軌道処理から独立させる。</summary>
-    private bool UsesDistanceBasedPull => GameSettings.ControllerOperation == ControllerOperationType.TypeB;
+    /// <summary>
+    /// 操作タイプBで距離ベースの引き抜きを使うか。入力方式と軌道処理から独立させる。
+    /// ボットの体は PCの設定に関係なくタイプA（<see cref="PlayerInputSource.ControllerOperation"/>）。
+    /// </summary>
+    private bool UsesDistanceBasedPull => OperationType == ControllerOperationType.TypeB;
+
+    /// <summary>この体の操作タイプ。人はPCの設定、ボットはいつもタイプA。</summary>
+    private ControllerOperationType OperationType =>
+        input != null ? input.ControllerOperation : GameSettings.ControllerOperation;
 
     /// <summary>いまの操作のしかた。</summary>
     public ThrowStyle Style => style;
@@ -472,7 +479,26 @@ public class ThrowController : MonoBehaviour
     /// **設定の「投げ方」が ZRワンボタン で、宇宙ごみ式のプレイヤーか**（2026/10/15）。
     /// 釣り式（SweepOnce）のプレイヤーには効かない。
     /// </summary>
-    public bool UsesOneButton => style == ThrowStyle.TwoButtons && GameSettings.ThrowOperation == ThrowOperationType.OneButton;
+    public bool UsesOneButton => style == ThrowStyle.TwoButtons &&
+        (input != null ? input.ThrowOperation : GameSettings.ThrowOperation) == ThrowOperationType.OneButton;
+
+    // ---- 画面に出ているゲージを読む（ボットの頭 SpaceJunkBot が使う。プレイヤーが画面で見ているものと同じ情報） ----
+
+    /// <summary>宇宙ごみ式で、物資を頭上に持って「投げる」ゲージが動いているところか（右で撃って引っ掛けたあと）。</summary>
+    public bool IsThrowGaugeShowing => active && style == ThrowStyle.TwoButtons && !heavy
+        && contestTarget == null && stage == TwoButtonStage.AimThrow;
+
+    /// <summary>宇宙ごみ式で、「引っ張る」ゲージが動いているところか（左で撃って引っ掛けたあと・横取りの待ち・重い物）。</summary>
+    public bool IsPullGaugeShowing => active && style == ThrowStyle.TwoButtons
+        && (contestTarget != null || stage == TwoButtonStage.AimPull);
+
+    /// <summary>ゲージのマーカーの位置（0〜1）。真ん中（0.5）に近いほど強い。</summary>
+    public float GaugePosition => BarPosition();
+
+    /// <summary>投げるときの力（端で押したとき／真ん中で押したとき）と、上向きに足す力。どれだけ飛ぶかの見積もりに使う。</summary>
+    public float ThrowForceAtEdge => twoButtonThrowForceMin;
+    public float ThrowForceAtCenter => twoButtonThrowForceMax;
+    public float ThrowLift => throwLift;
 
     /// <summary>
     /// **ほかの人のフックが当たったら、その人の引っ掛けを外すか。**
