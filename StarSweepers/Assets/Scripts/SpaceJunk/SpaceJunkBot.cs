@@ -23,7 +23,12 @@ using UnityEngine;
 ///
 /// ## 届かないときは中継する
 ///
-/// 素材がゴールから遠すぎて1回では届かないときは、**ゴールに向けて思いきり投げて近づける**（次にまた拾う）。
+/// 素材がゴールから遠すぎて1回では届かないときは、**ゴールに向けて思いきり投げて近づける**。
+///
+/// ## 自分が投げた物は拾わない
+///
+/// 投げた物をすぐ拾い直して投げ続けないよう、**自分が投げた素材は狙わない**（ほかの人が引っ掛けたら、また狙ってよい）。
+/// 中継で近づけた物も自分では拾い直さないので、続きはほかの人・ほかのボットに任せる形になる。
 ///
 /// ## 考えるのは、その体を操作するPCだけ
 ///
@@ -101,6 +106,12 @@ public class SpaceJunkBot : MonoBehaviour
 
     /// <summary>あきらめた素材と、また狙ってよくなる時刻。</summary>
     private readonly Dictionary<HookableObject, float> givenUp = new Dictionary<HookableObject, float>();
+
+    /// <summary>
+    /// **自分が投げた素材。** これは狙わない（投げた物をすぐ拾い直して、投げ続けてしまうのを防ぐ。2026/10/21・大槻さんの報告）。
+    /// ほかの人が引っ掛けたら、もう「自分が投げた物」ではないので外す。
+    /// </summary>
+    private readonly HashSet<HookableObject> thrownByMe = new HashSet<HookableObject>();
 
     /// <summary>今の素材を続けて外した回数。</summary>
     private int misses;
@@ -193,6 +204,7 @@ public class SpaceJunkBot : MonoBehaviour
         }
 
         TrackHookResult();
+        ForgetThrownTakenByOthers();
 
         // ---- 画面にゲージが出ていたら、それに応える ----
         if (thrower.IsThrowGaugeShowing)
@@ -274,6 +286,36 @@ public class SpaceJunkBot : MonoBehaviour
         }
 
         lastPhase = phase;
+    }
+
+    /// <summary>
+    /// 自分が投げた素材のうち、消えた物と、**ほかの人が引っ掛けた物**を忘れる
+    /// （ほかの人が触ったら、もう自分が投げた物ではないので、また狙ってよい）。
+    /// </summary>
+    private void ForgetThrownTakenByOthers()
+    {
+        if (thrownByMe.Count == 0)
+        {
+            return;
+        }
+
+        HookableObject mine = hook.AttachedItem;
+        thrownByMe.RemoveWhere(item =>
+        {
+            if (item == null || item.IsVanished)
+            {
+                return true;
+            }
+
+            if (item == mine)
+            {
+                return false;
+            }
+
+            FishingNetSupply netSupply = item.GetComponent<FishingNetSupply>();
+            bool claimedOnline = netSupply != null && netSupply.IsSpawned && netSupply.IsClaimed;
+            return item.IsHooked || claimedOnline;
+        });
     }
 
     // ------------------------------------------------------------
@@ -410,6 +452,11 @@ public class SpaceJunkBot : MonoBehaviour
                 continue;
             }
 
+            if (thrownByMe.Contains(item))
+            {
+                continue;
+            }
+
             // もうゴールの近くにある物は、そのまま点になるので触らない
             if (FlatDistance(item.transform.position, goal) < ignoreNearGoalDistance)
             {
@@ -502,6 +549,13 @@ public class SpaceJunkBot : MonoBehaviour
 
         if (thrower.GaugePosition >= pressAt)
         {
+            // いま頭上に持っている物を「自分が投げた物」として覚える（このフレームで投げるので、まだ持っている）
+            HookableObject thrown = hook.AttachedItem;
+            if (thrown != null)
+            {
+                thrownByMe.Add(thrown);
+            }
+
             pad.SetThrow(true);
             pressAt = -1f;
             pauseUntil = Time.time + afterThrowPause;
