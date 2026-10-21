@@ -19,6 +19,11 @@ using UnityEngine;
 /// 数えるのは <see cref="SpaceJunkRound"/>。
 ///
 /// フックで引っ張ったまま持ち込んだ素材は数えない（引きずり込みで稼げないようにするため）。
+///
+/// ## 入ってすぐには数えない（2026/10/21）
+///
+/// 素材が**ゴールの中に <see cref="scoreDelaySeconds"/> 秒いつづけたら**数える。
+/// 途中でゴールから出たり、フックで引っ掛けられたりしたら、時間は0からやり直し。
 /// </summary>
 [RequireComponent(typeof(Collider))]
 [RequireComponent(typeof(NetworkObject))]
@@ -30,6 +35,11 @@ public class SpaceJunkGoal : NetworkBehaviour
     [Header("このゴールの場所")]
     [Tooltip("ゴールの並び順の番号（0=北 / 1=東 / 2=南 / 3=西）。持ち主の割り当てに使う")]
     [SerializeField] private int goalIndex = 0;
+
+    [Header("得点")]
+    [Tooltip("素材がゴールの中に何秒いつづけたら得点になるか（0 なら入った瞬間）")]
+    [Min(0f)]
+    [SerializeField] private float scoreDelaySeconds = 1f;
 
     [Header("見た目")]
     [Tooltip("チームの色に塗る床の Renderer")]
@@ -52,6 +62,16 @@ public class SpaceJunkGoal : NetworkBehaviour
 
     private Color teamColor = Color.white;
     private float flashUntil = -999f;
+
+    /// <summary>ゴールの中にいる素材ごとの「いつから中にいるか」と「最後に中で見かけた時刻」（ホストだけが使う）。</summary>
+    private readonly Dictionary<HookableObject, (float since, float lastSeen)> staying =
+        new Dictionary<HookableObject, (float since, float lastSeen)>();
+
+    /// <summary>
+    /// この秒数より長く見かけなかった素材は「ゴールから出た」とみなす。
+    /// OnTriggerExit は、素材に当たり判定が複数あると1つ抜けただけで呼ばれるので、見かけた時刻で判断する。
+    /// </summary>
+    private const float LeftAfterSeconds = 0.1f;
 
     private void Awake()
     {
@@ -116,6 +136,42 @@ public class SpaceJunkGoal : NetworkBehaviour
         padRenderer.material.color = lit ? flashColor : teamColor;
     }
 
+    /// <summary>
+    /// 待っている素材の後始末（ホストだけ）。出ていった・消えた素材は忘れる。
+    /// 中で止まった素材は物理の計算が眠って OnTriggerStay が来なくなるので、起こしておく。
+    /// </summary>
+    private void FixedUpdate()
+    {
+        if (staying.Count == 0)
+        {
+            return;
+        }
+
+        List<HookableObject> gone = null;
+        foreach (KeyValuePair<HookableObject, (float since, float lastSeen)> pair in staying)
+        {
+            if (pair.Key == null || Time.time - pair.Value.lastSeen > LeftAfterSeconds)
+            {
+                (gone ??= new List<HookableObject>()).Add(pair.Key);
+                continue;
+            }
+
+            Rigidbody body = pair.Key.GetComponent<Rigidbody>();
+            if (body != null)
+            {
+                body.WakeUp();
+            }
+        }
+
+        if (gone != null)
+        {
+            foreach (HookableObject item in gone)
+            {
+                staying.Remove(item);
+            }
+        }
+    }
+
     private void OnTriggerEnter(Collider other)
     {
         TryCollect(other);
@@ -167,6 +223,22 @@ public class SpaceJunkGoal : NetworkBehaviour
         {
             return;
         }
+
+        // **決めた秒数いつづけるまでは数えない。** 見かけなかった間があれば、0から数え直す
+        float now = Time.time;
+        if (!staying.TryGetValue(item, out var stay) || now - stay.lastSeen > LeftAfterSeconds)
+        {
+            stay.since = now;
+        }
+
+        staying[item] = (stay.since, now);
+
+        if (now - stay.since < scoreDelaySeconds)
+        {
+            return;
+        }
+
+        staying.Remove(item);
 
         // **もう持っている種類でも、素材は消える（何も起きない）。**
         bool counted = SpaceJunkRound.Current != null
