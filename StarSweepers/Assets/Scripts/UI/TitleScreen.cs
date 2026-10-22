@@ -20,7 +20,7 @@ using UnityEngine.UI;
 /// | --- | --- |
 /// | メイン | マルチプレイ／プラクティス（オフラインでロビーへ）／設定／ゲームを終了。右下にバージョン（2026/10/22 から） |
 /// | マルチプレイ | 名前・クイックマッチ／部屋を探す／部屋を作る（2026/10/22） |
-/// | 部屋を探す | 左：参加コード（とパスワード）で入る／サーバー検索設定（■パブリックサーバー ■フレンドのサーバー）。右：参加可能なサーバー（**LAN の部屋はいつも一番上**） |
+/// | 部屋を探す | 真ん中の枠に：右上の「番号入力で検索する」（番号の近い部屋に絞る。プライベートは全部一致で出す）／募集中の部屋の一覧（**LAN の部屋はいつも一番上**。鍵＝パスワードあり）／下に ■パブリック ■フレンド ■パスワード不要（2026/10/22。大槻さんの写真の形） |
 /// | 部屋を作る | 最大人数（2〜8。初期値8）・サーバーの名前・パスワード・□パブリック □プライベート □LAN → 作成（名前の欄は無い。2026/10/22） |
 /// | 設定 | サウンド（音量）／グラフィック（解像度・画面モード・フレームレート上限・垂直同期・画質）／ゲーム全般（マウス感度・操作タイプ） |
 ///
@@ -624,6 +624,8 @@ public class TitleScreen : MonoBehaviour
             case TitleButtonAction.ToggleSearchFriends: SetSearchFriends(!searchFriends); break;
             case TitleButtonAction.ConfirmJoinDialog: ConfirmJoinDialog(); break;
             case TitleButtonAction.CloseJoinDialog: CloseJoinDialog(); break;
+            case TitleButtonAction.RefreshRoomList: RefreshRoomListNow(); break;
+            case TitleButtonAction.ToggleSearchNoPassword: SetSearchNoPassword(!searchNoPassword); break;
             case TitleButtonAction.OpenCreate: ShowPage(Page.Create); break;
             case TitleButtonAction.OpenFind: ShowPage(Page.Multi); break;
             case TitleButtonAction.OpenSettings: ShowPage(Page.Settings); break;
@@ -785,7 +787,7 @@ public class TitleScreen : MonoBehaviour
         {
             SetText(TitlePartRole.CodeBoxTitle, "参加コード");
             SetText(TitlePartRole.CodeBoxBody,
-                "サーバーを作成すると発行されます（ロビーの左上に出ます）\n参加する人は「部屋を探す」の「参加コードで入る」で入れる");
+                "サーバーを作成すると発行されます（ロビーの左上に出ます）\n参加する人は「部屋を探す」の「番号入力で検索する」に入れる");
         }
     }
 
@@ -916,6 +918,12 @@ public class TitleScreen : MonoBehaviour
     /// <summary>サーバー検索設定を覚えておく場所（PlayerPrefs）。</summary>
     private const string SearchPublicKey = "StarSweepers.SearchPublic";
     private const string SearchFriendsKey = "StarSweepers.SearchFriends";
+    private const string SearchNoPasswordKey = "StarSweepers.SearchNoPassword";
+
+    /// <summary>
+    /// 部屋番号（合言葉）の文字数。検索欄にこの文字数をすべて入れると、一覧に無い番号（プライベートの部屋）も「入ってみる」行として出す。
+    /// </summary>
+    private const int RoomCodeLength = 6;
 
     /// <summary>公開のサーバーの一覧を何秒ごとに取り直すか（短いと、頼みすぎ（429）で断られる）。</summary>
     private const float PublicRefreshSeconds = 5f;
@@ -933,6 +941,9 @@ public class TitleScreen : MonoBehaviour
     private bool searchPublic = true;
     private bool searchFriends = true;
     private bool searchSettingsLoaded;
+
+    /// <summary>■パスワード不要：パスワードのかかった部屋を一覧に出さない（2026/10/22。最初は外れている）。</summary>
+    private bool searchNoPassword;
 
     // 一覧に並べる元（取り直すたびに入れ替わる）
     private readonly List<ISessionInfo> publicSessions = new List<ISessionInfo>();
@@ -957,13 +968,19 @@ public class TitleScreen : MonoBehaviour
         /// <summary>人数の文字（例：「3/8」）。</summary>
         public string Players;
 
-        /// <summary>満員か（「参加する」が「満員」になり、押しても何もしない）。</summary>
+        /// <summary>満員か（人数の横に「満員」と出て、押しても何もしない）。</summary>
         public bool Full;
 
-        /// <summary>「参加する」を押したときにすること。</summary>
+        /// <summary>部屋番号（合言葉）。分からない部屋（LAN・番号を書いていない古い版のホスト）は空。</summary>
+        public string Code;
+
+        /// <summary>パスワードがかかっているか（鍵の印を出す。■パスワード不要 なら一覧に出さない）。</summary>
+        public bool Locked;
+
+        /// <summary>行を押したときにすること。</summary>
         public UnityEngine.Events.UnityAction Join;
 
-        /// <summary>どのサーバーかを見分ける文字（「lan:」「pub:」「friend:」で始まる）。並べ直すかどうかの判定に使う。</summary>
+        /// <summary>どのサーバーかを見分ける文字（「lan:」「pub:」「friend:」「code:」で始まる）。並べ直すかどうかの判定に使う。</summary>
         public string Key;
     }
 
@@ -997,6 +1014,7 @@ public class TitleScreen : MonoBehaviour
             searchSettingsLoaded = true;
             searchPublic = PlayerPrefs.GetInt(SearchPublicKey, 1) != 0;
             searchFriends = PlayerPrefs.GetInt(SearchFriendsKey, 1) != 0;
+            searchNoPassword = PlayerPrefs.GetInt(SearchNoPasswordKey, 0) != 0;
         }
 
         RefreshSearchChecks();
@@ -1013,6 +1031,38 @@ public class TitleScreen : MonoBehaviour
         SetText(TitlePartRole.SearchFriendsCheckText, CheckMark(searchFriends));
         SetSelectedLook(TitleButtonAction.ToggleSearchPublic, searchPublic);
         SetSelectedLook(TitleButtonAction.ToggleSearchFriends, searchFriends);
+        SetText(TitlePartRole.SearchNoPasswordCheckText, CheckMark(searchNoPassword));
+        SetSelectedLook(TitleButtonAction.ToggleSearchNoPassword, searchNoPassword);
+    }
+
+    /// <summary>■パスワード不要 のチェック。覚えておき、一覧を並べ直す。</summary>
+    private void SetSearchNoPassword(bool value)
+    {
+        searchNoPassword = value;
+        PlayerPrefs.SetInt(SearchNoPasswordKey, value ? 1 : 0);
+        PlayerPrefs.Save();
+        RefreshSearchChecks();
+        joinableSignature = null;
+    }
+
+    /// <summary>
+    /// 「募集中の部屋」の横の ⟳。公開の部屋とフレンドの部屋を、すぐ取り直す
+    /// （頼みすぎ（429）にならない間隔は <see cref="InternetConnection.QueryPublicSessionsAsync"/> が守る）。
+    /// </summary>
+    private void RefreshRoomListNow()
+    {
+        nextPublicQueryTime = 0f;
+        nextFriendQueryTime = 0f;
+        joinableSignature = null;
+    }
+
+    /// <summary>
+    /// 検索欄（部屋番号で検索）に入っている文字。前後の空白と「#」を除き、大文字にそろえる（合言葉は大文字の英数字）。
+    /// 値は参加コードの欄と同じ <see cref="privateCode"/> を使う。
+    /// </summary>
+    private string RoomCodeSearch()
+    {
+        return (privateCode ?? string.Empty).Trim().TrimStart('#').Trim().ToUpperInvariant();
     }
 
     /// <summary>■パブリックサーバー のチェック。覚えておき、一覧を並べ直す（取り直しの間隔は変えない）。</summary>
@@ -1080,10 +1130,12 @@ public class TitleScreen : MonoBehaviour
     private string JoinableSignatureOf(List<JoinableEntry> entries)
     {
         StringBuilder signature = new StringBuilder();
-        signature.Append(searchPublic).Append(searchFriends).Append('|').Append(publicProblem).Append('|').Append(friendStatus).Append('|');
+        signature.Append(searchPublic).Append(searchFriends).Append(searchNoPassword).Append('|').Append(RoomCodeSearch())
+            .Append('|').Append(publicProblem).Append('|').Append(friendStatus).Append('|');
         foreach (JoinableEntry entry in entries)
         {
-            signature.Append(entry.Key).Append(',').Append(entry.Name).Append(',').Append(entry.Players).Append(entry.Full).Append(';');
+            signature.Append(entry.Key).Append(',').Append(entry.Name).Append(',').Append(entry.Code).Append(',')
+                .Append(entry.Players).Append(entry.Full).Append(entry.Locked).Append(';');
         }
 
         return signature.ToString();
@@ -1092,23 +1144,90 @@ public class TitleScreen : MonoBehaviour
     /// <summary>
     /// 一覧に並べる行を、上から順に集める：LAN の部屋 → 公開のサーバー（■パブリック）→ フレンドの部屋（■フレンド）。
     /// 押したときに使う値（アドレス・ID・参加コード）は、ここで取り出してから渡しておく。
+    ///
+    /// **部屋番号で検索**（2026/10/22・大槻さん）：検索欄に文字があれば、番号にその文字が入っている部屋だけを、
+    /// 番号がその文字で始まるもの → 途中に入っているもの の順に並べる（番号の分からない LAN の部屋は出さない）。
+    /// **プライベートの部屋は一覧に出てこないので、番号を {RoomCodeLength} 文字すべて入れたときだけ**「入ってみる」行を出す。
+    /// ■パスワード不要 なら、パスワードのかかった部屋は出さない。
     /// </summary>
     private List<JoinableEntry> CollectJoinable()
     {
-        List<JoinableEntry> entries = new List<JoinableEntry>();
-        AddLanEntries(entries);
+        List<JoinableEntry> all = new List<JoinableEntry>();
+        AddLanEntries(all);
 
         if (searchPublic)
         {
-            AddPublicEntries(entries);
+            AddPublicEntries(all);
         }
 
         if (searchFriends)
         {
-            AddFriendEntries(entries);
+            AddFriendEntries(all);
         }
 
-        return entries;
+        string search = RoomCodeSearch();
+        List<JoinableEntry> startsWith = new List<JoinableEntry>();
+        List<JoinableEntry> contains = new List<JoinableEntry>();
+        bool exactFound = false;
+        foreach (JoinableEntry entry in all)
+        {
+            if (searchNoPassword && entry.Locked)
+            {
+                continue;
+            }
+
+            if (search.Length == 0)
+            {
+                startsWith.Add(entry);
+                continue;
+            }
+
+            string code = (entry.Code ?? string.Empty).ToUpperInvariant();
+            exactFound |= code == search;
+            if (code.StartsWith(search, System.StringComparison.Ordinal))
+            {
+                startsWith.Add(entry);
+            }
+            else if (code.Length > 0 && code.Contains(search))
+            {
+                contains.Add(entry);
+            }
+        }
+
+        startsWith.AddRange(contains);
+
+        if (search.Length == RoomCodeLength && !exactFound)
+        {
+            startsWith.Add(PrivateCodeEntry(search));
+        }
+
+        return startsWith;
+    }
+
+    /// <summary>
+    /// 一覧に無い部屋番号（プライベートの部屋など）に「入ってみる」行。番号を全部入れたときだけ出す。
+    /// パスワードがかかっているかは入ってみるまで分からないので、まず「参加しますか？」を出し、断られたらパスワードを聞く。
+    /// </summary>
+    private JoinableEntry PrivateCodeEntry(string code)
+    {
+        string roomName = $"部屋番号 #{code}";
+        return new JoinableEntry
+        {
+            Key = $"code:{code}",
+            Name = "プライベートの部屋（この番号で入ってみる）",
+            Code = code,
+            Players = "?",
+            Full = false,
+            Locked = false,
+            Join = () => OpenJoinDialog(roomName, false, password =>
+            {
+                InternetConnection internet = Internet();
+                if (internet != null)
+                {
+                    internet.JoinGame(code, password);
+                }
+            }, true),
+        };
     }
 
     /// <summary>LAN の部屋（チェックに関係なく、いつも一番上）。押すと、そのままつなぎに行く（確認の窓は出さない）。</summary>
@@ -1140,7 +1259,9 @@ public class TitleScreen : MonoBehaviour
             entries.Add(new JoinableEntry
             {
                 Key = $"pub:{info.Id}",
-                Name = roomName + (hasPassword ? "（パスワードあり）" : string.Empty),
+                Name = roomName,
+                Code = InternetConnection.RoomCodeOf(info),
+                Locked = hasPassword,
                 Players = $"{PlayersIn(info)}/{info.MaxPlayers}",
                 Full = info.AvailableSlots <= 0 || info.IsLocked,
                 // 押したら「参加しますか？」／「パスワードを入力してください」の窓を出す（2026/10/19）
@@ -1170,7 +1291,9 @@ public class TitleScreen : MonoBehaviour
             entries.Add(new JoinableEntry
             {
                 Key = $"friend:{room.JoinCode}",
-                Name = $"【フレンド】{room.FriendName} の部屋（{room.RoomName}）" + (hasPassword ? "（パスワードあり）" : string.Empty),
+                Name = $"【フレンド】{room.FriendName} の部屋（{room.RoomName}）",
+                Code = code,
+                Locked = hasPassword,
                 Players = room.Players,
                 Full = false,
                 Join = () => OpenJoinDialog(roomName, hasPassword, password =>
@@ -1204,6 +1327,15 @@ public class TitleScreen : MonoBehaviour
     /// <summary>窓から入ろうとして、結果を待っているか（失敗したら窓に理由を出す）。</summary>
     private bool joinDialogWaiting;
 
+    /// <summary>
+    /// パスワードがかかっているか、入ってみるまで分からない部屋か（番号で入るプライベートの部屋。2026/10/22）。
+    /// まずパスワードなしで入ってみて、パスワードで断られたら、窓をパスワードを聞く形に変える。
+    /// </summary>
+    private bool pendingPasswordUnknown;
+
+    /// <summary>窓に出している部屋の名前（パスワードを聞く形に変えるときに使う）。</summary>
+    private string pendingRoomName = string.Empty;
+
     private bool IsJoinDialogOpen()
     {
         GameObject dialog = PartObject(TitlePartRole.JoinDialog);
@@ -1214,8 +1346,10 @@ public class TitleScreen : MonoBehaviour
     /// **参加の確認の窓を出す。** 公開・フレンドのサーバーを一覧で押したとき。
     /// ・パスワードなし … 「「○○」に参加しますか？」と「はい」「いいえ」
     /// ・パスワードあり … 「パスワードを入力してください」と入力欄、「参加する」「やめる」。違ったら「パスワードが間違えています」
+    /// **パスワードを聞くのは、パスワードがかかっている部屋だけ**（2026/10/22・大槻さん）。
+    /// passwordUnknown（番号で入るプライベートの部屋）は「参加しますか？」で始め、パスワードで断られたら聞く形に変える。
     /// </summary>
-    private void OpenJoinDialog(string roomName, bool needsPassword, System.Action<string> join)
+    private void OpenJoinDialog(string roomName, bool needsPassword, System.Action<string> join, bool passwordUnknown = false)
     {
         GameObject dialog = PartObject(TitlePartRole.JoinDialog);
         if (dialog == null)
@@ -1226,24 +1360,14 @@ public class TitleScreen : MonoBehaviour
         }
 
         pendingJoin = join;
-        pendingNeedsPassword = needsPassword;
+        pendingRoomName = roomName;
+        pendingPasswordUnknown = passwordUnknown;
         joinDialogWaiting = false;
 
-        SetText(TitlePartRole.JoinDialogTitle, needsPassword
-            ? $"「{roomName}」\nパスワードを入力してください"
-            : $"「{roomName}」に参加しますか？");
+        SetJoinDialogMode(needsPassword);
         SetText(TitlePartRole.JoinDialogMessage, string.Empty);
-        SetText(TitlePartRole.JoinDialogYesLabel, needsPassword ? "参加する" : "はい");
-        SetText(TitlePartRole.JoinDialogNoLabel, needsPassword ? "やめる" : "いいえ");
-
-        GameObject passwordRow = PartObject(TitlePartRole.JoinDialogPasswordRow);
-        if (passwordRow != null)
-        {
-            passwordRow.SetActive(needsPassword);
-        }
 
         dialog.SetActive(true);
-        RefreshInputs(dialog);
 
         // コントローラーでは「はい／参加する」を選んでおく
         foreach (TitleMenuButton look in dialog.GetComponentsInChildren<TitleMenuButton>(true))
@@ -1253,6 +1377,30 @@ public class TitleScreen : MonoBehaviour
                 SelectForGamepad(look.gameObject);
                 break;
             }
+        }
+    }
+
+    /// <summary>窓の見出し・ボタンの文字・パスワードの欄を、パスワードを聞く形（true）か「参加しますか？」の形（false）にする。</summary>
+    private void SetJoinDialogMode(bool needsPassword)
+    {
+        pendingNeedsPassword = needsPassword;
+
+        SetText(TitlePartRole.JoinDialogTitle, needsPassword
+            ? $"「{pendingRoomName}」\nパスワードを入力してください"
+            : $"「{pendingRoomName}」に参加しますか？");
+        SetText(TitlePartRole.JoinDialogYesLabel, needsPassword ? "参加する" : "はい");
+        SetText(TitlePartRole.JoinDialogNoLabel, needsPassword ? "やめる" : "いいえ");
+
+        GameObject passwordRow = PartObject(TitlePartRole.JoinDialogPasswordRow);
+        if (passwordRow != null)
+        {
+            passwordRow.SetActive(needsPassword);
+        }
+
+        GameObject dialog = PartObject(TitlePartRole.JoinDialog);
+        if (dialog != null)
+        {
+            RefreshInputs(dialog);
         }
     }
 
@@ -1399,11 +1547,16 @@ public class TitleScreen : MonoBehaviour
     private string JoinableListMessageOf(int entryCount)
     {
         StringBuilder message = new StringBuilder();
-        if (entryCount == 0)
+        string search = RoomCodeSearch();
+        if (entryCount == 0 && search.Length > 0)
+        {
+            message.Append($"番号「{search}」に近い部屋は見つかりません。\nプライベートの部屋は、番号を{RoomCodeLength}文字すべて入れると出ます");
+        }
+        else if (entryCount == 0)
         {
             message.Append(searchPublic || searchFriends
-                ? "参加できるサーバーが見つかりません。\n1つ前の画面の「クイックマッチ」か「部屋を作る」で遊べます"
-                : "サーバー検索設定のチェックが外れています（LAN の部屋だけを探しています）");
+                ? "参加できる部屋が見つかりません。\n1つ前の画面の「クイックマッチ」か「部屋を作る」で遊べます"
+                : "パブリック・フレンドのチェックが外れています（LAN の部屋だけを探しています）");
         }
 
         if (searchPublic && !string.IsNullOrEmpty(publicProblem))
@@ -1440,13 +1593,28 @@ public class TitleScreen : MonoBehaviour
             }
             else if (part.Role == TitlePartRole.ServerCardPlayers)
             {
-                text.text = entry.Players;
+                // 行そのものが押すボタンの形（2026/10/22）では、満員は人数の横に出す
+                text.text = entry.Full ? $"{entry.Players} 満員" : entry.Players;
+            }
+            else if (part.Role == TitlePartRole.ServerCardCode)
+            {
+                text.text = string.IsNullOrEmpty(entry.Code) ? string.Empty : $"#{entry.Code}";
+            }
+        }
+
+        // 鍵の印（パスワードがかかっている部屋だけ出す）
+        foreach (TitlePart part in card.GetComponentsInChildren<TitlePart>(true))
+        {
+            if (part.Role == TitlePartRole.ServerCardLock)
+            {
+                part.gameObject.SetActive(entry.Locked);
             }
         }
 
         foreach (TitleMenuButton look in card.GetComponentsInChildren<TitleMenuButton>(true))
         {
-            if (look.Label != null)
+            // 「参加する」ボタンの文字だけ書き換える（行そのものがボタンのときは、文字が部屋の名前なので触らない）
+            if (look.Label != null && look.Label.GetComponent<TitlePart>() == null)
             {
                 look.Label.text = entry.Full ? "満員" : "参加する";
             }
@@ -1720,9 +1888,18 @@ public class TitleScreen : MonoBehaviour
         else if (internet != null && internet.State == InternetConnection.Phase.Failed && joinDialogWaiting)
         {
             joinDialogWaiting = false;
-            SetText(TitlePartRole.JoinDialogMessage, internet.LastJoinFailedByPassword
-                ? "パスワードが間違えています"
-                : internet.Message);
+            if (internet.LastJoinFailedByPassword && pendingPasswordUnknown && !pendingNeedsPassword)
+            {
+                // 番号で入ったらパスワードで断られた：パスワードを聞く形に変える（2026/10/22）
+                SetJoinDialogMode(true);
+                SetText(TitlePartRole.JoinDialogMessage, "この部屋にはパスワードがかかっています");
+            }
+            else
+            {
+                SetText(TitlePartRole.JoinDialogMessage, internet.LastJoinFailedByPassword
+                    ? "パスワードが間違えています"
+                    : internet.Message);
+            }
             internet.ClearFailure();
         }
         else if (internet != null && internet.State == InternetConnection.Phase.Failed)

@@ -73,6 +73,10 @@ public enum TitleButtonAction
 
     // マルチプレイ（クイックマッチ／部屋を探す／部屋を作る）の「部屋を探す」（2026/10/22）
     OpenFindRoom = 56,
+
+    // 部屋を探す（2026/10/22）：「募集中の部屋」の ⟳（すぐ取り直す）と、■パスワード不要
+    RefreshRoomList = 57,
+    ToggleSearchNoPassword = 58,
 }
 
 /// <summary>

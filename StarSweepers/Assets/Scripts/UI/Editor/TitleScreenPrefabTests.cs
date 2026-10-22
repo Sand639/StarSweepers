@@ -57,6 +57,11 @@ public class TitleScreenPrefabTests
     [TestCase(TitlePartRole.JoinableCardTemplate)]
     [TestCase(TitlePartRole.SearchPublicCheckText)]
     [TestCase(TitlePartRole.SearchFriendsCheckText)]
+    [TestCase(TitlePartRole.SearchNoPasswordCheckText)]
+    [TestCase(TitlePartRole.ServerCardName)]
+    [TestCase(TitlePartRole.ServerCardCode)]
+    [TestCase(TitlePartRole.ServerCardLock)]
+    [TestCase(TitlePartRole.ServerCardPlayers)]
     [TestCase(TitlePartRole.PublicCheckText)]
     [TestCase(TitlePartRole.PrivateCheckText)]
     [TestCase(TitlePartRole.LanCheckText)]
@@ -106,7 +111,8 @@ public class TitleScreenPrefabTests
             // マルチプレイ
             TitleButtonAction.QuickPlay, TitleButtonAction.OpenFindRoom, TitleButtonAction.OpenCreate,
             // 部屋を探す
-            TitleButtonAction.JoinPrivate, TitleButtonAction.ToggleSearchPublic, TitleButtonAction.ToggleSearchFriends,
+            TitleButtonAction.RefreshRoomList, TitleButtonAction.ToggleSearchPublic, TitleButtonAction.ToggleSearchFriends,
+            TitleButtonAction.ToggleSearchNoPassword, TitleButtonAction.JoinListedServer,
             // 部屋を作る
             TitleButtonAction.CreateServer, TitleButtonAction.MaxPlayersDown, TitleButtonAction.MaxPlayersUp,
             TitleButtonAction.SetPublic, TitleButtonAction.SetPrivate, TitleButtonAction.SetLan,
@@ -140,7 +146,10 @@ public class TitleScreenPrefabTests
         Assert.That(kinds.Contains(TitleInputKind.LanAddress), Is.False, "IP アドレスを打つ欄が残っている");
     }
 
-    /// <summary>参加可能なサーバーの一覧と、参加コードの欄は、「部屋を探す」の画面（PageMulti）の中にある。</summary>
+    /// <summary>
+    /// 部屋の一覧と、部屋番号の検索欄（PrivateCode）は、「部屋を探す」の画面（PageMulti）の中にある。
+    /// パスワードは部屋を押したときの窓で聞くので、この画面にパスワードの欄は無い（2026/10/22）。
+    /// </summary>
     [Test]
     public void TitlePrefab_JoinableListIsOnTheFindRoomPage()
     {
@@ -150,7 +159,20 @@ public class TitleScreenPrefabTests
         Assert.That(page, Is.Not.Null);
         Assert.That(list, Is.Not.Null);
         Assert.That(list.IsChildOf(page), Is.True, "参加可能なサーバーの一覧が、部屋を探す画面の外にある");
-        Assert.That(InputKindsUnder(page).Contains(TitleInputKind.PrivateCode), Is.True, "部屋を探す画面に参加コードの欄が無い");
+        Assert.That(InputKindsUnder(page).Contains(TitleInputKind.PrivateCode), Is.True, "部屋を探す画面に部屋番号の検索欄が無い");
+        Assert.That(InputKindsUnder(page).Contains(TitleInputKind.JoinPassword), Is.False, "部屋を探す画面にパスワードの欄が残っている");
+    }
+
+    /// <summary>一覧の行の見本は、行そのものが押せるボタンで、鍵・部屋番号・人数を中に持つ（写真の形。2026/10/22）。</summary>
+    [Test]
+    public void TitlePrefab_RoomCardIsAButtonWithLockAndCode()
+    {
+        Transform card = FindPart(TitlePartRole.JoinableCardTemplate);
+        Assert.That(card, Is.Not.Null);
+        Assert.That(card.GetComponent<TitleMenuButton>(), Is.Not.Null, "行そのものがボタンになっていない");
+        Assert.That(FindPart(TitlePartRole.ServerCardLock).IsChildOf(card), Is.True);
+        Assert.That(FindPart(TitlePartRole.ServerCardCode).IsChildOf(card), Is.True);
+        Assert.That(FindPart(TitlePartRole.ServerCardPlayers).IsChildOf(card), Is.True);
     }
 
     /// <summary>マルチプレイの画面に、クイックマッチ／部屋を探す／部屋を作る がこの順で並んでいる（2026/10/22）。</summary>

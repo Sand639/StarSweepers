@@ -99,6 +99,11 @@ public enum TitlePartRole
 
     // マルチプレイの最初の画面（クイックマッチ／部屋を探す／部屋を作る。2026/10/22）
     PageMultiMenu = 89,
+
+    // 部屋を探す（2026/10/22。大槻さんの写真の形）：一覧の行の鍵の印・部屋番号、■パスワード不要 のチェック
+    ServerCardLock = 90,
+    ServerCardCode = 91,
+    SearchNoPasswordCheckText = 92,
 }
 
 /// <summary>
