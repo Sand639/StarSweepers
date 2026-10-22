@@ -70,6 +70,13 @@ public enum TitleButtonAction
     // 参加の確認の窓（公開・フレンドのサーバーを押したとき。2026/10/19）
     ConfirmJoinDialog = 54,
     CloseJoinDialog = 55,
+
+    // マルチプレイ（クイックマッチ／部屋を探す／部屋を作る）の「部屋を探す」（2026/10/22）
+    OpenFindRoom = 56,
+
+    // 部屋を探す（2026/10/22）：「募集中の部屋」の ⟳（すぐ取り直す）と、■パスワード不要
+    RefreshRoomList = 57,
+    ToggleSearchNoPassword = 58,
 }
 
 /// <summary>
@@ -103,6 +110,13 @@ public class TitleMenuButton : MonoBehaviour,
 
     [Tooltip("ボタンの文字")]
     [SerializeField] private Text label;
+
+    [Tooltip("マウスが重なったとき・コントローラーで選ばれたときの大きさ（1 で変わらない。1.08 なら 8% 大きくなる）。" +
+             "真ん中から大きくするには、RectTransform の Pivot を (0.5, 0.5) にしておく")]
+    [SerializeField] private float highlightScale = 1f;
+
+    /// <summary>大きさを変える速さ（大きいほどすぐ変わる）。</summary>
+    private const float ScaleSpeed = 18f;
 
     /// <summary>下地に付いているふち（無ければ null）。重なったときに色を濃くする。</summary>
     private Outline outline;
@@ -178,6 +192,37 @@ public class TitleMenuButton : MonoBehaviour,
         pointerOver = false;
         selectedByNavigation = false;
         Refresh();
+
+        if (Application.isPlaying)
+        {
+            transform.localScale = Vector3.one;
+        }
+    }
+
+    /// <summary>重なっている・選ばれている間は <see cref="highlightScale"/> へ、そうでなければ元の大きさへ、少しずつ近づける（再生中だけ）。</summary>
+    private void Update()
+    {
+        // 大きくしないボタン（1）は、元の大きさのままなら何もしない
+        if (!Application.isPlaying || (Mathf.Approximately(highlightScale, 1f) && transform.localScale == Vector3.one))
+        {
+            return;
+        }
+
+        float target = IsHighlighted ? highlightScale : 1f;
+        float now = transform.localScale.x;
+        if (Mathf.Approximately(now, target))
+        {
+            return;
+        }
+
+        // Time.timeScale に関係なく動くように unscaledDeltaTime を使う。近くまで来たらぴったり合わせる
+        float next = Mathf.Lerp(now, target, 1f - Mathf.Exp(-ScaleSpeed * Time.unscaledDeltaTime));
+        if (Mathf.Abs(next - target) < 0.002f)
+        {
+            next = target;
+        }
+
+        transform.localScale = new Vector3(next, next, 1f);
     }
 
     /// <summary>「選ばれている」見た目にする（タブ・切り替えボタンで、いまの選択を示す）。</summary>
@@ -259,6 +304,12 @@ public class TitleMenuButton : MonoBehaviour,
         label = labelText;
         outline = background.GetComponent<Outline>();
         Refresh();
+    }
+
+    /// <summary>プレハブを作るツールが、重なったときの大きさを決める。</summary>
+    public void EditorSetHighlightScale(float value)
+    {
+        highlightScale = value;
     }
 #endif
 }

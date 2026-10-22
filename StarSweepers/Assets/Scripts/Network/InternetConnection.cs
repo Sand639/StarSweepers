@@ -290,6 +290,11 @@ public class InternetConnection : MonoBehaviour
             Message = "部屋ができました。合言葉を相手に伝えてください。";
 
             Debug.Log($"[NET] 部屋を作りました。合言葉：{JoinCode}");
+
+            if (!isPrivate)
+            {
+                await PublishRoomCodeAsync();
+            }
         }
         catch (Exception error)
         {
@@ -426,6 +431,36 @@ public class InternetConnection : MonoBehaviour
                 return null;
             }
         }
+    }
+
+    /// <summary>部屋の情報に入れておく、合言葉（部屋番号）の名前。公開の部屋の一覧には合言葉が入ってこないので、ホストがここに書く。</summary>
+    private const string RoomCodePropertyKey = "code";
+
+    /// <summary>
+    /// **公開の部屋の一覧に、自分の部屋の合言葉（部屋番号）を出す。**（2026/10/22。タイトルの「部屋を探す」で番号を出し、番号で絞り込むため）
+    /// 書けなくても部屋はそのまま使える（一覧に番号が出ないだけ）。
+    /// </summary>
+    private async Task PublishRoomCodeAsync()
+    {
+        try
+        {
+            IHostSession host = session.AsHost();
+            host.SetProperty(RoomCodePropertyKey, new SessionProperty(session.Code, VisibilityPropertyOptions.Public));
+            await host.SavePropertiesAsync();
+        }
+        catch (Exception error)
+        {
+            Debug.LogWarning($"[NET] 部屋番号を一覧に出せませんでした（部屋はそのまま使えます）：{error.Message}");
+        }
+    }
+
+    /// <summary>一覧の部屋の合言葉（部屋番号）。ホストが <see cref="PublishRoomCodeAsync"/> で書いていなければ空。</summary>
+    public static string RoomCodeOf(ISessionInfo info)
+    {
+        return info != null && info.Properties != null &&
+               info.Properties.TryGetValue(RoomCodePropertyKey, out SessionProperty property) && property != null
+            ? property.Value ?? string.Empty
+            : string.Empty;
     }
 
     /// <summary>サーバーの一覧を前回頼んだ時刻（Time.unscaledTime の秒）。続けて頼みすぎないために覚えておく。</summary>
