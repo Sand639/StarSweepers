@@ -631,7 +631,7 @@ public class SpaceJunkLobbyScreen : MonoBehaviour
         signature.Append(session.TeamCount).Append('|');
         foreach (SpaceJunkPlayerSlot slot in session.Slots)
         {
-            signature.Append(slot.ClientId).Append(':').Append(slot.Team).Append(':').Append(slot.Name.ToString()).Append(';');
+            signature.Append(slot.ClientId).Append(':').Append(slot.Team).Append(':').Append(session.NameOf(slot.ClientId)).Append(';');
         }
 
         if (signature.ToString() == playerRowsSignature)
