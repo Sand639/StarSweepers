@@ -33,6 +33,29 @@ public class PlayerNameNetworkTests
             Assert.That(HasName(hostPlayer), Is.True);
             Assert.That(SetName(hostPlayer, 1, 0, 2), Is.True);
             Assert.That(hostPlayer.DisplayName, Is.EqualTo("深淵の勇者"));
+
+            GameObject terminalObject = new GameObject("NameTerminalTest");
+            try
+            {
+                NameChangeTerminal terminal = terminalObject.AddComponent<NameChangeTerminal>();
+                MethodInfo randomize = typeof(NameChangeTerminal).GetMethod("TryRandomName");
+                Assert.That(randomize, Is.Not.Null);
+                terminalObject.transform.position = hostPlayer.transform.position + Vector3.right * 100f;
+                Assert.That(randomize.Invoke(terminal, new object[] { hostPlayer }), Is.EqualTo(false));
+                terminalObject.transform.position = hostPlayer.transform.position;
+                bool changed = false;
+                for (int i = 0; i < 16; i++)
+                {
+                    Assert.That(randomize.Invoke(terminal, new object[] { hostPlayer }), Is.EqualTo(true));
+                    changed |= hostPlayer.DisplayName != "深淵の勇者";
+                }
+                Assert.That(changed, Is.True, "端末で名前を抽選できていない");
+                SetName(hostPlayer, 1, 0, 2);
+            }
+            finally
+            {
+                Object.Destroy(terminalObject);
+            }
             GameObject sessionObject = Object.Instantiate(sessionTemplate);
             sessionObject.GetComponent<NetworkObject>().Spawn();
             SpaceJunkSession hostSession = sessionObject.GetComponent<SpaceJunkSession>();
