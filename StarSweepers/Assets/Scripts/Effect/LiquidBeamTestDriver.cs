@@ -9,6 +9,7 @@ using UnityEngine.InputSystem;
 /// | F（長押し） | 溜める。**離すと撃つ。長く押すほど遠くまで届く** |
 /// | F（流れが出ている間） | 止める（出しっぱなしのとき用） |
 /// | C | **先端に物資がついた想定。**先端から根元へ、次の色に染まっていく |
+/// | G | **先端に箱をくっつけて、液体のリムライトで縁取る**（<see cref="LiquidWrap"/>）。もう一度押すと、はなす |
 /// | R | 最初の色に戻す |
 /// | H | 出しっぱなし（Stop を呼ぶまで消えない）の切り替え |
 /// | 2 | キャラクターを円を描いて動かす／止める（しぶきが置いていかれるかの確認） |
@@ -43,6 +44,9 @@ public class LiquidBeamTestDriver : MonoBehaviour
     [Tooltip("2 キーで動かすときの回る速さ（1秒あたりの角度。ラジアン）")]
     [SerializeField] private float moveSpeed = 0.6f;
 
+    [Tooltip("G でくっつける箱の大きさ（メートル）")]
+    [SerializeField] private Vector3 boxSize = new Vector3(0.9f, 0.6f, 0.6f);
+
     /// <summary>次に C を押したときに使う色の番号（cargoColors の何番目か）。</summary>
     private int colorIndex;
 
@@ -52,12 +56,23 @@ public class LiquidBeamTestDriver : MonoBehaviour
     /// <summary>円の上のいまの角度（ラジアン）。止めても覚えておき、次はその続きから動く。</summary>
     private float moveAngle;
 
+    private LiquidWrap wrap;
+    private GameObject box;
+
     /// <summary>インスペクターの「はじめから出しっぱなし」を、ビームに伝える。</summary>
     private void Start()
     {
         if (beam != null)
         {
             beam.HoldUntilStopped = holdUntilStopped;
+
+            // 縁取りは液体のビームのプレハブの子に入っている。無ければ初期値で作る
+            wrap = beam.GetComponentInChildren<LiquidWrap>(true);
+
+            if (wrap == null)
+            {
+                wrap = LiquidWrap.Create(beam.transform, beam.LineMaterial);
+            }
         }
     }
 
@@ -107,6 +122,30 @@ public class LiquidBeamTestDriver : MonoBehaviour
             {
                 beam.HoldUntilStopped = !beam.HoldUntilStopped;
             }
+
+            if (keyboard.gKey.wasPressedThisFrame)
+            {
+                if (box != null)
+                {
+                    ReleaseBox();
+                }
+                else if (beam.IsHolding)
+                {
+                    AttachBox();
+                }
+            }
+
+            // 流れが消えたら、箱もはなす
+            if (box != null && !beam.IsFiring)
+            {
+                ReleaseBox();
+            }
+        }
+
+        if (box != null)
+        {
+            // くるくる回して、ふちの光が向きに合わせて変わるかを見る
+            box.transform.Rotate(new Vector3(20f, 45f, 10f) * Time.deltaTime, Space.Self);
         }
 
         if (keyboard.digit2Key.wasPressedThisFrame)
@@ -124,20 +163,49 @@ public class LiquidBeamTestDriver : MonoBehaviour
         }
     }
 
+    /// <summary>先端に箱をくっつけて（物資をつかんだ想定）、色を変え、縁取る。</summary>
+    private void AttachBox()
+    {
+        Color color = cargoColors.Length > 0 ? cargoColors[colorIndex] : Color.white;
+        colorIndex = cargoColors.Length > 0 ? (colorIndex + 1) % cargoColors.Length : 0;
+
+        box = GameObject.CreatePrimitive(PrimitiveType.Cube);
+        box.name = "WrapTestBox";
+        Destroy(box.GetComponent<Collider>());
+
+        // 箱のふちが先端に触れる位置に置き、流れについていくよう子にする
+        box.transform.SetParent(beam.transform, true);
+        box.transform.position = beam.HeadPosition + beam.transform.forward * boxSize.z * 0.5f;
+        box.transform.rotation = beam.transform.rotation * Quaternion.Euler(0f, 25f, 15f);
+        box.transform.localScale = boxSize;
+
+        beam.ChangeColorFromTip(color);
+        wrap.Play(box.transform, beam.HeadPosition, color);
+    }
+
+    private void ReleaseBox()
+    {
+        wrap.Release();
+        Destroy(box);
+        box = null;
+        beam.ResetColor();
+    }
+
     /// <summary>画面の左上に、操作の説明と、溜め中は溜め具合（% と届く距離）を出す。</summary>
     private void OnGUI()
     {
         string hold = beam != null && beam.HoldUntilStopped ? "オン（F でとめる）" : "オフ（少しで消える）";
 
-        GUI.Label(new Rect(16, 16, 700, 120),
+        GUI.Label(new Rect(16, 16, 700, 140),
             "F（長押し）：溜める → 離すと撃つ（長く押すほど遠くへ）\n" +
             "C：先端に物資がついた想定（先端から色が変わる）　R：最初の色に戻す\n" +
+            "G：先端に箱をくっつけて、液体で縁取る／はなす（流れが届いているときだけ）\n" +
             $"H：出しっぱなし … {hold}\n" +
             "2：キャラクターを動かす／止める");
 
         if (beam != null && beam.IsCharging)
         {
-            GUI.Label(new Rect(16, 110, 600, 24),
+            GUI.Label(new Rect(16, 130, 600, 24),
                 $"溜め {beam.Charge01 * 100f:0}%　→　{beam.CurrentLength:0.0} m");
         }
     }
