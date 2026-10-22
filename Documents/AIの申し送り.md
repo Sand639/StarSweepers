@@ -243,3 +243,15 @@
 | 2026/10/20 | Claude Code | 「次のAIへの伝言」に、途中で止めたリファクタリングの続き（`リファクタリング作業の続き.md`）への案内を追加 |
 | 2026/10/21 | Claude Code | バッチモードでシーンをまとめて直すやり方と、手で書かれたシーンを保存すると差分が大きくなる癖を追加 |
 | 2026/10/21 | Claude Code | 「うまくいったやり方」に、Unity を開かずにコンパイルを確かめる手早い方法と、ボットを入力で動かすやり方を追加 |
+
+## 2026/10/22 プレイヤーの名前を3段の番号にした（ソウホイチョン／Codex）
+
+- 名前は `FishingNetPlayer` の3つの `NetworkVariable<int>` が正本。ホストが参加時に選ぶ。以後はPlayerの `SetName(prefix, connector, suffix)` を使う。`SpaceJunkSession.NameOf` からロビー・タグ・リアクションへ渡る。
+- 従来の `GameSettings.PlayerName` を送るRPCと2秒ごとの送り直し、`SpaceJunkPlayerSlot.Name` は削除した。これらを戻すと新しい名前を古い設定で上書きしてしまう。タイトルの入力UIを改名画面へつなぐ作業はまだ。
+- `NameDataManager` はNetworkManagerから使い、未指定のCSVは `Resources/PlayerNames.csv`。CSVは各列の空セルを飛ばして別々の候補一覧にする。3つの番号は各一覧の0始まり。並び順を変えると番号の意味も変わる。
+- 専用の `Assets/Scenes/Test/PlayerNameTest.unity` を追加。再生するとホストになる。既存の `TitleScene.unity` は作業開始前から変更済みだったので、編集もコミットもしていない。
+- このPCでUnityをコマンドから動かす場合、`Unity.exe` では早期終了したが、同じ6000.3.14f1の `Unity.com` ではコマンド待機とテスト実行ができた。バージョンは変えない。
+- 実行結果：EditModeの全108項目が成功。専用シーンはTest Runnerの場面復元から切り離し、`PlayerNameTestSetup.VerifyScene` の独立再生で自動ホスト・名前・NameOfを確認した（`[NAME] SCENE VERIFIED`、終了コード0）。
+- `EditorSceneManager.LoadSceneInPlayMode` の直後に1回だけ `yield return null` しても、EditModeのテストではまだ場面が読み込まれていないことがあった。ログでは物件検査より後に「Loaded scene」が出ていた。必要な物件の出現を期限付きで待つこと。PlayModeに入る前に別のシーンを開くテストは、後続テストへ床や自動ホストを持ち越さないように注意。
+
+| 2026/10/22 | ソウホイチョン／Codex | 3段の名前の保存先・既存UIとの接続・Unityコマンド実行と場景検証の注意を追記 |

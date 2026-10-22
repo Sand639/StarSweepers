@@ -57,6 +57,17 @@ public class FishingNetPlayer : NetworkBehaviour
     /// </summary>
     private readonly NetworkVariable<int> localSeat = new NetworkVariable<int>(0);
 
+    // 名前の実体は文字列ではなく、CSVの前・中・後の番号。書き込みはホストだけ。
+    private readonly NetworkVariable<int> namePrefixIndex = new NetworkVariable<int>(-1);
+    private readonly NetworkVariable<int> nameConnectorIndex = new NetworkVariable<int>(-1);
+    private readonly NetworkVariable<int> nameSuffixIndex = new NetworkVariable<int>(-1);
+
+    public int NamePrefixIndex => namePrefixIndex.Value;
+    public int NameConnectorIndex => nameConnectorIndex.Value;
+    public int NameSuffixIndex => nameSuffixIndex.Value;
+
+    private NameDataManager nameDatabase;
+
     // ---- 本人が送るもの（他の人が見るため） ----
 
     /// <summary>フックの先端の位置。**本人が送る。**</summary>
@@ -157,8 +168,67 @@ public class FishingNetPlayer : NetworkBehaviour
     public int TeamIndex => FishingTeams.TeamOf(playerIndex.Value);
 
     /// <summary>画面に出す名前。</summary>
-    public string DisplayName =>
-        playerIndex.Value < 0 ? "参加中…" : $"プレイヤー{playerIndex.Value + 1}";
+    public string DisplayName
+    {
+        get
+        {
+            string generated = GetNameDatabase()?.GetName(NamePrefixIndex, NameConnectorIndex, NameSuffixIndex);
+            return !string.IsNullOrEmpty(generated)
+                ? generated
+                : playerIndex.Value < 0 ? "参加中…" : $"プレイヤー{playerIndex.Value + 1}";
+        }
+    }
+
+    /// <summary>NetworkManagerにある一覧を使う。古い検証シーンに無ければ同じ部品を補う。</summary>
+    private NameDataManager GetNameDatabase()
+    {
+        if (nameDatabase == null && NetworkManager != null)
+        {
+            nameDatabase = NetworkManager.GetComponent<NameDataManager>();
+            if (nameDatabase == null)
+            {
+                nameDatabase = NetworkManager.gameObject.AddComponent<NameDataManager>();
+            }
+        }
+        return nameDatabase;
+    }
+
+    /// <summary>
+    /// このプレイヤーの名前を番号で指定する。ホスト、または本人のPCから呼ぶ。
+    /// 参加者の戻り値は「要求を送れたか」。ホストでも番号を検査してから全員に配る。
+    /// </summary>
+    public bool SetName(int prefix, int connector, int suffix)
+    {
+        if (!IsSpawned || (!IsServer && !IsOwner))
+        {
+            return false;
+        }
+
+        NameDataManager database = GetNameDatabase();
+        if (database == null || !database.IsValidName(prefix, connector, suffix))
+        {
+            return false;
+        }
+
+        if (IsServer)
+        {
+            namePrefixIndex.Value = prefix;
+            nameConnectorIndex.Value = connector;
+            nameSuffixIndex.Value = suffix;
+        }
+        else
+        {
+            SetNameServerRpc(prefix, connector, suffix);
+        }
+        return true;
+    }
+
+    // 既定の所有者制限により、本人以外からこのRPCを送ることはできない。
+    [ServerRpc]
+    private void SetNameServerRpc(int prefix, int connector, int suffix)
+    {
+        SetName(prefix, connector, suffix);
+    }
 
     private HookController hookController;
     private PlayerInputSource input;
@@ -184,6 +254,16 @@ public class FishingNetPlayer : NetworkBehaviour
         if (IsServer)
         {
             playerIndex.Value = FirstFreeIndex();
+
+            NameDataManager database = GetNameDatabase();
+            if (database != null && database.RandomName(out int prefix, out int connector, out int suffix))
+            {
+                SetName(prefix, connector, suffix);
+            }
+            else
+            {
+                Debug.LogWarning("[NAME] 名前の前・中・後の候補がそろっていないので、仮の名前を使います。", this);
+            }
         }
 
         All.Add(this);
