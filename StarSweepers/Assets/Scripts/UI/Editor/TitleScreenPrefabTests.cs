@@ -163,6 +163,18 @@ public class TitleScreenPrefabTests
         Assert.That(InputKindsUnder(page).Contains(TitleInputKind.JoinPassword), Is.False, "部屋を探す画面にパスワードの欄が残っている");
     }
 
+    /// <summary>「部屋を探す」の右下の操作の案内（A 確認　B 戻る）は消した（2026/10/22・大槻さん）。</summary>
+    [Test]
+    public void TitlePrefab_FindRoomPageHasNoButtonHint()
+    {
+        Transform page = FindPart(TitlePartRole.PageMulti);
+        Assert.That(page, Is.Not.Null);
+        foreach (UnityEngine.UI.Text text in page.GetComponentsInChildren<UnityEngine.UI.Text>(true))
+        {
+            Assert.That(text.text.Contains("確認"), Is.False, $"操作の案内「{text.text}」が残っている");
+        }
+    }
+
     /// <summary>一覧の行の見本は、行そのものが押せるボタンで、鍵・部屋番号・人数を中に持つ（写真の形。2026/10/22）。</summary>
     [Test]
     public void TitlePrefab_RoomCardIsAButtonWithLockAndCode()

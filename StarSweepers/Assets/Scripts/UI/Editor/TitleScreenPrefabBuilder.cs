@@ -77,6 +77,9 @@ public static class TitleScreenPrefabBuilder
     /// <summary>水色。「部屋を作る」の参加コードの注意書きの色（2026/10/22・大槻さん）。</summary>
     private static readonly Color SkyBlueColor = new Color(0.45f, 0.85f, 1f, 1f);
 
+    /// <summary>「部屋を作る」の参加コードの枠の色（水色。上の文字は白。2026/10/22・大槻さん。前は紫だった）。白い文字が読めるよう少し濃いめ。</summary>
+    private static readonly Color CodeBoxColor = new Color(0.22f, 0.66f, 0.92f, 0.95f);
+
     /// <summary>「部屋を探す」の枠の色（大槻さんの写真の青緑）。</summary>
     private static readonly Color FindFrameColor = new Color(0f, 0.6f, 0.72f, 1f);
 
@@ -138,9 +141,10 @@ public static class TitleScreenPrefabBuilder
     ///        「部屋を作る」の名前の欄を消して全体を大きくし、「プライベートサーバーを探す」を「部屋を探す」にまとめた（2026/10/22）
     /// ／ 11：「部屋を探す」を大槻さんの写真の形（真ん中の枠・番号で検索・鍵と部屋番号の出る行・■パスワード不要）に作り直し、
     ///        「部屋を作る」の参加コードの注意書きを水色にした（2026/10/22）
+    /// ／ 12：「部屋を作る」の参加コードの枠を水色・文字を白にし、「部屋を探す」の右下の操作の案内（A 確認　B 戻る）を消した（2026/10/22）
     /// **版 3 からは作り直さず、<see cref="Upgrade"/> で足りない部品だけを足す**（手で直した配置を消さない）。版を上げたら Upgrade に足す処理を書くこと
     /// </summary>
-    public const int PrefabVersion = 11;
+    public const int PrefabVersion = 12;
 
     /// <summary>
     /// **作り直さずに、足りない部品だけを足す。**
@@ -152,6 +156,7 @@ public static class TitleScreenPrefabBuilder
     /// 版 8 → 9：参加の確認の窓を足し、「1人で練習する」とマルチプレイの画面のパスワードの欄を消す（<see cref="AddJoinDialog"/>）。
     /// 版 9 → 10：メインの並び替え・マルチプレイの画面を分ける・部屋を作るの名前の欄を消す（<see cref="RestructureForRoomMenu"/>）。
     /// 版 10 → 11：「部屋を探す」を写真の形に作り直し、参加コードの注意書きを水色にする（<see cref="RebuildFindRoomPage"/>）。
+    /// 版 11 → 12：参加コードの枠を水色・文字を白にし、「部屋を探す」の右下の操作の案内を消す（<see cref="RecolorCodeBoxAndRemoveHint"/>）。
     /// </summary>
     private static void Upgrade(int fromVersion)
     {
@@ -212,6 +217,11 @@ public static class TitleScreenPrefabBuilder
             if (fromVersion < 11)
             {
                 RebuildFindRoomPage(root);
+            }
+
+            if (fromVersion < 12)
+            {
+                RecolorCodeBoxAndRemoveHint(root);
             }
 
             root.GetComponent<TitleScreen>().EditorSetPrefabVersion(PrefabVersion);
@@ -363,8 +373,7 @@ public static class TitleScreenPrefabBuilder
         x = AddInlineCheck(checks, x, "フレンド", 130f, TitleButtonAction.ToggleSearchFriends, TitlePartRole.SearchFriendsCheckText);
         AddInlineCheck(checks, x, "パスワード不要", 210f, TitleButtonAction.ToggleSearchNoPassword, TitlePartRole.SearchNoPasswordCheckText);
 
-        Text hint = NewText("Hint", panel, "A　確認　　B　戻る", FontSize, DimTextColor, TextAnchor.MiddleRight);
-        Place(hint.rectTransform, new Vector2(1f, 1f), new Vector2(-40f, -790f), new Vector2(360f, 60f), new Vector2(1f, 1f));
+        // 右下の操作の案内（A 確認　B 戻る）は、大槻さんの依頼で置かない（2026/10/22）
 
         Text note = NewText("Note", panel, "番号を6文字すべて入れると、プライベートの部屋にも入れます。鍵の付いた部屋は、押すとパスワードを聞かれます",
             FontSize - 6, NoteColor, TextAnchor.MiddleLeft);
@@ -517,6 +526,42 @@ public static class TitleScreenPrefabBuilder
         GameObject dialog = BuildJoinDialog(root.transform);
         dialog.SetActive(false);
         PutBehindBusyOverlay(root, dialog);
+    }
+
+    /// <summary>
+    /// 版 11 → 12（2026/10/22・大槻さん）：「部屋を作る」の参加コードの枠（紫）を水色に、その中の文字（見出しと説明）を白にする。
+    /// 「部屋を探す」の右下の操作の案内（A 確認　B 戻る。印が無いので名前「Hint」で探す）を消す。
+    /// </summary>
+    private static void RecolorCodeBoxAndRemoveHint(GameObject root)
+    {
+        TitlePart codeTitle = FindPart(root, TitlePartRole.CodeBoxTitle);
+        if (codeTitle != null && codeTitle.transform.parent.GetComponent<Image>() != null)
+        {
+            codeTitle.transform.parent.GetComponent<Image>().color = CodeBoxColor;
+        }
+
+        foreach (TitlePartRole role in new[] { TitlePartRole.CodeBoxTitle, TitlePartRole.CodeBoxBody })
+        {
+            TitlePart part = FindPart(root, role);
+            Text text = part != null ? part.GetComponent<Text>() : null;
+            if (text != null)
+            {
+                text.color = TextColor;
+            }
+        }
+
+        TitlePart findRoom = FindPart(root, TitlePartRole.PageMulti);
+        if (findRoom != null)
+        {
+            foreach (Text text in findRoom.GetComponentsInChildren<Text>(true))
+            {
+                if (text.name == "Hint")
+                {
+                    Object.DestroyImmediate(text.gameObject);
+                    break;
+                }
+            }
+        }
     }
 
     /// <summary>
@@ -1289,13 +1334,13 @@ public static class TitleScreenPrefabBuilder
         privateRow.Add(lanLabel.rectTransform);
 
         // 参加コードの枠
-        Image codeBox = NewImage("CodeBox", column.Rect, AccentColor);
+        Image codeBox = NewImage("CodeBox", column.Rect, CodeBoxColor);
         codeBox.rectTransform.sizeDelta = new Vector2(1100f, 120f);
         column.Add(codeBox.rectTransform);
         Text codeTitle = NewText("Title", codeBox.transform, "参加コード", FontSize + 4, TextColor, TextAnchor.UpperCenter);
         Place(codeTitle.rectTransform, new Vector2(0.5f, 1f), new Vector2(0f, -10f), new Vector2(1060f, 40f), new Vector2(0.5f, 1f));
         Mark(codeTitle, TitlePartRole.CodeBoxTitle);
-        Text codeBody = NewText("Body", codeBox.transform, "（再生すると、つなぎかたに合わせた説明が入る）", FontSize - 4, SkyBlueColor, TextAnchor.UpperCenter);
+        Text codeBody = NewText("Body", codeBox.transform, "（再生すると、つなぎかたに合わせた説明が入る）", FontSize - 4, TextColor, TextAnchor.UpperCenter);
         Place(codeBody.rectTransform, new Vector2(0.5f, 1f), new Vector2(0f, -52f), new Vector2(1060f, 64f), new Vector2(0.5f, 1f));
         Mark(codeBody, TitlePartRole.CodeBoxBody);
 
