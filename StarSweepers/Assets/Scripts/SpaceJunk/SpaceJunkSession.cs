@@ -91,6 +91,15 @@ public class SpaceJunkSession : NetworkBehaviour
     /// <summary>いま動いている試合の係。どこからでも参照できるように持っている。</summary>
     public static SpaceJunkSession Current { get; private set; }
 
+    /// <summary>チームが確定した瞬間に通知する（ホスト側）。引数はプレイヤーキーと新しいチーム番号。</summary>
+    public event Action<ulong, int> OnPlayerTeamChanged;
+
+    // ロビーでエリアに入っているプレイヤーキーとチーム番号。試合開始判定はホストだけで行う。
+    private readonly Dictionary<ulong, int> playersInTeamZones = new Dictionary<ulong, int>();
+    private double lobbyCountdownEndsAt;
+    private bool lobbyCountdownActive;
+    private bool lobbyCountdownWasHostTriggered;
+
     [Header("戻り先")]
     [Tooltip("試合が終わったあとに全員が戻るシーンの名前。**ビルドの一覧に入っていること**")]
     [SerializeField] private string lobbySceneName = "SpaceJunkLobby";
@@ -497,6 +506,8 @@ public class SpaceJunkSession : NetworkBehaviour
         {
             return;
         }
+
+        UpdateLobbyStartCountdown();
 
         // ホストのPC：席の一覧とつながっている人を、一定の間隔で比べる
         slotCheckTimer += Time.unscaledDeltaTime;
@@ -923,6 +934,21 @@ public class SpaceJunkSession : NetworkBehaviour
     /// </summary>
     private void OnClientDisconnected(ulong clientId)
     {
+        bool removedFromZone = false;
+        foreach (ulong key in new List<ulong>(playersInTeamZones.Keys))
+        {
+            if (LocalMultiplayer.ClientOf(key) == clientId)
+            {
+                playersInTeamZones.Remove(key);
+                removedFromZone = true;
+            }
+        }
+
+        if (removedFromZone)
+        {
+            CancelLobbyStartCountdown();
+        }
+
         for (int i = slots.Count - 1; i >= 0; i--)
         {
             if (LocalMultiplayer.ClientOf(slots[i].ClientId) == clientId)
@@ -1013,10 +1039,156 @@ public class SpaceJunkSession : NetworkBehaviour
         {
             if (slots[i].ClientId == clientId)
             {
+                if (slots[i].Team == team)
+                {
+                    return;
+                }
+
+                // 名前は席ではなく Player の NetworkVariable が持つ（3段ランダム名）ので、席には入れない
                 slots[i] = new SpaceJunkPlayerSlot { ClientId = clientId, Team = team };
+                OnPlayerTeamChanged?.Invoke(clientId, team);
                 return;
             }
         }
+    }
+
+    /// <summary>ローカルプレイヤーがチームエリアに入った／出たことをホストへ伝える。</summary>
+    public void RequestLobbyZonePresence(ulong playerKey, int zoneTeam, bool inside)
+    {
+        if (!IsSpawned || State != SpaceJunkMatchState.Lobby)
+        {
+            return;
+        }
+
+        if (IsServer)
+        {
+            ServerSetLobbyZonePresence(playerKey, zoneTeam, inside);
+        }
+        else
+        {
+            LobbyZonePresenceServerRpc(playerKey, zoneTeam, inside);
+        }
+    }
+
+    /// <summary>1秒間エリアにいたプレイヤーのチーム変更をホストへ依頼する。</summary>
+    public void RequestLobbyZoneTeam(ulong playerKey, int team)
+    {
+        if (!IsSpawned || State != SpaceJunkMatchState.Lobby)
+        {
+            return;
+        }
+
+        if (IsServer)
+        {
+            ServerApplyLobbyZoneTeam(playerKey, team, NetworkManager.ServerClientId);
+        }
+        else
+        {
+            LobbyZoneTeamServerRpc(playerKey, team);
+        }
+    }
+
+    [ServerRpc(RequireOwnership = false)]
+    private void LobbyZonePresenceServerRpc(ulong playerKey, int zoneTeam, bool inside, ServerRpcParams rpcParams = default)
+    {
+        if (LocalMultiplayer.ClientOf(playerKey) != rpcParams.Receive.SenderClientId)
+        {
+            return;
+        }
+
+        ServerSetLobbyZonePresence(playerKey, zoneTeam, inside);
+    }
+
+    [ServerRpc(RequireOwnership = false)]
+    private void LobbyZoneTeamServerRpc(ulong playerKey, int team, ServerRpcParams rpcParams = default)
+    {
+        ServerApplyLobbyZoneTeam(playerKey, team, rpcParams.Receive.SenderClientId);
+    }
+
+    private void ServerSetLobbyZonePresence(ulong playerKey, int zoneTeam, bool inside)
+    {
+        if (!IsServer || State != SpaceJunkMatchState.Lobby || !HasSlot(playerKey) ||
+            !SpaceJunkTeams.IsValidTeam(zoneTeam, TeamCount))
+        {
+            return;
+        }
+
+        if (inside)
+        {
+            playersInTeamZones[playerKey] = zoneTeam;
+            if (playerKey == NetworkManager.ServerClientId && !lobbyCountdownActive)
+            {
+                BeginLobbyStartCountdown(10f, true);
+            }
+
+            if (AllPlayersInTeamZones())
+            {
+                if (!lobbyCountdownActive || lobbyCountdownWasHostTriggered)
+                {
+                    BeginLobbyStartCountdown(3f, false);
+                }
+            }
+        }
+        else if (playersInTeamZones.TryGetValue(playerKey, out int currentZone) && currentZone == zoneTeam)
+        {
+            playersInTeamZones.Remove(playerKey);
+            CancelLobbyStartCountdown();
+        }
+    }
+
+    private void ServerApplyLobbyZoneTeam(ulong playerKey, int team, ulong senderClientId)
+    {
+        if (!IsServer || State != SpaceJunkMatchState.Lobby || !HasSlot(playerKey) ||
+            LocalMultiplayer.ClientOf(playerKey) != senderClientId ||
+            !playersInTeamZones.TryGetValue(playerKey, out int currentTeam) || currentTeam != team)
+        {
+            return;
+        }
+
+        ServerSetTeamOf(playerKey, team);
+    }
+
+    private bool AllPlayersInTeamZones()
+    {
+        if (slots.Count == 0)
+        {
+            return false;
+        }
+
+        foreach (SpaceJunkPlayerSlot slot in slots)
+        {
+            if (!playersInTeamZones.ContainsKey(slot.ClientId))
+            {
+                return false;
+            }
+        }
+
+        return true;
+    }
+
+    private void BeginLobbyStartCountdown(float seconds, bool hostTriggered)
+    {
+        lobbyCountdownActive = true;
+        lobbyCountdownWasHostTriggered = hostTriggered;
+        lobbyCountdownEndsAt = Time.unscaledTimeAsDouble + seconds;
+    }
+
+    private void CancelLobbyStartCountdown()
+    {
+        lobbyCountdownActive = false;
+        lobbyCountdownWasHostTriggered = false;
+        lobbyCountdownEndsAt = 0d;
+    }
+
+    private void UpdateLobbyStartCountdown()
+    {
+        if (!lobbyCountdownActive || State != SpaceJunkMatchState.Lobby || Time.unscaledTimeAsDouble < lobbyCountdownEndsAt)
+        {
+            return;
+        }
+
+        CancelLobbyStartCountdown();
+        ServerStartMatch();
     }
 
     /// <summary>いまのチーム数で、全員をランダムに割り振り直す。</summary>
@@ -1131,6 +1303,9 @@ public class SpaceJunkSession : NetworkBehaviour
         {
             return;
         }
+
+        CancelLobbyStartCountdown();
+        playersInTeamZones.Clear();
 
         if (!HasPlayableMapChoice)
         {

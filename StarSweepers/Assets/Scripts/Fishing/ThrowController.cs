@@ -1,3 +1,4 @@
+using System.Collections;
 using UnityEngine;
 using UnityEngine.InputSystem;
 
@@ -23,7 +24,7 @@ public enum ThrowDirectionMode
 public enum ThrowStyle
 {
     /// <summary>
-    /// **釣り式（もとの仕様）。** 引き寄せながらゲージが1回だけ動き、
+    /// **釣り式（もとの仕様）。** 物資を物理任せにしてゲージを1回だけ動かし、
     /// 前半の枠で押す＝後ろへ、後半の枠で押す＝前へ投げる。
     /// </summary>
     SweepOnce,
@@ -69,9 +70,9 @@ public class SkillCheckZone
 /// <summary>
 /// **フックした物資を引き寄せて、スキルチェックの入力で投げる係。**
 ///
-/// 引き寄せの動き（仕様改善1）：
-///   物資はプレイヤーへ向かって弧を描いて上がり、**ゲージの真ん中（0.5）でプレイヤーの真上を通過**し、
-///   そのまま後方へ抜けていく。「釣り竿で引っこ抜く」動きになる。
+/// タイプAの動き：
+///   命中後はゲージが動いている間、物資を物理任せにする。クリック時に現在位置から弧を描くレールを高速で通し、
+///   **プレイヤーの真上を通過して後方へ抜けたあと**、ゲージ位置に応じた強さと方向で飛ばす。
 ///
 /// スキルチェック（仕様追加1）：
 ///   ゲージは**1往復だけ**動く。枠は2つあり、
@@ -80,8 +81,8 @@ public class SkillCheckZone
 ///   枠の中心に近いほど強く投げる（通常／強い／非常に強い）。
 ///
 /// ミス（仕様改善2）：
-///   **ゲージが通り過ぎた**か、**枠の外で押した**場合はミス。
-///   ほんの少しだけプレイヤー側へ引き寄せるだけで、引っ張りを終了する。
+///   **枠の外で押した**場合は、レールの終点からほんの少しプレイヤー側へ引き寄せる。
+///   クリックしないままゲージが終わった場合は、物資には触れずフックだけを外す。
 ///
 /// 投げる方向は、**投げた瞬間にプレイヤーが向いている方向**を基準にする（仕様改善3）。
 /// 釣り上げたときの向きではないので、引っ張っている間に振り向けば行き先も変わる。
@@ -277,7 +278,7 @@ public class ThrowController : MonoBehaviour
     [SerializeField] private float heavyDragSeconds = 0.6f;
 
     [Header("引き寄せの動き")]
-    [Tooltip("引き寄せ〜スキルチェックが終わるまでの秒数。短いほど難しい")]
+    [Tooltip("スキルチェックゲージが左端から右端まで動く秒数。短いほど難しい")]
     [SerializeField] private float skillCheckDuration = 1.6f;
 
     [Tooltip("プレイヤーの足元から、物資が通り越す高さ（メートル）")]
@@ -377,6 +378,12 @@ public class ThrowController : MonoBehaviour
     /// <summary>釣り式で、引き寄せ始めてからの秒数。これを Skill Check Duration で割ったものがゲージの位置になる。</summary>
     private float timer;
 
+    /// <summary>ゲージの進み具合の秒数（タイプAは timer を0のまま保ち、ゲージだけこちらで進める）。</summary>
+    private float skillCheckTimer;
+
+    /// <summary>タイプAの巻き取りの動き（動いている間だけ入る）。</summary>
+    private Coroutine typeAReelRoutine;
+
     /// <summary>操作タイプBで、引き寄せ始めてからの秒数。</summary>
     private float distancePullElapsed;
 
@@ -386,6 +393,9 @@ public class ThrowController : MonoBehaviour
     /// <summary>引っ掛ける前の物資の重力・物理の状態。手を離すときに <see cref="RestorePhysics"/> で元に戻す。</summary>
     private bool targetGravityWas;
     private bool targetKinematicWas;
+
+    /// <summary>タイプAで、物資を巻き取る動きにかける秒数。</summary>
+    private const float TypeAReelDuration = 0.18f;
 
     /// <summary>アンカーを引っ掛けているときの相手。アンカーは物資を寄せず、**プレイヤーのほうを寄せる**。</summary>
     private AnchorGimmick anchorTarget;
@@ -567,6 +577,11 @@ public class ThrowController : MonoBehaviour
     {
         playerMap?.Disable();
         SetAnchorGravitySuppressed(false);
+        if (typeAReelRoutine != null && target != null && !target.IsVanished)
+        {
+            RestorePhysics(target.Body);
+        }
+        StopTypeAReelRoutine();
     }
 
     /// <summary>
@@ -583,6 +598,7 @@ public class ThrowController : MonoBehaviour
         pullableTarget = null;
         active = true;
         timer = 0f;
+        skillCheckTimer = 0f;
         armDelay = 0.12f; // 秒。フックを撃ったボタンの押しっぱなし・連打を、すぐにゲージの入力として拾わないため
         heavy = false;
         heavyWeight = 1f;
@@ -611,30 +627,33 @@ public class ThrowController : MonoBehaviour
 
         if (target != null)
         {
-            // **持っている間は、自分の体に当たらないようにする**（2026/9/30）。
-            // 頭上や体のそばを通すので、当たると歩いたときに体が押されたり引っかかったりする。
-            // 手を離したら、体から離れたところで自動で元に戻る（ThrowPassThrough）
-            ThrowPassThrough.Hold(target.gameObject, hook.PlayerRoot.GetComponent<CharacterController>());
-
-            reelStart = target.transform.position;
             distancePullElapsed = 0f;
-
-            targetGravityWas = target.Body.useGravity;
-            targetKinematicWas = target.Body.isKinematic;
-
-            if (distanceBasedPullActive)
+            bool waitForTwoButtonsPullInput = style == ThrowStyle.TwoButtons &&
+                !distanceBasedPullActive && !heavyTwoButtons && !UsesOneButton && !nextIsThrow;
+            if ((style != ThrowStyle.SweepOnce && !waitForTwoButtonsPullInput) || distanceBasedPullActive)
             {
-                // タイプBはRigidbodyを生かし、現在位置・速度・回転を保持して引きずる。
-                target.Body.isKinematic = false;
-                target.Body.useGravity = targetGravityWas;
-            }
-            else
-            {
-                // タイプAは従来どおり、決めたレール上を通すため物理を止める。
-                target.Body.linearVelocity = Vector3.zero;
-                target.Body.angularVelocity = Vector3.zero;
-                target.Body.useGravity = false;
-                target.Body.isKinematic = true;
+                // **持っている間は、自分の体に当たらないようにする**（2026/9/30）。
+                // タイプAはクリックするまで物理・座標に触れないため、ここでは実行しない。
+                ThrowPassThrough.Hold(target.gameObject, hook.PlayerRoot.GetComponent<CharacterController>());
+
+                reelStart = target.transform.position;
+                targetGravityWas = target.Body.useGravity;
+                targetKinematicWas = target.Body.isKinematic;
+
+                if (distanceBasedPullActive)
+                {
+                    // タイプBはRigidbodyを生かし、現在位置・速度・回転を保持して引きずる。
+                    target.Body.isKinematic = false;
+                    target.Body.useGravity = targetGravityWas;
+                }
+                else
+                {
+                    // 宇宙ごみ式は従来どおり、決めた軌道へ乗せるため物理を止める。
+                    target.Body.linearVelocity = Vector3.zero;
+                    target.Body.angularVelocity = Vector3.zero;
+                    target.Body.useGravity = false;
+                    target.Body.isKinematic = true;
+                }
             }
         }
 
@@ -699,6 +718,11 @@ public class ThrowController : MonoBehaviour
             return;
         }
 
+        if (typeAReelRoutine != null)
+        {
+            return;
+        }
+
         if (contestTarget != null)
         {
             UpdateContest();
@@ -736,7 +760,14 @@ public class ThrowController : MonoBehaviour
         // スタンさせられたら引っ張りは続けられない。ミス扱いで終了する
         if (hook != null && hook.IsStunned)
         {
-            FinishAsMiss("スタンしたため");
+            if (style == ThrowStyle.SweepOnce && !distanceBasedPullActive)
+            {
+                EndPull();
+            }
+            else
+            {
+                FinishAsMiss("スタンしたため");
+            }
             return;
         }
 
@@ -746,21 +777,25 @@ public class ThrowController : MonoBehaviour
             return;
         }
 
-        timer += Time.deltaTime;
+        if (style == ThrowStyle.TwoButtons)
+        {
+            timer += Time.deltaTime;
+            if (armDelay > 0f)
+            {
+                armDelay -= Time.deltaTime;
+            }
+            UpdateTwoButtons();
+            return;
+        }
+
+        // タイプAは timer を0のまま保ち、ゲージだけ別の時間で進める。
+        skillCheckTimer += Time.deltaTime;
         if (armDelay > 0f)
         {
             armDelay -= Time.deltaTime;
         }
 
-        if (style == ThrowStyle.TwoButtons)
-        {
-            UpdateTwoButtons();
-            return;
-        }
-
-        float t =Mathf.Clamp01(timer / Mathf.Max(0.1f, skillCheckDuration));
-
-        UpdateReelPosition(t);
+        float t = Mathf.Clamp01(skillCheckTimer / Mathf.Max(0.1f, skillCheckDuration));
 
         if (hook != null && hook.UI != null)
         {
@@ -774,9 +809,17 @@ public class ThrowController : MonoBehaviour
         }
 
         // ゲージが1往復して通り過ぎたらミス（仕様改善2）
-        if (timer >= skillCheckDuration)
+        if (skillCheckTimer >= skillCheckDuration)
         {
-            FinishAsMiss("ゲージが通り過ぎた");
+            if (style == ThrowStyle.SweepOnce && !distanceBasedPullActive)
+            {
+                // 入力されないまま時間切れになった場合も、物資の物理には触れずフックだけ外す。
+                EndPull();
+            }
+            else
+            {
+                FinishAsMiss("ゲージが通り過ぎた");
+            }
         }
     }
 
@@ -1554,6 +1597,7 @@ public class ThrowController : MonoBehaviour
                 {
                     // 強さを覚えて、釣り式と同じく**頭上を越えて後ろへ抜ける**動きを始める
                     pullAccuracy = Accuracy(BarPosition());
+                    PrepareTwoButtonsPullAtInput();
                     stage = TwoButtonStage.PullTravel;
                     liftTimer = 0f;
 
@@ -1630,6 +1674,27 @@ public class ThrowController : MonoBehaviour
                 UpdateForwardSwing();
                 break;
         }
+    }
+
+    /// <summary>宇宙ごみ式の引っ張り待機中は動的物理を保ち、入力された時点でレール移動へ切り替える。</summary>
+    private void PrepareTwoButtonsPullAtInput()
+    {
+        if (target == null)
+        {
+            return;
+        }
+
+        Rigidbody body = target.Body;
+        reelStart = target.transform.position;
+        targetGravityWas = body.useGravity;
+        targetKinematicWas = body.isKinematic;
+
+        ThrowPassThrough.Hold(target.gameObject, hook.PlayerRoot.GetComponent<CharacterController>());
+        body.position = reelStart;
+        body.linearVelocity = Vector3.zero;
+        body.angularVelocity = Vector3.zero;
+        body.useGravity = false;
+        body.isKinematic = true;
     }
 
     // ------------------------------------------------------------
@@ -1989,6 +2054,12 @@ public class ThrowController : MonoBehaviour
     /// <summary>押された瞬間のゲージ位置を、どの枠に入ったかで判定する。</summary>
     private void Resolve(float t)
     {
+        bool typeA = style == ThrowStyle.SweepOnce;
+        if (typeA)
+        {
+            PrepareTypeAThrowAtClick();
+        }
+
         if (skillCheckZones != null)
         {
             foreach (SkillCheckZone zone in skillCheckZones)
@@ -2002,23 +2073,96 @@ public class ThrowController : MonoBehaviour
 
                 if (distance <= zone.perfectWindow)
                 {
-                    FinishAsThrow(zone, ThrowTier.Perfect);
+                    if (typeA)
+                    {
+                        typeAReelRoutine = StartCoroutine(TypeAReelAndFinish(zone, ThrowTier.Perfect, true));
+                    }
+                    else
+                    {
+                        FinishAsThrow(zone, ThrowTier.Perfect);
+                    }
                     return;
                 }
                 if (distance <= zone.goodWindow)
                 {
-                    FinishAsThrow(zone, ThrowTier.Good);
+                    if (typeA)
+                    {
+                        typeAReelRoutine = StartCoroutine(TypeAReelAndFinish(zone, ThrowTier.Good, true));
+                    }
+                    else
+                    {
+                        FinishAsThrow(zone, ThrowTier.Good);
+                    }
                     return;
                 }
                 if (distance <= zone.hitWindow)
                 {
-                    FinishAsThrow(zone, ThrowTier.Normal);
+                    if (typeA)
+                    {
+                        typeAReelRoutine = StartCoroutine(TypeAReelAndFinish(zone, ThrowTier.Normal, true));
+                    }
+                    else
+                    {
+                        FinishAsThrow(zone, ThrowTier.Normal);
+                    }
                     return;
                 }
             }
         }
 
-        FinishAsMiss("枠の外で押した");
+        if (typeA)
+        {
+            typeAReelRoutine = StartCoroutine(TypeAReelAndFinish(null, ThrowTier.Normal, false));
+        }
+        else
+        {
+            FinishAsMiss("枠の外で押した");
+        }
+    }
+
+    /// <summary>タイプAはクリック後、現在位置からレールを高速で一巡してから投げる。</summary>
+    private IEnumerator TypeAReelAndFinish(SkillCheckZone zone, ThrowTier tier, bool success)
+    {
+        UpdateReelPosition(0f);
+        float elapsed = 0f;
+
+        while (elapsed < TypeAReelDuration)
+        {
+            if (target == null || target.IsVanished)
+            {
+                typeAReelRoutine = null;
+                AbandonPull();
+                yield break;
+            }
+
+            if (GamePause.BlocksInput)
+            {
+                yield return null;
+                continue;
+            }
+
+            if (hook != null && hook.IsStunned)
+            {
+                typeAReelRoutine = null;
+                FinishAsMiss("スタンしたため");
+                yield break;
+            }
+
+            elapsed += Time.deltaTime;
+            UpdateReelPosition(Mathf.Clamp01(elapsed / TypeAReelDuration));
+            yield return null;
+        }
+
+        UpdateReelPosition(1f);
+        typeAReelRoutine = null;
+        if (success)
+        {
+            FinishAsThrow(zone, tier);
+        }
+        else
+        {
+            FinishAsMiss("枠の外で押した");
+        }
     }
 
     /// <summary>釣り式で、枠の中で押せた。枠の向きへ、段階（通常／強い／非常に強い）に応じた力で投げる。</summary>
@@ -2133,6 +2277,8 @@ public class ThrowController : MonoBehaviour
         {
             return;
         }
+
+        StopTypeAReelRoutine();
 
         // 横取りの待ち（ほかの人の物資にくっついているだけ）なら、物理には触らずにやめる
         if (contestTarget != null)
@@ -2291,6 +2437,7 @@ public class ThrowController : MonoBehaviour
     /// </summary>
     private void EndPull()
     {
+        StopTypeAReelRoutine();
         SetAnchorGravitySuppressed(false);
         target.SetHooked(false);
         target = null;
@@ -2327,6 +2474,41 @@ public class ThrowController : MonoBehaviour
     {
         body.isKinematic = targetKinematicWas;
         body.useGravity = targetGravityWas;
+    }
+
+    /// <summary>タイプAの巻き取りの動きが残っていれば止める。</summary>
+    private void StopTypeAReelRoutine()
+    {
+        if (typeAReelRoutine == null)
+        {
+            return;
+        }
+
+        StopCoroutine(typeAReelRoutine);
+        typeAReelRoutine = null;
+    }
+
+    /// <summary>タイプAでクリックされた瞬間の物資の位置を取り、投げ処理を始める。</summary>
+    private void PrepareTypeAThrowAtClick()
+    {
+        if (target == null)
+        {
+            return;
+        }
+
+        Rigidbody body = target.Body;
+        // フック命中後は物理・座標に触れず、クリック時点で画面に表示されている位置を記録する。
+        // Rigidbody の補間中は body.position と transform.position が一時的に異なるため、
+        // 物理を止めた直後にレール始点へ巻き戻って見えないよう、Transform 側を基準にする。
+        reelStart = target.transform.position;
+        targetGravityWas = body.useGravity;
+        targetKinematicWas = body.isKinematic;
+        ThrowPassThrough.Hold(target.gameObject, hook.PlayerRoot.GetComponent<CharacterController>());
+        body.position = reelStart;
+        body.linearVelocity = Vector3.zero;
+        body.angularVelocity = Vector3.zero;
+        body.useGravity = false;
+        body.isKinematic = true;
     }
 
     /// <summary>釣り式の投げの段階から、Inspector の「投げる力」の値を選ぶ。</summary>
