@@ -6,7 +6,7 @@ using UnityEngine;
 /// <summary>
 /// タイトル画面のプレハブに、**コードが頼りにしている印の付いた部品**がそろっているかを確かめる。
 /// 配置や見た目は自由に変えてよいが、印を消すとその部品は動かなくなるので、ここで気づけるようにする。
-/// （2026/10/19：メインを ソロプレイ／マルチプレイ／設定／ゲームを終了 にし、マルチプレイの画面にまとめた形に合わせた）
+/// （2026/10/22：メインを マルチプレイ／プラクティス／設定／ゲームを終了 にし、マルチプレイを クイックマッチ／部屋を探す／部屋を作る に分けた形に合わせた）
 ///
 /// 確かめるのは、**保存されているプレハブ**（`Assets/Resources/TitleScreen.prefab`）そのもの。作るツール（<see cref="TitleScreenPrefabBuilder"/>）は動かさない。
 /// だから、ツールの版を上げてまだ Unity で開いていない（部品が足されていない）ときも、ここで落ちて気づける。
@@ -49,8 +49,8 @@ public class TitleScreenPrefabTests
     /// <summary>コードが Role で探す部品（画面・一覧・チェックの印・参加の確認の窓・つないでいる途中の表示）があるか。</summary>
     [TestCase(TitlePartRole.PageMain)]
     [TestCase(TitlePartRole.PageMulti)]
+    [TestCase(TitlePartRole.PageMultiMenu)]
     [TestCase(TitlePartRole.PageCreate)]
-    [TestCase(TitlePartRole.PageFindPrivate)]
     [TestCase(TitlePartRole.PageSettings)]
     [TestCase(TitlePartRole.JoinableListContent)]
     [TestCase(TitlePartRole.JoinableListMessage)]
@@ -72,11 +72,15 @@ public class TitleScreenPrefabTests
         Assert.That(FindPart(role), Is.Not.Null, $"印 {role} の付いた部品が無い");
     }
 
-    /// <summary>マルチプレイの画面にまとめたので、前の「サーバーを探す」の画面は残っていない（2026/10/19）。</summary>
+    /// <summary>
+    /// 一覧の画面にまとめたので、前の「サーバーを探す」の画面は残っていない（2026/10/19）。
+    /// 「プライベートサーバーを探す」も「部屋を探す」にまとめた（2026/10/22）。
+    /// </summary>
     [TestCase(TitlePartRole.PageFind)]
     [TestCase(TitlePartRole.PageFindPublic)]
     [TestCase(TitlePartRole.PageFindLan)]
     [TestCase(TitlePartRole.PageFindFriends)]
+    [TestCase(TitlePartRole.PageFindPrivate)]
     public void TitlePrefab_HasNoOldFindPage(TitlePartRole role)
     {
         Assert.That(FindPart(role), Is.Null, $"使わなくなった画面 {role} が残っている");
@@ -100,12 +104,12 @@ public class TitleScreenPrefabTests
             // メイン
             TitleButtonAction.PlaySolo, TitleButtonAction.OpenMulti, TitleButtonAction.OpenSettings, TitleButtonAction.Quit,
             // マルチプレイ
-            TitleButtonAction.QuickPlay, TitleButtonAction.OpenFindPrivate, TitleButtonAction.OpenCreate,
-            TitleButtonAction.ToggleSearchPublic, TitleButtonAction.ToggleSearchFriends,
-            // サーバーを作る・プライベートサーバーを探す
+            TitleButtonAction.QuickPlay, TitleButtonAction.OpenFindRoom, TitleButtonAction.OpenCreate,
+            // 部屋を探す
+            TitleButtonAction.JoinPrivate, TitleButtonAction.ToggleSearchPublic, TitleButtonAction.ToggleSearchFriends,
+            // 部屋を作る
             TitleButtonAction.CreateServer, TitleButtonAction.MaxPlayersDown, TitleButtonAction.MaxPlayersUp,
             TitleButtonAction.SetPublic, TitleButtonAction.SetPrivate, TitleButtonAction.SetLan,
-            TitleButtonAction.JoinPrivate,
             // 参加の確認の窓
             TitleButtonAction.ConfirmJoinDialog, TitleButtonAction.CloseJoinDialog,
         };
@@ -136,16 +140,85 @@ public class TitleScreenPrefabTests
         Assert.That(kinds.Contains(TitleInputKind.LanAddress), Is.False, "IP アドレスを打つ欄が残っている");
     }
 
-    /// <summary>参加可能なサーバーの一覧は、マルチプレイの画面の中にある。</summary>
+    /// <summary>参加可能なサーバーの一覧と、参加コードの欄は、「部屋を探す」の画面（PageMulti）の中にある。</summary>
     [Test]
-    public void TitlePrefab_JoinableListIsOnTheMultiPage()
+    public void TitlePrefab_JoinableListIsOnTheFindRoomPage()
     {
         Transform page = FindPart(TitlePartRole.PageMulti);
         Transform list = FindPart(TitlePartRole.JoinableListContent);
 
         Assert.That(page, Is.Not.Null);
         Assert.That(list, Is.Not.Null);
-        Assert.That(list.IsChildOf(page), Is.True, "参加可能なサーバーの一覧が、マルチプレイの画面の外にある");
+        Assert.That(list.IsChildOf(page), Is.True, "参加可能なサーバーの一覧が、部屋を探す画面の外にある");
+        Assert.That(InputKindsUnder(page).Contains(TitleInputKind.PrivateCode), Is.True, "部屋を探す画面に参加コードの欄が無い");
+    }
+
+    /// <summary>マルチプレイの画面に、クイックマッチ／部屋を探す／部屋を作る がこの順で並んでいる（2026/10/22）。</summary>
+    [Test]
+    public void TitlePrefab_MultiMenuHasThreeButtonsInOrder()
+    {
+        Transform page = FindPart(TitlePartRole.PageMultiMenu);
+        Assert.That(page, Is.Not.Null);
+
+        AssertTopToBottom(page, TitleButtonAction.QuickPlay, TitleButtonAction.OpenFindRoom, TitleButtonAction.OpenCreate);
+    }
+
+    /// <summary>メインは マルチプレイ／プラクティス／設定／ゲームを終了 の順（2026/10/22）。コントローラーで最初に選ばれるのはマルチプレイ。</summary>
+    [Test]
+    public void TitlePrefab_MainButtonsAreInOrder()
+    {
+        Transform page = FindPart(TitlePartRole.PageMain);
+        Assert.That(page, Is.Not.Null);
+
+        AssertTopToBottom(page, TitleButtonAction.OpenMulti, TitleButtonAction.PlaySolo,
+            TitleButtonAction.OpenSettings, TitleButtonAction.Quit);
+        Assert.That(page.GetComponentInChildren<TitleMenuButton>(true).Action, Is.EqualTo(TitleButtonAction.OpenMulti),
+            "コントローラーで最初に選ばれるボタン（画面の中で一番前）がマルチプレイではない");
+    }
+
+    /// <summary>「部屋を作る」に名前の欄は無い（マルチプレイの画面で入れる。2026/10/22）。</summary>
+    [Test]
+    public void TitlePrefab_CreatePageHasNoNameInput()
+    {
+        Transform page = FindPart(TitlePartRole.PageCreate);
+        Assert.That(page, Is.Not.Null);
+        Assert.That(InputKindsUnder(page).Contains(TitleInputKind.PlayerName), Is.False, "部屋を作る画面に名前の欄が残っている");
+    }
+
+    private static HashSet<TitleInputKind> InputKindsUnder(Transform page)
+    {
+        HashSet<TitleInputKind> kinds = new HashSet<TitleInputKind>();
+        foreach (TitleInput input in page.GetComponentsInChildren<TitleInput>(true))
+        {
+            kinds.Add(input.Kind);
+        }
+        return kinds;
+    }
+
+    /// <summary>その画面の中で、actions のボタンが画面の上から順に並んでいるか（画面の上での高さで比べる）。</summary>
+    private static void AssertTopToBottom(Transform page, params TitleButtonAction[] actions)
+    {
+        float previousY = float.MaxValue;
+        foreach (TitleButtonAction action in actions)
+        {
+            TitleMenuButton found = null;
+            foreach (TitleMenuButton button in page.GetComponentsInChildren<TitleMenuButton>(true))
+            {
+                if (button.Action == action)
+                {
+                    found = button;
+                    break;
+                }
+            }
+
+            Assert.That(found, Is.Not.Null, $"{page.name} に Action が {action} のボタンが無い");
+
+            // 同じ列の中にあるので、列の中の位置（中心の高さ）で比べられる
+            RectTransform rect = (RectTransform)found.transform;
+            float y = rect.anchoredPosition.y + (0.5f - rect.pivot.y) * rect.sizeDelta.y;
+            Assert.That(y, Is.LessThan(previousY), $"{action} が1つ上のボタンより上にある");
+            previousY = y;
+        }
     }
 
     /// <summary>ソロプレイができたので、「サーバーを作る」の「1人で練習する」は無い（2026/10/19・大槻さん）。</summary>

@@ -18,10 +18,10 @@ using UnityEngine.UI;
 ///
 /// | 画面 | できること |
 /// | --- | --- |
-/// | メイン | ソロプレイ（オフラインでロビーへ）／マルチプレイ／設定／ゲームを終了。右下にバージョン（2026/10/19 から） |
-/// | マルチプレイ | 左：クイックプレイ／プライベートサーバーを探す／サーバーを作る／サーバー検索設定（■パブリックサーバー ■フレンドのサーバー）。右：参加可能なサーバー（**LAN の部屋はいつも一番上**） |
-/// | サーバーを作る | 名前・最大人数（2〜8。初期値8）・サーバーの名前・パスワード・□パブリック □プライベート □LAN → 作成 |
-/// | プライベートサーバーを探す | 参加コード（とパスワード）を入れて参加 |
+/// | メイン | マルチプレイ／プラクティス（オフラインでロビーへ）／設定／ゲームを終了。右下にバージョン（2026/10/22 から） |
+/// | マルチプレイ | 名前・クイックマッチ／部屋を探す／部屋を作る（2026/10/22） |
+/// | 部屋を探す | 左：参加コード（とパスワード）で入る／サーバー検索設定（■パブリックサーバー ■フレンドのサーバー）。右：参加可能なサーバー（**LAN の部屋はいつも一番上**） |
+/// | 部屋を作る | 最大人数（2〜8。初期値8）・サーバーの名前・パスワード・□パブリック □プライベート □LAN → 作成（名前の欄は無い。2026/10/22） |
 /// | 設定 | サウンド（音量）／グラフィック（解像度・画面モード・フレームレート上限・垂直同期・画質）／ゲーム全般（マウス感度・操作タイプ） |
 ///
 /// ## 画面はプレハブ（2026/10/6 から）
@@ -61,8 +61,8 @@ using UnityEngine.UI;
 /// 画面（ページ）の行き来：
 ///
 /// ```
-/// メイン ─┬─ マルチプレイ ─┬─ サーバーを作る
-///         │               └─ プライベートサーバーを探す
+/// メイン ─┬─ マルチプレイ ─┬─ 部屋を探す（Page.Multi）
+///         │               └─ 部屋を作る（Page.Create）
 ///         └─ 設定
 /// ```
 ///
@@ -108,7 +108,7 @@ public class TitleScreen : MonoBehaviour
     /// <summary>
     /// 画面の種類。
     /// Find・FindPublic・FindLan・FindFriends は、2026/10/19 にマルチプレイの画面へまとめて**いまは使っていない**
-    /// （プレハブからも消えている）。並び順を変えないように残してある。
+    /// （プレハブからも消えている）。FindPrivate も 2026/10/22 に「部屋を探す」（Multi）へまとめた。並び順を変えないように残してある。
     /// </summary>
     public enum Page
     {
@@ -121,8 +121,14 @@ public class TitleScreen : MonoBehaviour
         Settings,
         FindFriends,
 
-        /// <summary>マルチプレイ（クイックプレイ・プライベートサーバーを探す・サーバーを作る・参加可能なサーバー）。2026/10/19</summary>
+        /// <summary>
+        /// **部屋を探す**（参加コードで入る・サーバー検索設定・参加可能なサーバー）。
+        /// 2026/10/19 に「マルチプレイ」の画面として作り、2026/10/22 に「部屋を探す」になった（名前はそのまま）。
+        /// </summary>
         Multi,
+
+        /// <summary>マルチプレイ（クイックマッチ・部屋を探す・部屋を作る）。2026/10/22</summary>
+        MultiMenu,
     }
 
     private enum SettingsTab
@@ -361,9 +367,9 @@ public class TitleScreen : MonoBehaviour
 
         AddPage(Page.Main, TitlePartRole.PageMain);
         AddPage(Page.Create, TitlePartRole.PageCreate);
-        AddPage(Page.FindPrivate, TitlePartRole.PageFindPrivate);
         AddPage(Page.Settings, TitlePartRole.PageSettings);
         AddPage(Page.Multi, TitlePartRole.PageMulti);
+        AddPage(Page.MultiMenu, TitlePartRole.PageMultiMenu);
 
         AddSettingsGroup(SettingsTab.Sound, TitlePartRole.SettingsSound);
         AddSettingsGroup(SettingsTab.Graphics, TitlePartRole.SettingsGraphics);
@@ -602,7 +608,7 @@ public class TitleScreen : MonoBehaviour
     /// **ボタンを押したときの入口。** Action ごとに処理を呼び分ける。
     ///
     /// ・同じ処理に来る Action がいくつかあるのは、古い版のプレハブのボタンでも動くようにするため
-    ///   （例：OpenFind はマルチプレイの画面へ、PracticeSolo はソロプレイへ、UseInternet／UseLan は版 6 より前のつなぎかたのボタン）
+    ///   （例：OpenFind・OpenFindPrivate は部屋を探す画面へ、PracticeSolo はプラクティスへ、UseInternet／UseLan は版 6 より前のつなぎかたのボタン）
     /// ・ここに無い Action は、別の場所でつないでいる：一覧のカードの「参加する」は <see cref="AddJoinableCard"/>、
     ///   つないでいる途中の表示のボタン（None）は <see cref="UpdateBusyOverlay"/>、設定の「＜」「＞」は <see cref="WireSettings"/>
     /// </summary>
@@ -612,7 +618,8 @@ public class TitleScreen : MonoBehaviour
         {
             case TitleButtonAction.QuickPlay: QuickPlay(); break;
             case TitleButtonAction.PlaySolo: StartSolo(); break;
-            case TitleButtonAction.OpenMulti: ShowPage(Page.Multi); break;
+            case TitleButtonAction.OpenMulti: ShowPage(Page.MultiMenu); break;
+            case TitleButtonAction.OpenFindRoom: ShowPage(Page.Multi); break;
             case TitleButtonAction.ToggleSearchPublic: SetSearchPublic(!searchPublic); break;
             case TitleButtonAction.ToggleSearchFriends: SetSearchFriends(!searchFriends); break;
             case TitleButtonAction.ConfirmJoinDialog: ConfirmJoinDialog(); break;
@@ -634,7 +641,7 @@ public class TitleScreen : MonoBehaviour
             case TitleButtonAction.SetPrivate: SetCreatePrivate(true); break;
             case TitleButtonAction.SetLan: SetCreateLan(true); break;
 
-            case TitleButtonAction.OpenFindPrivate: ShowPage(Page.FindPrivate); break;
+            case TitleButtonAction.OpenFindPrivate: ShowPage(Page.Multi); break;
             case TitleButtonAction.JoinPrivate: JoinPrivate(); break;
 
             case TitleButtonAction.TabSound: ShowSettingsTab(SettingsTab.Sound); break;
@@ -716,13 +723,13 @@ public class TitleScreen : MonoBehaviour
 
         switch (current)
         {
-            case Page.Multi:
+            case Page.MultiMenu:
             case Page.Settings:
                 ShowPage(Page.Main);
                 break;
+            case Page.Multi:
             case Page.Create:
-            case Page.FindPrivate:
-                ShowPage(Page.Multi);
+                ShowPage(Page.MultiMenu);
                 break;
 
             // メインには戻る先が無いので、何もしない
@@ -733,7 +740,7 @@ public class TitleScreen : MonoBehaviour
     {
         string name = GameSettings.PlayerName;
         SetText(TitlePartRole.PlayerNameText,
-            string.IsNullOrEmpty(name) ? "名前：未設定（サーバーを作る・探すの画面で入れられます）" : $"名前：{name}");
+            string.IsNullOrEmpty(name) ? "名前：未設定（マルチプレイの画面で入れられます）" : $"名前：{name}");
     }
 
     /// <summary>「サーバーを作る」の画面を、いまの選び方（人数・公開のしかた）で出し直す。</summary>
@@ -772,13 +779,13 @@ public class TitleScreen : MonoBehaviour
         if (createLan)
         {
             SetText(TitlePartRole.CodeBoxTitle, "このPCのIPアドレス");
-            SetText(TitlePartRole.CodeBoxBody, $"{LocalAddresses()}\n参加する人の「サーバーを探す → LAN」の一覧に自動で出る（出ないときはこの番号を入れる）");
+            SetText(TitlePartRole.CodeBoxBody, $"{LocalAddresses()}\n参加する人の「部屋を探す」の一覧の一番上に自動で出る");
         }
         else
         {
             SetText(TitlePartRole.CodeBoxTitle, "参加コード");
             SetText(TitlePartRole.CodeBoxBody,
-                "サーバーを作成すると発行されます（ロビーの左上に出ます）\n参加する人は「サーバーを探す → プライベートサーバー」で入れる");
+                "サーバーを作成すると発行されます（ロビーの左上に出ます）\n参加する人は「部屋を探す」の「参加コードで入る」で入れる");
         }
     }
 
@@ -961,7 +968,7 @@ public class TitleScreen : MonoBehaviour
     }
 
     /// <summary>
-    /// **ソロプレイ。** このPCの中だけで動くホストになって、そのままロビーへ（移すのは <see cref="TitleSceneFlow"/>）。
+    /// **プラクティス**（2026/10/22 まではソロプレイという名前だった。中身は同じ）。このPCの中だけで動くホストになって、そのままロビーへ（移すのは <see cref="TitleSceneFlow"/>）。
     /// ほかのPCからは入れない（オフライン）。のちのち CPU を足して1人でも遊べるようにする予定。
     /// </summary>
     private static void StartSolo()
@@ -1395,7 +1402,7 @@ public class TitleScreen : MonoBehaviour
         if (entryCount == 0)
         {
             message.Append(searchPublic || searchFriends
-                ? "参加できるサーバーが見つかりません。\n「クイックプレイ」か「サーバーを作る」で遊べます"
+                ? "参加できるサーバーが見つかりません。\n1つ前の画面の「クイックマッチ」か「部屋を作る」で遊べます"
                 : "サーバー検索設定のチェックが外れています（LAN の部屋だけを探しています）");
         }
 

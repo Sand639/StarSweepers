@@ -96,6 +96,9 @@ public enum TitlePartRole
     JoinDialogPasswordRow = 86,
     JoinDialogYesLabel = 87,
     JoinDialogNoLabel = 88,
+
+    // マルチプレイの最初の画面（クイックマッチ／部屋を探す／部屋を作る。2026/10/22）
+    PageMultiMenu = 89,
 }
 
 /// <summary>

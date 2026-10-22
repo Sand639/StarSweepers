@@ -62,6 +62,18 @@ public static class TitleScreenPrefabBuilder
     private static readonly Color SliderFillColor = new Color(0.20f, 0.95f, 0.35f, 1f);
     private static readonly Vector2 MainButtonSize = new Vector2(420f, 76f);
 
+    /// <summary>メイン・マルチプレイの画面のボタンどうしの間（縦）。2026/10/22 に 22 から広げた（余裕を持たせて）。</summary>
+    private const float MenuButtonSpacing = 40f;
+
+    /// <summary>メイン・マルチプレイの画面のボタンが、重なった・選ばれたときに大きくなる割合（<see cref="TitleMenuButton"/> の highlightScale）。</summary>
+    private const float MenuButtonHighlightScale = 1.08f;
+
+    /// <summary>マルチプレイの画面（クイックマッチ／部屋を探す／部屋を作る）のボタンの大きさ。</summary>
+    private static readonly Vector2 MultiMenuButtonSize = new Vector2(640f, 96f);
+
+    /// <summary>「部屋を作る」の画面を、名前の欄を消したぶん全体（文字・欄・ボタン）を大きくする割合（2026/10/22）。</summary>
+    private const float CreatePageEnlarge = 1.25f;
+
     /// <summary>作る文字に入れるフォント（Unity 標準）。<see cref="Build"/> と <see cref="Upgrade"/> の最初に読み込む。</summary>
     private static Font defaultFont;
 
@@ -113,9 +125,11 @@ public static class TitleScreenPrefabBuilder
     /// ／ 7：メインに「クイックプレイ」（2026/10/15）
     /// ／ 8：メインを ソロプレイ／マルチプレイ／設定／ゲームを終了 にし、マルチプレイの画面を足して、サーバーを探す画面（ハブ・パブリック・LAN・フレンド）を消した（2026/10/19）
     /// ／ 9：参加の確認の窓（参加しますか？／パスワードを入力してください）を足し、「1人で練習する」とマルチプレイの画面のパスワードの欄を消した（2026/10/19）
+    /// ／ 10：メインを マルチプレイ／プラクティス／設定／ゲームを終了 の順にし、マルチプレイを クイックマッチ／部屋を探す／部屋を作る の画面に分けた。
+    ///        「部屋を作る」の名前の欄を消して全体を大きくし、「プライベートサーバーを探す」を「部屋を探す」にまとめた（2026/10/22）
     /// **版 3 からは作り直さず、<see cref="Upgrade"/> で足りない部品だけを足す**（手で直した配置を消さない）。版を上げたら Upgrade に足す処理を書くこと
     /// </summary>
-    public const int PrefabVersion = 9;
+    public const int PrefabVersion = 10;
 
     /// <summary>
     /// **作り直さずに、足りない部品だけを足す。**
@@ -125,6 +139,7 @@ public static class TitleScreenPrefabBuilder
     /// 版 6 → 7：メインの「サーバーを作る」の上に「クイックプレイ」を足す（<see cref="AddQuickPlayButton"/>）。
     /// 版 7 → 8：メインをソロプレイ／マルチプレイに組み替え、マルチプレイの画面を足し、使わなくなった画面を消す（<see cref="RestructureForSoloMulti"/>）。
     /// 版 8 → 9：参加の確認の窓を足し、「1人で練習する」とマルチプレイの画面のパスワードの欄を消す（<see cref="AddJoinDialog"/>）。
+    /// 版 9 → 10：メインの並び替え・マルチプレイの画面を分ける・部屋を作るの名前の欄を消す（<see cref="RestructureForRoomMenu"/>）。
     /// </summary>
     private static void Upgrade(int fromVersion)
     {
@@ -147,7 +162,7 @@ public static class TitleScreenPrefabBuilder
                 PutBehindBusyOverlay(root, page);
             }
 
-            // 古い版から順に直す（4 → 5 → 6 → 7 → 8 → 9）
+            // 古い版から順に直す（4 → 5 → 6 → 7 → 8 → 9 → 10）
             if (fromVersion < 5 && FindPart(root, TitlePartRole.LanListContent) == null)
             {
                 TitlePart lanPage = FindPart(root, TitlePartRole.PageFindLan);
@@ -175,6 +190,11 @@ public static class TitleScreenPrefabBuilder
             if (fromVersion < 9)
             {
                 AddJoinDialog(root);
+            }
+
+            if (fromVersion < 10)
+            {
+                RestructureForRoomMenu(root);
             }
 
             root.GetComponent<TitleScreen>().EditorSetPrefabVersion(PrefabVersion);
@@ -267,10 +287,9 @@ public static class TitleScreenPrefabBuilder
     }
 
     /// <summary>
-    /// **マルチプレイの画面**（2026/10/19・大槻さんの絵コンテ）。
-    /// 左：名前・クイックプレイ・プライベートサーバーを探す・サーバーを作る・サーバー検索設定（■パブリックサーバー ■フレンドのサーバー）。
-    /// 右：参加可能なサーバーの一覧（LAN の部屋はいつも一番上）と、パスワードの欄。
-    /// ※ パスワードの欄は、版 9（2026/10/19）で参加の確認の窓へ移したので、いまはここでは作らない。
+    /// **部屋を探す**の画面（印は PageMulti のまま）。2026/10/19 に「マルチプレイ」の画面として作り（大槻さんの絵コンテ）、
+    /// 2026/10/22 に「部屋を探す」にした（左の列は <see cref="BuildFindRoomLeft"/>）。
+    /// 右：参加可能なサーバーの一覧（LAN の部屋はいつも一番上）。
     /// 版 7 → 8 の <see cref="Upgrade"/> でも、これを使って足す。
     /// </summary>
     private static GameObject BuildMultiPage(Transform root)
@@ -278,16 +297,7 @@ public static class TitleScreenPrefabBuilder
         GameObject page = NewPage("MultiPage", root, TitlePartRole.PageMulti);
 
         // 左
-        Column left = new Column("Left", page.transform, 640f, 18f,
-            new Vector2(0f, 1f), new Vector2(140f, -90f), new Vector2(0f, 1f));
-        AddNameInput(left);
-        left.Add(NewButton(left.Rect, "クイックプレイ", new Vector2(640f, 96f), ButtonFontSize + 4, TitleButtonAction.QuickPlay));
-        left.Add(NewButton(left.Rect, "プライベートサーバーを探す", new Vector2(640f, 70f), ButtonFontSize - 2, TitleButtonAction.OpenFindPrivate));
-        left.Add(NewButton(left.Rect, "サーバーを作る", new Vector2(640f, 70f), ButtonFontSize - 2, TitleButtonAction.OpenCreate));
-        AddLabel(left, "サーバー検索設定", "LAN の部屋はいつも一番上に出る");
-        AddCheckRow(left, "パブリックサーバー", TitleButtonAction.ToggleSearchPublic, TitlePartRole.SearchPublicCheckText);
-        AddCheckRow(left, "フレンドのサーバー", TitleButtonAction.ToggleSearchFriends, TitlePartRole.SearchFriendsCheckText);
-        left.Finish();
+        BuildFindRoomLeft(page.transform);
 
         // 右：参加可能なサーバー
         Text title = NewText("JoinableTitle", page.transform, "参加可能なサーバー", FontSize + 6, TextColor, TextAnchor.LowerLeft);
@@ -404,6 +414,281 @@ public static class TitleScreenPrefabBuilder
         GameObject dialog = BuildJoinDialog(root.transform);
         dialog.SetActive(false);
         PutBehindBusyOverlay(root, dialog);
+    }
+
+    /// <summary>
+    /// 「部屋を探す」の左の列（2026/10/22）。上から：参加コードで入る（参加コード・パスワード・参加する）→
+    /// サーバー検索設定（■パブリックサーバー ■フレンドのサーバー）。
+    /// 前は別の画面だった「プライベートサーバーを探す」を、ここにまとめた。名前はマルチプレイの画面で入れる。
+    /// </summary>
+    private static void BuildFindRoomLeft(Transform page)
+    {
+        Column left = new Column("Left", page, 640f, 14f,
+            new Vector2(0f, 1f), new Vector2(140f, -90f), new Vector2(0f, 1f));
+        AddLabel(left, "参加コードで入る", "部屋を作った人に教えてもらう");
+        AddInput(left, "参加コード（例：6FJBMH）", TitleInputKind.PrivateCode);
+        AddInput(left, "パスワード（無ければ空のまま）", TitleInputKind.JoinPassword);
+        left.Add(NewButton(left.Rect, "参加する", new Vector2(640f, 70f), ButtonFontSize - 2, TitleButtonAction.JoinPrivate));
+
+        // 参加コードの組と、検索設定の組の間を少し空ける
+        RectTransform space = NewRect("Space", left.Rect);
+        space.sizeDelta = new Vector2(640f, 30f);
+        left.Add(space);
+
+        AddLabel(left, "サーバー検索設定", "LAN の部屋はいつも一番上に出る");
+        AddCheckRow(left, "パブリックサーバー", TitleButtonAction.ToggleSearchPublic, TitlePartRole.SearchPublicCheckText);
+        AddCheckRow(left, "フレンドのサーバー", TitleButtonAction.ToggleSearchFriends, TitlePartRole.SearchFriendsCheckText);
+        left.Finish();
+
+        // コントローラーで開いたときに、左の列の一番上（参加コードの欄）が選ばれるように、画面の中で一番前に並べる
+        left.Rect.SetAsFirstSibling();
+    }
+
+    /// <summary>
+    /// **マルチプレイの画面**（2026/10/22）。クイックマッチ／部屋を探す／部屋を作る の3つのボタンと、ゲーム内で表示する名前の欄。
+    /// コントローラーで開いたときに「クイックマッチ」が選ばれるように、ボタンの列を名前の欄より前に並べる。
+    /// </summary>
+    private static GameObject BuildMultiMenuPage(Transform root)
+    {
+        GameObject page = NewPage("MultiMenuPage", root, TitlePartRole.PageMultiMenu);
+
+        Text heading = NewText("Heading", page.transform, "マルチプレイ", 64, TitleColor, TextAnchor.MiddleLeft);
+        heading.fontStyle = FontStyle.Bold;
+        heading.gameObject.AddComponent<Outline>().effectDistance = new Vector2(3f, -3f);
+        Place(heading.rectTransform, new Vector2(0f, 1f), new Vector2(140f, -50f), new Vector2(1000f, 100f), new Vector2(0f, 1f));
+
+        Column buttons = new Column("Buttons", page.transform, MultiMenuButtonSize.x, MenuButtonSpacing,
+            new Vector2(0f, 1f), new Vector2(140f, -380f), new Vector2(0f, 1f));
+        AddMenuButton(buttons, "クイックマッチ", MultiMenuButtonSize, ButtonFontSize + 6, TitleButtonAction.QuickPlay);
+        AddMenuButton(buttons, "部屋を探す", MultiMenuButtonSize, ButtonFontSize + 6, TitleButtonAction.OpenFindRoom);
+        AddMenuButton(buttons, "部屋を作る", MultiMenuButtonSize, ButtonFontSize + 6, TitleButtonAction.OpenCreate);
+        buttons.Finish();
+
+        Column name = new Column("Name", page.transform, MultiMenuButtonSize.x, 10f,
+            new Vector2(0f, 1f), new Vector2(140f, -180f), new Vector2(0f, 1f));
+        AddNameInput(name);
+        name.Finish();
+
+        AddBackButton(page.transform);
+        return page;
+    }
+
+    /// <summary>メイン・マルチプレイの画面のボタンを1つ足す（重なった・選ばれたときに真ん中から少し大きくなる）。</summary>
+    private static void AddMenuButton(Column column, string label, Vector2 size, int fontSize, TitleButtonAction action)
+    {
+        TitleMenuButton button = NewButton(column.Rect, label, size, fontSize, action);
+        column.Add(button);
+        GrowOnHighlight(button);
+    }
+
+    /// <summary>
+    /// 重なった・選ばれたときに <see cref="MenuButtonHighlightScale"/> 倍に大きくなるようにする。
+    /// 真ん中から広がるように Pivot を (0.5, 0.5) にする（見た目の位置は変えない）。
+    /// </summary>
+    private static void GrowOnHighlight(TitleMenuButton button)
+    {
+        RectTransform rect = (RectTransform)button.transform;
+        Vector2 center = new Vector2(0.5f, 0.5f);
+        Vector2 delta = center - rect.pivot;
+        rect.pivot = center;
+        rect.anchoredPosition += new Vector2(delta.x * rect.sizeDelta.x, delta.y * rect.sizeDelta.y);
+
+        button.EditorSetHighlightScale(MenuButtonHighlightScale);
+    }
+
+    /// <summary>
+    /// 版 9 → 10（2026/10/22）。どの段も「もう直してあれば何もしない」。
+    ///
+    /// ・メイン：「ソロプレイ」を「プラクティス」にし、マルチプレイ／プラクティス／設定／ゲームを終了 の順に、間を広げて並べ直す（<see cref="ReorderMainButtons"/>）
+    /// ・「部屋を作る」：名前の欄を消し、空いたぶん全体を大きくする（<see cref="RemoveNameFromCreatePage"/>）
+    /// ・「部屋を探す」（前のマルチプレイの画面）：左の列を作り直し、「プライベートサーバーを探す」の画面を消す
+    /// ・マルチプレイの画面（クイックマッチ／部屋を探す／部屋を作る）を足す
+    /// </summary>
+    private static void RestructureForRoomMenu(GameObject root)
+    {
+        ReorderMainButtons(root);
+        RemoveNameFromCreatePage(root);
+
+        TitlePart multi = FindPart(root, TitlePartRole.PageMulti);
+        if (multi != null)
+        {
+            // 前の左の列は「クイックプレイ」が入っている列（画面のすぐ下の子）
+            Transform oldLeft = null;
+            foreach (TitleMenuButton look in multi.GetComponentsInChildren<TitleMenuButton>(true))
+            {
+                if (look.Action == TitleButtonAction.QuickPlay)
+                {
+                    oldLeft = look.transform;
+                    while (oldLeft.parent != multi.transform)
+                    {
+                        oldLeft = oldLeft.parent;
+                    }
+                    break;
+                }
+            }
+
+            if (oldLeft != null)
+            {
+                Object.DestroyImmediate(oldLeft.gameObject);
+                BuildFindRoomLeft(multi.transform);
+            }
+        }
+
+        TitlePart findPrivate = FindPart(root, TitlePartRole.PageFindPrivate);
+        if (findPrivate != null)
+        {
+            Object.DestroyImmediate(findPrivate.gameObject);
+        }
+
+        if (FindPart(root, TitlePartRole.PageMultiMenu) == null)
+        {
+            GameObject menu = BuildMultiMenuPage(root.transform);
+            menu.SetActive(false);
+
+            // 部屋を探す画面のすぐ後ろに並べる（参加の確認の窓・つないでいる途中の表示より奥）
+            if (multi != null)
+            {
+                menu.transform.SetSiblingIndex(multi.transform.GetSiblingIndex() + 1);
+            }
+            else
+            {
+                PutBehindBusyOverlay(root, menu);
+            }
+        }
+    }
+
+    /// <summary>
+    /// メインのボタンを マルチプレイ／プラクティス／設定／ゲームを終了 の順に、間を <see cref="MenuButtonSpacing"/> にして並べ直す。
+    /// 「ソロプレイ」は「プラクティス」に変える。並べる入れ物は下の端を動かさず、上へ伸びる。
+    /// </summary>
+    private static void ReorderMainButtons(GameObject root)
+    {
+        TitlePart mainPage = FindPart(root, TitlePartRole.PageMain);
+        if (mainPage == null)
+        {
+            return;
+        }
+
+        TitleButtonAction[] order =
+        {
+            TitleButtonAction.OpenMulti, TitleButtonAction.PlaySolo, TitleButtonAction.OpenSettings, TitleButtonAction.Quit,
+        };
+
+        RectTransform column = null;
+        float y = 0f;
+        int sibling = 0;
+        foreach (TitleButtonAction action in order)
+        {
+            TitleMenuButton look = null;
+            foreach (TitleMenuButton candidate in mainPage.GetComponentsInChildren<TitleMenuButton>(true))
+            {
+                if (candidate.Action == action)
+                {
+                    look = candidate;
+                    break;
+                }
+            }
+
+            if (look == null)
+            {
+                continue;
+            }
+
+            if (action == TitleButtonAction.PlaySolo)
+            {
+                RenameButton(look, TitleButtonAction.PlaySolo, "プラクティス");
+            }
+
+            RectTransform rect = (RectTransform)look.transform;
+            column = column != null ? column : rect.parent as RectTransform;
+            rect.SetSiblingIndex(sibling++);
+            Place(rect, new Vector2(0f, 1f), new Vector2(0f, -y), rect.sizeDelta, new Vector2(0f, 1f));
+            y += rect.sizeDelta.y + MenuButtonSpacing;
+            GrowOnHighlight(look);
+        }
+
+        if (column != null)
+        {
+            column.sizeDelta = new Vector2(column.sizeDelta.x, Mathf.Max(0f, y - MenuButtonSpacing));
+        }
+    }
+
+    /// <summary>
+    /// 「部屋を作る」の「ゲーム内で表示する名前」の見出しと欄を消して下の部品を詰め、
+    /// 空いたぶん、列の中身（文字・欄・ボタン）を <see cref="CreatePageEnlarge"/> 倍にする。名前の欄がもう無ければ何もしない。
+    /// </summary>
+    private static void RemoveNameFromCreatePage(GameObject root)
+    {
+        TitlePart createPage = FindPart(root, TitlePartRole.PageCreate);
+        if (createPage == null)
+        {
+            return;
+        }
+
+        TitleInput nameInput = null;
+        foreach (TitleInput input in createPage.GetComponentsInChildren<TitleInput>(true))
+        {
+            if (input.Kind == TitleInputKind.PlayerName)
+            {
+                nameInput = input;
+                break;
+            }
+        }
+
+        if (nameInput == null)
+        {
+            return;
+        }
+
+        RectTransform inputRect = (RectTransform)nameInput.transform;
+        RectTransform column = (RectTransform)inputRect.parent;
+        int index = inputRect.GetSiblingIndex();
+        float removed = inputRect.sizeDelta.y + 10f; // 欄の高さ＋部品どうしの間（10。「サーバーを作る」の Column と同じ）
+
+        // すぐ上の行が「ゲーム内で表示する名前を入力」の見出し（AddLabel で作った行）
+        RectTransform labelRow = index > 0 ? column.GetChild(index - 1) as RectTransform : null;
+        if (labelRow != null && labelRow.name == "Label")
+        {
+            removed += labelRow.sizeDelta.y + 10f;
+        }
+        else
+        {
+            labelRow = null;
+        }
+
+        MoveUpSiblingsAfter(column, index, removed);
+        column.sizeDelta -= new Vector2(0f, removed);
+        Object.DestroyImmediate(nameInput.gameObject);
+        if (labelRow != null)
+        {
+            Object.DestroyImmediate(labelRow.gameObject);
+        }
+
+        Enlarge(column, CreatePageEnlarge);
+    }
+
+    /// <summary>
+    /// 入れ物の中身を、文字も含めて factor 倍にする（位置・大きさ・文字の大きさ）。
+    /// Transform の Scale で大きくすると文字がぼやけるので、数字そのものを大きくする。入れ物の位置（アンカー）は動かさない。
+    /// </summary>
+    private static void Enlarge(RectTransform container, float factor)
+    {
+        container.sizeDelta *= factor;
+        foreach (RectTransform child in container.GetComponentsInChildren<RectTransform>(true))
+        {
+            if (child == container)
+            {
+                continue;
+            }
+
+            child.anchoredPosition *= factor;
+            child.sizeDelta *= factor;
+        }
+
+        foreach (Text text in container.GetComponentsInChildren<Text>(true))
+        {
+            text.fontSize = Mathf.RoundToInt(text.fontSize * factor);
+        }
     }
 
     /// <summary>「□ 名前」のチェック1行（押すとチェックが付いたり外れたりする）。</summary>
@@ -808,7 +1093,7 @@ public static class TitleScreenPrefabBuilder
         BuildMainPage(root.transform);
         BuildCreatePage(root.transform).SetActive(false);
         BuildMultiPage(root.transform).SetActive(false);
-        BuildFindPrivatePage(root.transform).SetActive(false);
+        BuildMultiMenuPage(root.transform).SetActive(false);
         BuildSettingsPage(root.transform).SetActive(false);
         BuildJoinDialog(root.transform).SetActive(false);
         BuildBusyOverlay(root.transform).SetActive(false);
@@ -851,13 +1136,13 @@ public static class TitleScreenPrefabBuilder
         Place(name.rectTransform, new Vector2(0f, 1f), new Vector2(24f, -16f), new Vector2(900f, 40f), new Vector2(0f, 1f));
         Mark(name, TitlePartRole.PlayerNameText);
 
-        // メインのボタン（左下に縦に並べる）
-        Column column = new Column("Buttons", page.transform, MainButtonSize.x, 22f,
-            new Vector2(0f, 0f), new Vector2(220f, 180f), new Vector2(0f, 0f));
-        column.Add(NewButton(column.Rect, "ソロプレイ", MainButtonSize, ButtonFontSize, TitleButtonAction.PlaySolo));
-        column.Add(NewButton(column.Rect, "マルチプレイ", MainButtonSize, ButtonFontSize, TitleButtonAction.OpenMulti));
-        column.Add(NewButton(column.Rect, "設定", MainButtonSize, ButtonFontSize, TitleButtonAction.OpenSettings));
-        column.Add(NewButton(column.Rect, "ゲームを終了", MainButtonSize, ButtonFontSize, TitleButtonAction.Quit));
+        // メインのボタン（左下に縦に並べる。2026/10/22 から マルチプレイ／プラクティス／設定／ゲームを終了 の順）
+        Column column = new Column("Buttons", page.transform, MainButtonSize.x, MenuButtonSpacing,
+            new Vector2(0f, 0f), new Vector2(220f, 140f), new Vector2(0f, 0f));
+        AddMenuButton(column, "マルチプレイ", MainButtonSize, ButtonFontSize, TitleButtonAction.OpenMulti);
+        AddMenuButton(column, "プラクティス", MainButtonSize, ButtonFontSize, TitleButtonAction.PlaySolo);
+        AddMenuButton(column, "設定", MainButtonSize, ButtonFontSize, TitleButtonAction.OpenSettings);
+        AddMenuButton(column, "ゲームを終了", MainButtonSize, ButtonFontSize, TitleButtonAction.Quit);
         column.Finish();
 
         // 右下：バージョン（{version} は再生したときに Project Settings の Version に置き換わる）
@@ -872,10 +1157,9 @@ public static class TitleScreenPrefabBuilder
     {
         GameObject page = NewPage("CreatePage", root, TitlePartRole.PageCreate);
 
+        // 名前の欄は無い（マルチプレイの画面で入れる。2026/10/22）。そのぶん、最後に全体を大きくする（Enlarge）
         Column column = new Column("Column", page.transform, 1100f, 10f,
             new Vector2(0.5f, 1f), new Vector2(0f, -36f), new Vector2(0.5f, 1f));
-
-        AddNameInput(column);
 
         // 最大人数
         AddLabel(column, "最大人数", "2〜8人");
@@ -940,24 +1224,7 @@ public static class TitleScreenPrefabBuilder
 
         column.Add(NewButton(column.Rect, "サーバーを作成", new Vector2(1100f, 70f), ButtonFontSize, TitleButtonAction.CreateServer));
         column.Finish();
-
-        AddBackButton(page.transform);
-        return page;
-    }
-
-    private static GameObject BuildFindPrivatePage(Transform root)
-    {
-        GameObject page = NewPage("FindPrivatePage", root, TitlePartRole.PageFindPrivate);
-
-        Column column = new Column("Column", page.transform, 1000f, 14f,
-            new Vector2(0.5f, 1f), new Vector2(0f, -120f), new Vector2(0.5f, 1f));
-        AddNameInput(column);
-        AddLabel(column, "参加コードを入力", "サーバーを作った人に教えてもらう");
-        AddInput(column, "例：6FJBMH", TitleInputKind.PrivateCode);
-        AddLabel(column, "パスワード", "パスワードの付いた部屋に入るときだけ");
-        AddInput(column, "パスワードなし", TitleInputKind.JoinPassword);
-        column.Add(NewButton(column.Rect, "参加する", new Vector2(1000f, 70f), ButtonFontSize, TitleButtonAction.JoinPrivate));
-        column.Finish();
+        Enlarge(column.Rect, CreatePageEnlarge);
 
         AddBackButton(page.transform);
         return page;
