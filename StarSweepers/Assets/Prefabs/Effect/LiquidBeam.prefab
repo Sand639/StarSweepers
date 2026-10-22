@@ -97,6 +97,77 @@ Light:
   m_LightUnit: 1
   m_LuxAtDistance: 1
   m_EnableSpotReflector: 1
+--- !u!1 &6238692678214928787
+GameObject:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  serializedVersion: 6
+  m_Component:
+  - component: {fileID: 4377883511988468540}
+  - component: {fileID: 302673429660599973}
+  m_Layer: 0
+  m_Name: LiquidWrap
+  m_TagString: Untagged
+  m_Icon: {fileID: 0}
+  m_NavMeshLayer: 0
+  m_StaticEditorFlags: 0
+  m_IsActive: 1
+--- !u!4 &4377883511988468540
+Transform:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 6238692678214928787}
+  serializedVersion: 2
+  m_LocalRotation: {x: 0, y: 0, z: 0, w: 1}
+  m_LocalPosition: {x: 0, y: 0, z: 0}
+  m_LocalScale: {x: 1, y: 1, z: 1}
+  m_ConstrainProportionsScale: 0
+  m_Children: []
+  m_Father: {fileID: 801322660591540158}
+  m_LocalEulerAnglesHint: {x: 0, y: 0, z: 0}
+--- !u!114 &302673429660599973
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 6238692678214928787}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: 8b3b51d0861598e478cd8792c610c6bf, type: 3}
+  m_Name: 
+  m_EditorClassIdentifier: Assembly-CSharp::LiquidWrap
+  rimMaterial: {fileID: 2100000, guid: 164fb0f4da5cce449944283f085cf86f, type: 2}
+  dropletMaterial: {fileID: 2100000, guid: e1455f97920180c428141ced912d63d5, type: 2}
+  brightness: 1.6
+  rimPower: 4
+  rimStrength: 0.5
+  fillStrength: 0.02
+  shellOffset: 0.005
+  outlineWidth: 0.05
+  outlineAlpha: 0.9
+  wobble: 0.35
+  glowWidth: 0.12
+  glowAlpha: 0.25
+  flowSpeed: 2
+  flowScale: 4
+  wrapSeconds: 0.5
+  edgeSoftness: 0.25
+  frontGlow: 1.5
+  closeFlash: 0.8
+  burstSeconds: 0.3
+  burstExpand: 0.35
+  contactSplashCount: 10
+  closeSplashCount: 20
+  burstSplashCount: 40
+  dripRate: 6
+  dropletSize: {x: 0.05, y: 0.12}
+  dropletSpeed: 2.5
+  dropletLife: {x: 0.3, y: 0.7}
 --- !u!1 &6538644839576336009
 GameObject:
   m_ObjectHideFlags: 0
@@ -128,6 +199,7 @@ Transform:
   m_ConstrainProportionsScale: 0
   m_Children:
   - {fileID: 6519158368065222162}
+  - {fileID: 4377883511988468540}
   m_Father: {fileID: 0}
   m_LocalEulerAnglesHint: {x: 0, y: 0, z: 0}
 --- !u!114 &7095729999162572078
@@ -179,3 +251,4 @@ MonoBehaviour:
   colorSpreadSeconds: 0.35
   headLight: {fileID: 1436378611120300958}
   lightIntensity: 3
+  useHeadLight: 1

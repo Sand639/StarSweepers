@@ -10,6 +10,9 @@ using UnityEngine;
 /// （つかんだ瞬間に、先端から根元へ染まっていく）。
 /// チームの色は <see cref="SetTeamColor"/>、つかんでいるかは <see cref="SetGrabbing"/> で外から教えてもらう。
 ///
+/// **つかんだ瞬間から約 0.5 秒で、物資のふちを液体のリムライトで縁取る**（<see cref="LiquidWrap"/>。Use Wrap がオンのとき）。
+/// くっついた所から液体が広がって包み、はなすと外へふくらみながら消える。
+///
 /// Use Liquid をオフにすると、前と同じ LineRenderer のまっすぐな1本に戻る。
 ///
 /// 使い方：LineRenderer の付いた空オブジェクトに付けて、HookController の Line に入れる。
@@ -39,9 +42,25 @@ public class HookLine : MonoBehaviour
     [Range(0f, 1f)]
     [SerializeField] private float vividSaturation = 1f;
 
+    [Header("つかんだ物資の縁取り")]
+    [Tooltip("オンなら、物資をつかんだときに液体のリムライトで縁取る（Use Liquid がオンのときだけ）。" +
+             "見た目の値は、液体のビームのプレハブの子「LiquidWrap」で変える")]
+    [SerializeField] private bool useWrap = true;
+
+    [Tooltip("つかんだ物資を探す範囲（フックの先からの距離。メートル）")]
+    [SerializeField] private float wrapSearchRadius = 0.8f;
+
+    [Tooltip("これより大きな物（大きな板など）は縁取らない（メートル）")]
+    [SerializeField] private float wrapMaxSize = 5f;
+
     private LineRenderer line;
     private LiquidBeam liquid;
+    private LiquidWrap wrap;
     private bool grabbing;
+
+    /// <summary>糸の先（フックの先）の、最後に教えてもらった位置。</summary>
+    private Vector3 tipPosition;
+    private bool hasTip;
 
     /// <summary>糸を液体で描いているか。</summary>
     public bool UsesLiquid => useLiquid;
@@ -56,6 +75,18 @@ public class HookLine : MonoBehaviour
         {
             liquid = CreateLiquid();
             liquid.SetColor(CurrentColor());
+
+            if (useWrap)
+            {
+                // 縁取りは液体のビームのプレハブの子に入っている（値はそこのインスペクターで変える）。
+                // 入っていないとき（プレハブなしの検証シーンなど）は、初期値で作る
+                wrap = liquid.GetComponentInChildren<LiquidWrap>(true);
+
+                if (wrap == null)
+                {
+                    wrap = LiquidWrap.Create(liquid.transform, liquid.LineMaterial);
+                }
+            }
         }
 
         Show(false);
@@ -80,6 +111,9 @@ public class HookLine : MonoBehaviour
     /// <summary>糸の両端を決める。a＝手元、b＝フックの先。</summary>
     public void SetEnds(Vector3 a, Vector3 b)
     {
+        tipPosition = b;
+        hasTip = true;
+
         if (liquid != null)
         {
             liquid.Follow(a, b);
@@ -105,6 +139,12 @@ public class HookLine : MonoBehaviour
             if (!visible)
             {
                 liquid.Stop();
+                hasTip = false;
+
+                if (wrap != null)
+                {
+                    wrap.Release();
+                }
             }
             return;
         }
@@ -123,6 +163,11 @@ public class HookLine : MonoBehaviour
         if (liquid != null)
         {
             liquid.SetColor(CurrentColor());
+        }
+
+        if (wrap != null && grabbing)
+        {
+            wrap.SetColor(CurrentColor());
         }
     }
 
@@ -143,6 +188,82 @@ public class HookLine : MonoBehaviour
         {
             liquid.ChangeColorFromTip(CurrentColor());
         }
+
+        if (wrap != null)
+        {
+            if (!grabbing)
+            {
+                wrap.Release();
+            }
+            else if (hasTip)
+            {
+                Transform grabbed = FindGrabbedObject(tipPosition);
+
+                if (grabbed != null)
+                {
+                    wrap.Play(grabbed, tipPosition, CurrentColor());
+                }
+            }
+        }
+    }
+
+    /// <summary>
+    /// **フックの先にくっついている物を探す**（縁取りのため）。
+    /// 他の人のフックでは「何をつかんだか」が届かないので、自分のときも同じく、フックの先の近くから探す。
+    /// 物資（<see cref="HookableObject"/>）を優先し、無ければ近くの当たり判定から探す。
+    /// </summary>
+    private Transform FindGrabbedObject(Vector3 tip)
+    {
+        Transform best = null;
+        float bestDistance = wrapSearchRadius;
+
+        foreach (HookableObject hookable in HookableObject.All)
+        {
+            if (hookable == null)
+            {
+                continue;
+            }
+
+            Collider collider = hookable.GetComponent<Collider>();
+            float distance = collider != null
+                ? Vector3.Distance(collider.bounds.ClosestPoint(tip), tip)
+                : Vector3.Distance(hookable.transform.position, tip);
+
+            if (distance < bestDistance)
+            {
+                best = hookable.transform;
+                bestDistance = distance;
+            }
+        }
+
+        if (best != null)
+        {
+            return best;
+        }
+
+        // 物資でない物（引っぱれる大きな物など）。自分の体とフックの先は除く
+        foreach (Collider collider in Physics.OverlapSphere(tip, wrapSearchRadius, ~0, QueryTriggerInteraction.Ignore))
+        {
+            if (collider.transform.IsChildOf(transform.root) || collider.GetComponentInParent<HookProjectile>() != null)
+            {
+                continue;
+            }
+
+            if (collider.bounds.size.magnitude > wrapMaxSize)
+            {
+                continue;
+            }
+
+            float distance = Vector3.Distance(collider.bounds.ClosestPoint(tip), tip);
+
+            if (distance < bestDistance)
+            {
+                best = collider.attachedRigidbody != null ? collider.attachedRigidbody.transform : collider.transform;
+                bestDistance = distance;
+            }
+        }
+
+        return best;
     }
 
     /// <summary>

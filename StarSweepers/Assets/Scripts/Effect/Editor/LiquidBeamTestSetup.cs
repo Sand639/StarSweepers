@@ -11,6 +11,7 @@ using UnityEngine.Rendering.Universal;
 /// | --- | --- |
 /// | `Tools > StarSweepers > 液体ビームのプレハブを作る（無ければ）` | `Assets/Prefabs/Effect/LiquidBeam.prefab` を作る。**あれば作り直さない** |
 /// | `Tools > StarSweepers > 液体ビームの検証シーンを作り直す` | 試すための専用シーンを作る（プレハブが無ければ先に作る） |
+/// | `Tools > StarSweepers > 液体ビームのプレハブに物資の縁取りを足す（無ければ）` | プレハブの子に <see cref="LiquidWrap"/> を足す。**入っていれば何もしない** |
 ///
 /// ※ Editor フォルダにあるため、ゲームのビルドには含まれない。
 /// </summary>
@@ -18,6 +19,7 @@ public static class LiquidBeamTestSetup
 {
     private const string MaterialFolder = "Assets/Art/Materials";
     private const string LiquidMaterialPath = MaterialFolder + "/LiquidAlpha.mat";
+    private const string RimMaterialPath = MaterialFolder + "/LiquidRim.mat";
     private const string CharacterMaterialPath = MaterialFolder + "/LiquidBeamTestCharacter.mat";
     private const string GroundMaterialPath = MaterialFolder + "/LiquidBeamTestGround.mat";
 
@@ -161,6 +163,8 @@ public static class LiquidBeamTestSetup
         serialized.FindProperty("headLight").objectReferenceValue = headLight;
         serialized.ApplyModifiedPropertiesWithoutUndo();
 
+        AddWrapChild(root);
+
         if (!AssetDatabase.IsValidFolder(PrefabFolder))
         {
             AssetDatabase.CreateFolder("Assets/Prefabs", "Effect");
@@ -171,9 +175,70 @@ public static class LiquidBeamTestSetup
         return prefab;
     }
 
+    /// <summary>
+    /// **すでにある液体ビームのプレハブに、物資の縁取り（<see cref="LiquidWrap"/>）を子として足す。**
+    /// 入っていれば何もしない（インスペクターで調整した値が消えないように）。
+    /// フックの糸（<c>HookLine</c>）は、この子を見つけて使う。
+    /// </summary>
+    [MenuItem("Tools/StarSweepers/液体ビームのプレハブに物資の縁取りを足す（無ければ）")]
+    public static void AddWrapToPrefab()
+    {
+        if (AssetDatabase.LoadAssetAtPath<GameObject>(BeamPrefabPath) == null)
+        {
+            GetOrCreateBeamPrefab();
+            return;
+        }
+
+        GameObject root = PrefabUtility.LoadPrefabContents(BeamPrefabPath);
+
+        bool added = AddWrapChild(root);
+
+        if (added)
+        {
+            PrefabUtility.SaveAsPrefabAsset(root, BeamPrefabPath);
+        }
+
+        PrefabUtility.UnloadPrefabContents(root);
+        Debug.Log($"{BeamPrefabPath}：{(added ? "物資の縁取り（LiquidWrap）を足しました" : "すでに入っているので、そのまま")}");
+    }
+
+    /// <summary>縁取りの子が無ければ足す。足したら true。</summary>
+    private static bool AddWrapChild(GameObject root)
+    {
+        if (root.GetComponentInChildren<LiquidWrap>(true) != null)
+        {
+            return false;
+        }
+
+        GameObject wrapObject = new GameObject("LiquidWrap");
+        wrapObject.transform.SetParent(root.transform, false);
+        LiquidWrap wrap = wrapObject.AddComponent<LiquidWrap>();
+
+        SerializedObject serialized = new SerializedObject(wrap);
+        serialized.FindProperty("rimMaterial").objectReferenceValue = GetOrCreateRimMaterial();
+        serialized.FindProperty("dropletMaterial").objectReferenceValue = GetOrCreateLiquidMaterial();
+        serialized.ApplyModifiedPropertiesWithoutUndo();
+        return true;
+    }
+
     // ------------------------------------------------------------
     // 素材
     // ------------------------------------------------------------
+
+    /// <summary>縁取りのマテリアル（シェーダーは StarSweepers/LiquidRim）。値は LiquidWrap が毎フレーム入れるので、ここは初期値のまま。</summary>
+    private static Material GetOrCreateRimMaterial()
+    {
+        Material existing = AssetDatabase.LoadAssetAtPath<Material>(RimMaterialPath);
+
+        if (existing != null)
+        {
+            return existing;
+        }
+
+        Material material = new Material(Shader.Find("StarSweepers/LiquidRim"));
+        AssetDatabase.CreateAsset(material, RimMaterialPath);
+        return material;
+    }
 
     /// <summary>
     /// ビーム用の半透明のマテリアル（`LiquidAlpha.mat`）を読み込む。無ければ、ビームが実行時に作る物と同じ設定で作って保存する。

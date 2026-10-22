@@ -269,6 +269,9 @@ public class LiquidBeam : MonoBehaviour
     /// <summary>液体の色（変えている途中なら、変えた先の色）。</summary>
     public Color LiquidColor => toColor;
 
+    /// <summary>流れを描いているマテリアル。<see cref="LiquidWrap"/>（物資を囲う枠）に同じものを使ってもらう。</summary>
+    public Material LineMaterial => lineMaterial;
+
     /// <summary>オンなら、<see cref="Stop"/> を呼ぶまで出しっぱなしにする。</summary>
     public bool HoldUntilStopped
     {
@@ -1160,8 +1163,9 @@ public class LiquidBeam : MonoBehaviour
 
     /// <summary>
     /// 液体の見た目に使うテクスチャ。初めて使われたときに1回だけ作り、すべてのビームで使い回す。
+    /// <see cref="LiquidWrap"/>（つかんだ物資の縁取り）でも同じものを使う。
     /// </summary>
-    private static class LiquidTextures
+    internal static class LiquidTextures
     {
         private static Texture2D tube;
         private static Texture2D soft;
