@@ -12,7 +12,7 @@ using UnityEngine.UI;
 /// | ① 飛んでくる | 各チームのゴールエリアが、そのチームのプレイヤーを乗せ、横に並んで**マップの奥から手前へ**飛んでくる。
 ///   カメラはゴールエリアの手前の斜め上（45 度）から、ゴールエリア全部の中心を狙って一緒に下がる。
 ///   ゴールエリアより少しゆっくり下がるので、最初から乗っている人が映ったまま、だんだんこちらへ近づいて見える。
-///   名前のタグを、カメラから見て左の人から順に1人ずつ強調する（① の秒数 ÷ 人数 ごとに、拡大と縮小をくり返す） | 3 秒 |
+///   名前のタグを、カメラから見て左の人から順に1人ずつ強調する（① の秒数 ÷ 人数 ずつ、自分の番の間だけ大きくなる） | 3 秒 |
 /// | ② 設置 | マップに近づいたら、それぞれ**元のゴールの位置へ飛んで設置される**。カメラはふだんのカメラへ移る | 1.5 秒 |
 /// | ③ カウントダウン | 設置されたら 3・2・1 → START!（ここから動ける） | 3 秒 |
 ///
@@ -45,6 +45,9 @@ public class SpaceJunkGoalFlyIntro : MonoBehaviour
 
     /// <summary>① の終わりに画面の左右に残す余白（m）。</summary>
     private const float CameraSideMargin = 1.5f;
+
+    /// <summary>名前のタグが、番の始めに大きくなる・番の終わりに元へ戻るのにかける秒数。</summary>
+    private const float EmphasisRampSeconds = 0.15f;
 
     /// <summary>見た目が無いゴールの、横に並べるときの幅（m）。</summary>
     private const float DefaultGoalWidth = 4f;
@@ -522,7 +525,9 @@ public class SpaceJunkGoalFlyIntro : MonoBehaviour
 
     /// <summary>
     /// ① の間、**カメラから見て左の人から順に、① の秒数 ÷ 人数 ごとに1人ずつ**名前のタグを強調する。
-    /// 強調の間に、拡大と縮小を Name Emphasis Pulses 回くり返す。
+    /// **自分の番が来たら Name Emphasis Scale 倍まで大きくなり、番の間は大きいまま、番の終わりに元の大きさへ戻る**
+    /// （2026/10/27・大槻さん「拡大するだけにして、自分の番が終わったら元のサイズに戻る感じ」。前は拡大と縮小をくり返していた）。
+    /// 大きくなる・戻るは、パッと切り替えず <see cref="EmphasisRampSeconds"/> 秒でなめらかに変える。
     /// </summary>
     private void UpdateEmphasis(float sinceIntro, float flyEnd)
     {
@@ -542,11 +547,13 @@ public class SpaceJunkGoalFlyIntro : MonoBehaviour
 
         float window = flyEnd / riders.Count;
         int index = Mathf.Min(riders.Count - 1, Mathf.FloorToInt(sinceIntro / window));
-        float local = (sinceIntro - index * window) / window;
+        float elapsed = sinceIntro - index * window;
+        float remaining = window - elapsed;
 
-        // 1 → 最大 → 1 を Name Emphasis Pulses 回くり返す
-        float wave = 0.5f - 0.5f * Mathf.Cos(local * round.NameEmphasisPulses * 2f * Mathf.PI);
-        emphasis[riders[index].player] = Mathf.Lerp(1f, round.NameEmphasisScale, wave);
+        // 番の始めに大きくなり、番の終わりに戻る（人数が多くて番が短いときは、番の 1/4 で変える）
+        float ramp = Mathf.Max(0.001f, Mathf.Min(EmphasisRampSeconds, window * 0.25f));
+        float grow = Mathf.SmoothStep(0f, 1f, Mathf.Min(elapsed, remaining) / ramp);
+        emphasis[riders[index].player] = Mathf.Lerp(1f, round.NameEmphasisScale, grow);
     }
 
     // ------------------------------------------------------------
