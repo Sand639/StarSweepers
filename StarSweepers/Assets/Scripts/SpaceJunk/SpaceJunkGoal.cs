@@ -1,6 +1,7 @@
 using System.Collections.Generic;
 using Unity.Netcode;
 using UnityEngine;
+using UnityEngine.SceneManagement;
 
 /// <summary>
 /// **素材を投げ入れるゴール1つ分。** ステージの四方に4つ置く。
@@ -51,8 +52,81 @@ public class SpaceJunkGoal : NetworkBehaviour
     [Tooltip("光っている秒数")]
     [SerializeField] private float flashSeconds = 0.4f;
 
+    [Tooltip("ラウンドの始まりの演出で飛ばす見た目のまとまり（2026/10/27）。空なら Pad Renderer の床だけを飛ばす。" +
+             "ゴールエリアを1つの3Dモデルに替えたら、そのモデルを入れる")]
+    [SerializeField] private Transform introVisual;
+
     /// <summary>ゴールの並び順の番号。</summary>
     public int GoalIndex => goalIndex;
+
+    /// <summary>始まりの演出で飛ばす見た目のまとまり。設定が無ければ色を塗る床。どちらも無ければ null。</summary>
+    public Transform IntroVisual => introVisual != null ? introVisual : padRenderer != null ? padRenderer.transform : null;
+
+    /// <summary>
+    /// 始まりの演出で飛ばす見た目（<see cref="IntroVisual"/>）の、世界での範囲。見た目が無ければ false。
+    /// 演出中は本物の見た目を隠すので、Renderer の範囲ではなく形（メッシュ）から求める。
+    /// </summary>
+    public bool TryGetIntroVisualBounds(out Bounds bounds)
+    {
+        bounds = default;
+        bool found = false;
+
+        Transform root = IntroVisual;
+        if (root == null)
+        {
+            return false;
+        }
+
+        foreach (MeshFilter filter in root.GetComponentsInChildren<MeshFilter>())
+        {
+            if (filter.sharedMesh == null)
+            {
+                continue;
+            }
+
+            // 形の箱の8つの角を、世界の位置に直して包む
+            Bounds local = filter.sharedMesh.bounds;
+            Matrix4x4 toWorld = filter.transform.localToWorldMatrix;
+            for (int i = 0; i < 8; i++)
+            {
+                Vector3 sign = new Vector3((i & 1) == 0 ? -1f : 1f, (i & 2) == 0 ? -1f : 1f, (i & 4) == 0 ? -1f : 1f);
+                Vector3 corner = toWorld.MultiplyPoint3x4(local.center + Vector3.Scale(local.extents, sign));
+
+                if (found)
+                {
+                    bounds.Encapsulate(corner);
+                }
+                else
+                {
+                    bounds = new Bounds(corner, Vector3.zero);
+                    found = true;
+                }
+            }
+        }
+
+        return found;
+    }
+
+    /// <summary>
+    /// **そのシーンにある、そのチームのゴールのうち、番号がいちばん小さいもの**（無ければ null）。
+    /// 1チームで全部のゴールが自分たちのものでも、**どのPCでも同じゴールを選べる**ように番号で決める
+    /// （<see cref="All"/> の並びはPCによって変わりうるため）。
+    /// </summary>
+    public static SpaceJunkGoal FirstOwnedBy(int team, Scene scene)
+    {
+        SpaceJunkGoal found = null;
+
+        foreach (SpaceJunkGoal goal in All)
+        {
+            if (goal != null && goal.gameObject.scene == scene && goal.OwnerTeam == team &&
+                (found == null || goal.goalIndex < found.goalIndex))
+            {
+                found = goal;
+            }
+        }
+
+        return found;
+    }
 
     /// <summary>このゴールを持っているチーム。<see cref="SpaceJunkTeams.ClosedGoal"/> なら閉ざされている。</summary>
     public int OwnerTeam { get; private set; } = SpaceJunkTeams.ClosedGoal;
