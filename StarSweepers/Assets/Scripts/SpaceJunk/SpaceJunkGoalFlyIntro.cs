@@ -10,7 +10,8 @@ using UnityEngine.UI;
 /// | --- | --- | --- |
 /// | ⓪ 読み込み待ち | ゴールエリアは奥の飛び始めの位置で止まっている。マップの名前と「ラウンド ○」が出る | 1.5 秒 |
 /// | ① 飛んでくる | 各チームのゴールエリアが、そのチームのプレイヤーを乗せ、横に並んで**マップの奥から手前へ**飛んでくる。
-///   カメラはゴールエリア全部の中心を狙い、全部が映るように画角を変える。
+///   カメラはゴールエリアの手前の斜め上（45 度）から、ゴールエリア全部の中心を狙って一緒に下がる。
+///   ゴールエリアより少しゆっくり下がるので、最初から乗っている人が映ったまま、だんだんこちらへ近づいて見える。
 ///   名前のタグを、カメラから見て左の人から順に1人ずつ強調する（① の秒数 ÷ 人数 ごとに、拡大と縮小をくり返す） | 3 秒 |
 /// | ② 設置 | マップに近づいたら、それぞれ**元のゴールの位置へ飛んで設置される**。カメラはふだんのカメラへ移る | 1.5 秒 |
 /// | ③ カウントダウン | 設置されたら 3・2・1 → START!（ここから動ける） | 3 秒 |
@@ -39,11 +40,11 @@ public class SpaceJunkGoalFlyIntro : MonoBehaviour
     /// <summary>② 元の位置へ飛ぶときに、途中でふくらむ高さ（m）。まっすぐ降りるより「飛んでいく」感じにするため。</summary>
     private const float LandArcHeight = 1.5f;
 
-    /// <summary>① のカメラの置き場所。マップに近づいた位置（① の終わり）から、手前へ何 m か。</summary>
-    private const float CameraBack = 14f;
+    /// <summary>① のカメラが狙う高さ（ゴールエリアの中心から上へ。m）。乗っている人の胸のあたり。</summary>
+    private const float CameraTargetHeight = 1f;
 
-    /// <summary>① のカメラの置き場所。マップに近づいた位置（① の終わり）から、上へ何 m か。</summary>
-    private const float CameraUp = 3f;
+    /// <summary>① の終わりに画面の左右に残す余白（m）。</summary>
+    private const float CameraSideMargin = 1.5f;
 
     /// <summary>見た目が無いゴールの、横に並べるときの幅（m）。</summary>
     private const float DefaultGoalWidth = 4f;
@@ -127,8 +128,11 @@ public class SpaceJunkGoalFlyIntro : MonoBehaviour
     /// <summary>カメラから見た右（奥を向いたときの右）。</summary>
     private Vector3 right = Vector3.right;
 
-    /// <summary>① のカメラの位置。</summary>
-    private Vector3 cameraPosition;
+    /// <summary>① の終わりの、狙う所からカメラまでの距離（横に並んだゴールエリアが画面の幅にちょうど収まる距離。m）。</summary>
+    private float cameraDistance = 10f;
+
+    /// <summary>演出のカメラの画角（ふだんのカメラから写した値。① の間は変えない）。</summary>
+    private float baseFieldOfView = 60f;
 
     /// <summary>ゴールエリアに乗せるために切った、プレイヤーの当たり判定（設置したら戻す）。</summary>
     private readonly List<CharacterController> disabledControllers = new List<CharacterController>();
@@ -272,7 +276,6 @@ public class SpaceJunkGoalFlyIntro : MonoBehaviour
         // ① の終わり … マップの奥の端の少し先に、横に並ぶ。① の始まりは、そこからさらに奥
         Vector3 approachCenter = Center + backward * radius;
         float cursor = -total * 0.5f;
-        float height = 0f;
 
         foreach (FlyingGoal goal in flying)
         {
@@ -282,12 +285,18 @@ public class SpaceJunkGoalFlyIntro : MonoBehaviour
             goal.Approach = new Vector3(approachCenter.x, goal.Final.y + round.FlyInHeight, approachCenter.z) + right * across;
             goal.Start = goal.Approach + backward * round.FlyInDistance;
             goal.Position = goal.Start;
-            height += goal.Approach.y;
         }
 
-        // ① のカメラ … マップに近づいた位置の手前・少し上から、奥を見る（飛んでくるゴールエリアを正面から迎える）
-        height = flying.Count > 0 ? height / flying.Count : Center.y;
-        cameraPosition = new Vector3(approachCenter.x, height, approachCenter.z) - backward * CameraBack + Vector3.up * CameraUp;
+        // ① の終わりのカメラの距離 … 横に並んだゴールエリア全部（＋余白）が、画面の幅にちょうど収まる距離。
+        // 画角はふだんのカメラから写したものを使い、① の間は変えない
+        if (introCamera != null)
+        {
+            baseFieldOfView = introCamera.fieldOfView;
+        }
+
+        float aspect = introCamera != null ? Mathf.Max(0.1f, introCamera.aspect) : 16f / 9f;
+        float sideTan = Mathf.Tan(baseFieldOfView * 0.5f * Mathf.Deg2Rad) * aspect;
+        cameraDistance = Mathf.Max(6f, (total * 0.5f + CameraSideMargin) / Mathf.Max(0.01f, sideTan));
     }
 
     /// <summary>
@@ -545,7 +554,9 @@ public class SpaceJunkGoalFlyIntro : MonoBehaviour
     // ------------------------------------------------------------
 
     /// <summary>
-    /// ⓪① ゴールエリア全部の中心を狙い、全部が映るように画角を変える（カメラの位置は動かさない。近づいてくる様子が分かるように）。
+    /// ⓪① ゴールエリアの手前（飛んでくる先）の斜め上から、Fly In Camera Pitch（45 度）で見下ろして、ゴールエリア全部の中心を狙う。
+    /// ゴールエリアと一緒に下がるが、離れ方を Fly In Camera Start Scale 倍 → 1 倍に縮めていくので、
+    /// **最初から乗っている人が映ったまま、だんだんこちらへ近づいてくるように見える**（2026/10/27・大槻さん）。
     /// ② ① の終わりの見え方から、ふだんのカメラの位置へ移る（② のゴールエリアは追わない。カメラの真下や後ろへ回り込むので、
     /// 追うとカメラが振り返って、移る途中で斜めを向いてしまった）。設置し終えたら、重ねていたカメラを止める。
     /// </summary>
@@ -575,12 +586,19 @@ public class SpaceJunkGoalFlyIntro : MonoBehaviour
             {
                 target += atApproach ? goal.Approach : goal.Position;
             }
-            target = target / flying.Count + Vector3.up * 1.5f;
+            target = target / flying.Count + Vector3.up * CameraTargetHeight;
         }
 
-        Vector3 position = cameraPosition;
+        // 離れ方：飛び始めは Start Scale 倍、① の終わりで 1 倍（ゴールエリアと同じく、終わりに向かってゆっくりにする）
+        float t = atApproach ? 1f : Mathf.Clamp01(sinceIntro / Mathf.Max(0.01f, flyEnd));
+        float eased = 1f - (1f - t) * (1f - t);
+        float distance = cameraDistance * Mathf.Lerp(round.FlyInCameraStartScale, 1f, eased);
+
+        // 狙う所から、手前（飛んでくる先）へ倒した向きに離れて、見下ろす
+        float pitch = round.FlyInCameraPitch * Mathf.Deg2Rad;
+        Vector3 position = target - backward * (distance * Mathf.Cos(pitch)) + Vector3.up * (distance * Mathf.Sin(pitch));
         Quaternion rotation = Quaternion.LookRotation(target - position, Vector3.up);
-        float fieldOfView = FieldOfViewToFit(position, rotation, atApproach);
+        float fieldOfView = baseFieldOfView;
 
         if (atApproach)
         {
@@ -597,46 +615,6 @@ public class SpaceJunkGoalFlyIntro : MonoBehaviour
 
         introCamera.transform.SetPositionAndRotation(position, rotation);
         introCamera.fieldOfView = fieldOfView;
-    }
-
-    /// <summary>
-    /// ゴールエリア全部（左右の端と、上に乗っている人・名前のタグの高さまで）が画面に入る、縦の画角（度）。
-    /// <paramref name="atApproach"/> なら、いまの位置ではなくマップに近づいた位置（① の終わり）で求める。
-    /// 少し余白を足し、10〜75 度に収める。
-    /// </summary>
-    private float FieldOfViewToFit(Vector3 position, Quaternion rotation, bool atApproach)
-    {
-        Quaternion toLocal = Quaternion.Inverse(rotation);
-        float aspect = Mathf.Max(0.1f, introCamera.aspect);
-        float needed = 0.05f;
-
-        foreach (FlyingGoal goal in flying)
-        {
-            Vector3 center = atApproach ? goal.Approach : goal.Position;
-            float half = goal.Width * 0.5f + 1f;
-            needed = Mathf.Max(needed,
-                TangentToSee(center - right * half, position, toLocal, aspect),
-                TangentToSee(center + right * half, position, toLocal, aspect),
-                TangentToSee(center + Vector3.up * 3f, position, toLocal, aspect),
-                TangentToSee(center - Vector3.up * 3f, position, toLocal, aspect));
-        }
-
-        return Mathf.Clamp(2f * Mathf.Atan(needed * 1.15f) * Mathf.Rad2Deg, 10f, 75f);
-    }
-
-    /// <summary>
-    /// その点を画面に入れるのに必要な、縦の画角の半分の tan。横のはみ出しは画面の縦横比で縦に直す。
-    /// カメラの後ろ（またはすぐ近く）の点は数えない。
-    /// </summary>
-    private static float TangentToSee(Vector3 point, Vector3 position, Quaternion toLocal, float aspect)
-    {
-        Vector3 local = toLocal * (point - position);
-        if (local.z < 0.5f)
-        {
-            return 0f;
-        }
-
-        return Mathf.Max(Mathf.Abs(local.y) / local.z, Mathf.Abs(local.x) / local.z / aspect);
     }
 
     /// <summary>高さを 0 にした（地面と平行にした）ベクトル。</summary>

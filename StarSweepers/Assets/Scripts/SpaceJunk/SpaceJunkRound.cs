@@ -170,6 +170,15 @@ public partial class SpaceJunkRound : NetworkBehaviour
     [Min(0f)]
     [SerializeField] private float flyInGap = 3f;
 
+    [Tooltip("① カメラが見下ろす角度（度）。カメラはゴールエリアの手前（飛んでくる先）の斜め上から、乗っている人を映したまま一緒に下がる")]
+    [Range(5f, 85f)]
+    [SerializeField] private float flyInCameraPitch = 45f;
+
+    [Tooltip("① 飛び始めのとき、カメラが ① の終わりのときの何倍離れているか。" +
+             "1 より大きいほど、カメラがゴールエリアよりゆっくり下がり、ゴールエリアがこちらへ近づいてくるように見える")]
+    [Min(1f)]
+    [SerializeField] private float flyInCameraStartScale = 1.8f;
+
     [Tooltip("② マップに近づいたあと、元のゴールの位置へ飛んで設置されるまでの秒数。設置されたらカウントダウンが始まる")]
     [Min(0f)]
     [SerializeField] private float flyInLandSeconds = 1.5f;
@@ -201,6 +210,12 @@ public partial class SpaceJunkRound : NetworkBehaviour
 
     /// <summary>① ゴールエリアどうしのすき間。</summary>
     public float FlyInGap => flyInGap;
+
+    /// <summary>① カメラが見下ろす角度（度）。</summary>
+    public float FlyInCameraPitch => flyInCameraPitch;
+
+    /// <summary>① 飛び始めのとき、カメラが ① の終わりのときの何倍離れているか。</summary>
+    public float FlyInCameraStartScale => flyInCameraStartScale;
 
     /// <summary>② 元の位置へ飛んで設置されるまでの秒数。</summary>
     public float FlyInLandSeconds => flyInLandSeconds;
