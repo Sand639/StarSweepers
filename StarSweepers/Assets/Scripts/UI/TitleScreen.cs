@@ -9,6 +9,7 @@ using Unity.Services.Multiplayer;
 using UnityEngine;
 using UnityEngine.EventSystems;
 using UnityEngine.InputSystem;
+using UnityEngine.InputSystem.DualShock;
 using UnityEngine.InputSystem.LowLevel;
 using UnityEngine.InputSystem.UI;
 using UnityEngine.UI;
@@ -19,7 +20,7 @@ using UnityEngine.UI;
 /// | 画面 | できること |
 /// | --- | --- |
 /// | メイン | マルチプレイ／プラクティス（オフラインでロビーへ）／設定／ゲームを終了。右下にバージョン（2026/10/22 から） |
-/// | マルチプレイ | 名前・クイックマッチ／部屋を探す／部屋を作る（2026/10/22） |
+/// | マルチプレイ | 名前・クイックマッチ／部屋を探す／部屋を作る（2026/10/22）。**2026/10/27 から、この3つの画面は右に出てくるタブレットの中に出し、メインは左に出したまま** |
 /// | 部屋を探す | 真ん中の枠に：右上の「番号入力で検索する」（番号の近い部屋に絞る。プライベートは全部一致で出す）／募集中の部屋の一覧（**LAN の部屋はいつも一番上**。鍵＝パスワードあり）／下に ■パブリック ■フレンド ■パスワード不要（2026/10/22。大槻さんの写真の形） |
 /// | 部屋を作る | 最大人数（2〜8。初期値8）・サーバーの名前・パスワード・□パブリック □プライベート □LAN → 作成（名前の欄は無い。2026/10/22） |
 /// | 設定 | サウンド（音量）／グラフィック（解像度・画面モード・フレームレート上限・垂直同期・画質）／ゲーム全般（マウス感度・操作タイプ） |
@@ -197,6 +198,9 @@ public class TitleScreen : MonoBehaviour
     /// <summary>いま出している画面（戻る先を決めるのと、毎フレームの処理を分けるのに使う）。</summary>
     private Page current = Page.Main;
 
+    /// <summary>タブレット（マルチプレイ・部屋を探す・部屋を作る）が開いているか。閉じた状態から開いたときだけ右から出す。</summary>
+    private bool tabletOpen;
+
     // サーバーを作る
     // 公開のしかたは createLan と createPrivate の組み合わせで決まる：
     // LAN（createLan が true。createPrivate は見ない）／パブリック（どちらも false）／プライベート（createPrivate だけ true）
@@ -265,6 +269,8 @@ public class TitleScreen : MonoBehaviour
     {
         IsVisible = false;
         SetLanListening(false);
+        UiPointer.StickScrollTarget = null;
+        tabletOpen = false;
 
         // **閉じたあとも、カーソルは出したままにする。**（2026/10/6「ロビーでクリックするたびにカーソルが隠れる」の修正）
         ShowCursor();
@@ -282,6 +288,9 @@ public class TitleScreen : MonoBehaviour
         {
             UpdateJoinableList();
         }
+
+        UpdateTabletSlide();
+        UpdateTabletHints();
 
         // つないでいる途中の表示が出ている間は戻らない（その表示の「戻る」「やめる」「OK」で閉じる）
         GameObject busy = PartObject(TitlePartRole.BusyOverlay);
@@ -362,6 +371,12 @@ public class TitleScreen : MonoBehaviour
             if (part.Role != TitlePartRole.None && !parts.ContainsKey(part.Role))
             {
                 parts[part.Role] = part;
+            }
+
+            // 右下の操作の案内は、タブレットの画面ごとにあるので全部集める
+            if (part.Role == TitlePartRole.TabletHint && part.GetComponent<Text>() != null)
+            {
+                tabletHints.Add(part.GetComponent<Text>());
             }
         }
 
@@ -554,6 +569,8 @@ public class TitleScreen : MonoBehaviour
         {
             case TitleInputKind.PlayerName:
                 GameSettings.PlayerName = value;
+                // タブレットの後ろに出ているメインの「名前：○○」も、打つたびに合わせる
+                RefreshMainName();
                 break;
             case TitleInputKind.ServerName:
                 createServerName = value;
@@ -676,6 +693,7 @@ public class TitleScreen : MonoBehaviour
     /// </summary>
     private void ShowPage(Page page)
     {
+        FinishTabletSlide();
         current = page;
         SetLanListening(page == Page.Multi);
         if (page == Page.Multi)
@@ -684,17 +702,34 @@ public class TitleScreen : MonoBehaviour
             joinableSignature = null;
         }
 
+        // タブレットの画面（マルチプレイ・部屋を探す・部屋を作る）の間は、後ろにメインの画面も出したままにする（2026/10/27）
+        bool tablet = IsTabletPage(page);
         foreach (KeyValuePair<Page, GameObject> pair in pages)
         {
-            pair.Value.SetActive(pair.Key == page);
+            pair.Value.SetActive(pair.Key == page || (tablet && pair.Key == Page.Main));
         }
 
+        // タブレットが閉じた状態から開いたときだけ、右から出てくる（タブレットの中で画面を移るときは動かさない）
+        if (tablet && !tabletOpen)
+        {
+            StartTabletSlide(pages.TryGetValue(page, out GameObject opened) ? opened : null);
+        }
+        tabletOpen = tablet;
+
+        // タブレットが開いている間は、メインの「マルチプレイ」を選ばれている見た目にする
+        SetSelectedLook(TitleButtonAction.OpenMulti, tablet);
+
+        // 部屋を探す画面の一覧は、スクロールの要る長さなら右スティックでスクロールできる
+        UiPointer.StickScrollTarget = page == Page.Multi ? JoinableScrollRect() : null;
+
         // 画面ごとの中身を、いまの値で出し直す
+        if (page == Page.Main || tablet)
+        {
+            RefreshMainName();
+        }
+
         switch (page)
         {
-            case Page.Main:
-                RefreshMainName();
-                break;
             case Page.Create:
                 RefreshCreatePage();
                 break;
@@ -709,8 +744,147 @@ public class TitleScreen : MonoBehaviour
         if (pages.TryGetValue(page, out GameObject shown))
         {
             RefreshInputs(shown);
-            SelectFirstForGamepad(shown);
+
+            // 部屋を探す画面は、部屋があれば一番上の部屋から選ぶ（検索欄から始めると、入力に入ってしまうため）
+            if (page == Page.Multi && joinableCards.Count > 0 && joinableCards[0] != null)
+            {
+                SelectForGamepad(joinableCards[0]);
+            }
+            else
+            {
+                SelectFirstForGamepad(shown);
+            }
         }
+    }
+
+    // ------------------------------------------------------------
+    // タブレット（2026/10/27・大槻さんの絵コンテ）
+    // ------------------------------------------------------------
+
+    /// <summary>タブレットが右から出てくるのにかける秒数。</summary>
+    private const float TabletSlideSeconds = 0.25f;
+
+    /// <summary>タブレットが出てくる前の、右へずらしておく距離（画面を 1920×1080 としたときのピクセル）。</summary>
+    private const float TabletSlideDistance = 900f;
+
+    /// <summary>出てくる途中のタブレットの枠（動いていなければ null）と、出始めてからの秒数。</summary>
+    private RectTransform slidingTablet;
+    private float tabletSlideTime;
+
+    /// <summary>タブレットの枠の、もとの位置（ずらす前）。枠ごとに最初に動かすときに覚える。</summary>
+    private readonly Dictionary<RectTransform, Vector2> tabletHome = new Dictionary<RectTransform, Vector2>();
+
+    /// <summary>右下の操作の案内（タブレットの画面ごとに1つずつある）。</summary>
+    private readonly List<Text> tabletHints = new List<Text>();
+
+    /// <summary>案内にいま出しているのが、コントローラー用か（同じ文字を毎フレーム入れ直さないため。null はまだ何も出していない）。</summary>
+    private bool? tabletHintForGamepad;
+
+    /// <summary>
+    /// **タブレットに出す画面か。** マルチプレイを選ぶと、メインの画面は左に出したまま、右にタブレットが出てきて、その中で選ぶ（2026/10/27）。
+    /// 設定は今までどおり画面全体に出す。
+    /// </summary>
+    private static bool IsTabletPage(Page page)
+    {
+        return page == Page.MultiMenu || page == Page.Multi || page == Page.Create;
+    }
+
+    /// <summary>その画面のタブレットの枠を右へずらし、<see cref="UpdateTabletSlide"/> で元の位置まで動かし始める。</summary>
+    private void StartTabletSlide(GameObject page)
+    {
+        FinishTabletSlide();
+
+        RectTransform panel = page != null ? TabletPanelOf(page) : null;
+        if (panel == null)
+        {
+            return;
+        }
+
+        if (!tabletHome.ContainsKey(panel))
+        {
+            tabletHome[panel] = panel.anchoredPosition;
+        }
+
+        slidingTablet = panel;
+        tabletSlideTime = 0f;
+        panel.anchoredPosition = tabletHome[panel] + new Vector2(TabletSlideDistance, 0f);
+    }
+
+    /// <summary>出てくる途中のタブレットを、少しずつ元の位置へ動かす（はじめ速く、最後はゆっくり）。</summary>
+    private void UpdateTabletSlide()
+    {
+        if (slidingTablet == null)
+        {
+            return;
+        }
+
+        tabletSlideTime += Time.unscaledDeltaTime;
+        float t = Mathf.Clamp01(tabletSlideTime / TabletSlideSeconds);
+        float eased = 1f - (1f - t) * (1f - t) * (1f - t);
+        slidingTablet.anchoredPosition = tabletHome[slidingTablet] + new Vector2(TabletSlideDistance * (1f - eased), 0f);
+
+        if (t >= 1f)
+        {
+            slidingTablet = null;
+        }
+    }
+
+    /// <summary>出てくる途中のタブレットがあれば、すぐ元の位置に置く（途中で別の画面へ移ったとき）。</summary>
+    private void FinishTabletSlide()
+    {
+        if (slidingTablet != null)
+        {
+            slidingTablet.anchoredPosition = tabletHome[slidingTablet];
+            slidingTablet = null;
+        }
+    }
+
+    /// <summary>その画面の中のタブレットの枠（印 TabletPanel）。無ければ null（古い版のプレハブ）。</summary>
+    private static RectTransform TabletPanelOf(GameObject page)
+    {
+        foreach (TitlePart part in page.GetComponentsInChildren<TitlePart>(true))
+        {
+            if (part.Role == TitlePartRole.TabletPanel)
+            {
+                return part.transform as RectTransform;
+            }
+        }
+
+        return null;
+    }
+
+    /// <summary>
+    /// **右下の操作の案内を、最後に触った物に合わせて出し分ける。**（2026/10/27・大槻さん）
+    /// コントローラー … 「A 確認　B 戻る」（PlayStation のコントローラーなら「× 確認　○ 戻る」）／キーボード・マウス … 「Esc 戻る」
+    /// </summary>
+    private void UpdateTabletHints()
+    {
+        bool gamepad = UiPointer.LastInputWasGamepad && Gamepad.current != null;
+        if (tabletHintForGamepad == gamepad)
+        {
+            return;
+        }
+
+        tabletHintForGamepad = gamepad;
+        bool playStation = Gamepad.current is DualShockGamepad;
+        string text = !gamepad ? "<b>Esc</b>　戻る"
+            : playStation ? "<b>×</b>　確認　　<b>○</b>　戻る"
+            : "<b>A</b>　確認　　<b>B</b>　戻る";
+
+        foreach (Text hint in tabletHints)
+        {
+            if (hint != null)
+            {
+                hint.text = text;
+            }
+        }
+    }
+
+    /// <summary>部屋を探す画面の、部屋の一覧のスクロール（右スティックで動かす先）。無ければ null。</summary>
+    private ScrollRect JoinableScrollRect()
+    {
+        GameObject content = PartObject(TitlePartRole.JoinableListContent);
+        return content != null ? content.GetComponentInParent<ScrollRect>(true) : null;
     }
 
     /// <summary>1つ前の画面へ戻る。</summary>
@@ -2301,7 +2475,10 @@ public class TitleScreen : MonoBehaviour
         }
     }
 
-    /// <summary>コントローラーがつながっていれば、その画面の最初の項目を選んでおく（十字キーで動かせるように）。</summary>
+    /// <summary>
+    /// コントローラーがつながっていれば、その画面の最初の項目を選んでおく（十字キーで動かせるように）。
+    /// **入力欄は、ほかに項目が無いときだけ選ぶ**（入力欄から始めると文字の入力に入ってしまうため。2026/10/27）。
+    /// </summary>
     private static void SelectFirstForGamepad(GameObject page)
     {
         if (Gamepad.current == null || page == null || EventSystem.current == null)
@@ -2309,7 +2486,18 @@ public class TitleScreen : MonoBehaviour
             return;
         }
 
-        Selectable first = page.GetComponentInChildren<Selectable>();
+        Selectable first = null;
+        foreach (Selectable selectable in page.GetComponentsInChildren<Selectable>())
+        {
+            if (!(selectable is InputField))
+            {
+                first = selectable;
+                break;
+            }
+
+            first = first != null ? first : selectable;
+        }
+
         EventSystem.current.SetSelectedGameObject(first != null ? first.gameObject : null);
     }
 

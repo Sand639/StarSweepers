@@ -104,6 +104,10 @@ public enum TitlePartRole
     ServerCardLock = 90,
     ServerCardCode = 91,
     SearchNoPasswordCheckText = 92,
+
+    // タブレット（2026/10/27）：マルチプレイ・部屋を探す・部屋を作るの枠（開くときに右から出てくる）と、右下の操作の案内
+    TabletPanel = 93,
+    TabletHint = 94,
 }
 
 /// <summary>
