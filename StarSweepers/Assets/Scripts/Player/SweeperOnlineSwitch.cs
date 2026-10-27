@@ -23,6 +23,9 @@ public class SweeperOnlineSwitch : MonoBehaviour
     /// <summary>入れ替える前に NetworkManager に入っていた体（今の体）。まだ見ていなければ null。</summary>
     private static GameObject currentBodyPrefab;
 
+    /// <summary>「新しい体が見つからない」をもう知らせたか（毎フレーム出さないため）。</summary>
+    private static bool warnedMissing;
+
     /// <summary>
     /// ボットを出すときのプレハブ。新しい体を出していても、**ボットだけは今の体**にする。
     /// 入れ替えていなければ <paramref name="fallback"/>（NetworkManager の Player Prefab）をそのまま返す。
@@ -36,6 +39,7 @@ public class SweeperOnlineSwitch : MonoBehaviour
     private static void CreateOnStart()
     {
         currentBodyPrefab = null;
+        warnedMissing = false;
 
         GameObject runner = new GameObject(nameof(SweeperOnlineSwitch));
         runner.hideFlags = HideFlags.HideInHierarchy;
@@ -84,6 +88,12 @@ public class SweeperOnlineSwitch : MonoBehaviour
             if (sweeperPrefab != null)
             {
                 wanted = sweeperPrefab;
+            }
+            else if (!warnedMissing)
+            {
+                warnedMissing = true;
+                Debug.LogWarning("[SweeperPlayer] 新しい体のプレハブが通信の一覧（Network Prefabs）に見つからないので、今の体で遊びます。" +
+                                 "メニューの「宇宙ごみのオンラインの新しい体のプレハブを作り直す」で作ってください。");
             }
         }
 
