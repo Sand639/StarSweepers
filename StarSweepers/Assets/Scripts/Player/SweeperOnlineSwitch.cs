@@ -16,7 +16,11 @@ using UnityEngine;
 /// プレハブのファイルは書き換えない（入れ替えるのは、遊んでいる間の NetworkManager の中身だけ）。
 /// **ボットは今の体のまま出す**（<see cref="BotPrefabOr"/>。ボットの頭はフックの部品で動くため）。
 ///
+/// 検証用のビルドを `.bat` で起動するときは、起動の引数に **`-sweeper`** を足すと、設定に関係なく新しい体になる（PCの設定は変えない）。
+///
 /// シーンに置く物は無い。再生を始めたときに自分で1つだけ作られる。
+/// 起動した最初のフレームで部屋を作る場合（`LanAutoStart` の `-host` など）にも間に合うよう、
+/// 作られた瞬間と、NetworkManager が生まれた瞬間（`NetworkManager.OnInstantiated`）にも入れ替える。
 /// </summary>
 public class SweeperOnlineSwitch : MonoBehaviour
 {
@@ -25,6 +29,12 @@ public class SweeperOnlineSwitch : MonoBehaviour
 
     /// <summary>「新しい体が見つからない」をもう知らせたか（毎フレーム出さないため）。</summary>
     private static bool warnedMissing;
+
+    /// <summary>起動の引数に `-sweeper` があったか（あれば設定に関係なく新しい体）。</summary>
+    private static bool forcedByCommandLine;
+
+    /// <summary>新しい体で遊ぶか（設定、または起動の引数）。</summary>
+    private static bool WantsSweeper => forcedByCommandLine || GameSettings.PlayerBody == PlayerBodyType.Sweeper;
 
     /// <summary>
     /// ボットを出すときのプレハブ。新しい体を出していても、**ボットだけは今の体**にする。
@@ -40,17 +50,33 @@ public class SweeperOnlineSwitch : MonoBehaviour
     {
         currentBodyPrefab = null;
         warnedMissing = false;
+        forcedByCommandLine = System.Array.IndexOf(System.Environment.GetCommandLineArgs(), "-sweeper") >= 0;
 
         GameObject runner = new GameObject(nameof(SweeperOnlineSwitch));
         runner.hideFlags = HideFlags.HideInHierarchy;
         DontDestroyOnLoad(runner);
         runner.AddComponent<SweeperOnlineSwitch>();
+
+        // シーンに置いてある NetworkManager は、もう生まれている（このあと Start で部屋を作ることがあるので、いま入れ替える）
+        TryApply(NetworkManager.Singleton);
+
+        // あとから生まれる NetworkManager にも、生まれた瞬間に入れ替える
+        NetworkManager.OnInstantiated -= TryApply;
+        NetworkManager.OnInstantiated += TryApply;
+    }
+
+    private void OnDestroy()
+    {
+        NetworkManager.OnInstantiated -= TryApply;
     }
 
     private void Update()
     {
-        NetworkManager manager = NetworkManager.Singleton;
+        TryApply(NetworkManager.Singleton);
+    }
 
+    private static void TryApply(NetworkManager manager)
+    {
         // つながっている間は入れ替えない（もう出ている体と食い違わないように）
         if (manager == null || manager.IsListening || manager.NetworkConfig == null)
         {
@@ -82,7 +108,7 @@ public class SweeperOnlineSwitch : MonoBehaviour
         }
 
         GameObject wanted = currentBodyPrefab;
-        if (GameSettings.PlayerBody == PlayerBodyType.Sweeper)
+        if (WantsSweeper)
         {
             GameObject sweeperPrefab = FindSweeperPrefab(manager);
             if (sweeperPrefab != null)
