@@ -21,6 +21,16 @@ public enum SpaceJunkWinRule
     ThreeKinds
 }
 
+/// <summary>ラウンドの始まりの演出の種類。</summary>
+public enum SpaceJunkIntroStyle
+{
+    /// <summary>**ゴールエリアがプレイヤーを乗せて飛んできて、元の位置に設置される**（2026/10/27 から。いまの演出）</summary>
+    GoalFlyIn,
+
+    /// <summary>カメラがマップを回って見せる（2026/10/7〜10/26 の演出。また使うかもしれないので、切り替えて使えるように残してある）</summary>
+    CameraTour
+}
+
 /// <summary>
 /// **1ラウンドぶんの進行役。** マップ（ステージ）のシーンに1つ置く。
 ///
@@ -72,10 +82,15 @@ public partial class SpaceJunkRound : NetworkBehaviour
     [Tooltip("OFF にすると演出をせず、すぐに始まる")]
     [SerializeField] private bool playIntro = true;
 
-    [Tooltip("全員の読み込みを待つ秒数（演出の前）。遅いPCでも最初から見られるように。この間は ① の回り始めの位置で止まる")]
+    [Tooltip("演出の種類。GoalFlyIn：ゴールエリアがプレイヤーを乗せて飛んでくる（2026/10/27〜）／" +
+             "CameraTour：カメラがマップを回って見せる（前の演出。いまは使っていないが残してある）")]
+    [SerializeField] private SpaceJunkIntroStyle introStyle = SpaceJunkIntroStyle.GoalFlyIn;
+
+    [Tooltip("全員の読み込みを待つ秒数（演出の前）。遅いPCでも最初から見られるように。この間は ① の始めの位置で止まる")]
     [Min(0f)]
     [SerializeField] private float introLeadSeconds = 1.5f;
 
+    [Header("↓ ①〜⑥ はカメラが回る演出（Intro Style が CameraTour）のときだけ使う。一番下のカウントダウンの秒数は両方で使う")]
     [Tooltip("① マップをぐるっと見せる秒数")]
     [Min(0f)]
     [SerializeField] private float introFlyoverSeconds = 3f;
@@ -131,9 +146,70 @@ public partial class SpaceJunkRound : NetworkBehaviour
     [Min(0f)]
     [SerializeField] private float introCountdownDelaySeconds = 1f;
 
-    [Tooltip("3・2・1 のカウントダウンの秒数。終わったら START!（ここから動ける）")]
+    [Tooltip("3・2・1 のカウントダウンの秒数。終わったら START!（ここから動ける）。どちらの演出でも使う")]
     [Min(0f)]
     [SerializeField] private float introCountdownSeconds = 3f;
+
+    [Header("ゴールが飛んでくる演出（Intro Style が GoalFlyIn のとき。2026/10/27）")]
+    [Tooltip("① ゴールエリアがプレイヤーを乗せて、マップの奥から手前へ飛んでくる秒数。" +
+             "名前のタグは、この秒数を人数で割った間隔で1人ずつ順に強調する")]
+    [Min(0f)]
+    [SerializeField] private float flyInSeconds = 3f;
+
+    [Tooltip("① どちらの奥から飛んでくるか（水平の向き）。(0, 0, 1) で北＝ふだんのカメラの画面の奥")]
+    [SerializeField] private Vector3 flyInFrom = Vector3.forward;
+
+    [Tooltip("① 飛び始めの位置が、マップに近づいた位置（① の終わり）よりどれだけ奥か（m）")]
+    [Min(0f)]
+    [SerializeField] private float flyInDistance = 45f;
+
+    [Tooltip("① 飛んでいるときの高さ（元のゴールの高さから。m）")]
+    [SerializeField] private float flyInHeight = 4f;
+
+    [Tooltip("① ゴールエリアどうしを横に並べて飛ぶときの、すき間（m）")]
+    [Min(0f)]
+    [SerializeField] private float flyInGap = 3f;
+
+    [Tooltip("② マップに近づいたあと、元のゴールの位置へ飛んで設置されるまでの秒数。設置されたらカウントダウンが始まる")]
+    [Min(0f)]
+    [SerializeField] private float flyInLandSeconds = 1.5f;
+
+    [Tooltip("① 名前のタグを強調するときの、いちばん大きくなったときの倍率")]
+    [Min(1f)]
+    [SerializeField] private float nameEmphasisScale = 1.8f;
+
+    [Tooltip("① 1人の強調の間に、拡大と縮小を何回くり返すか")]
+    [Min(1)]
+    [SerializeField] private int nameEmphasisPulses = 2;
+
+    /// <summary>演出の種類。</summary>
+    public SpaceJunkIntroStyle IntroStyle => introStyle;
+
+    // ↓ ゴールが飛んでくる演出の設定を、演出の部品 SpaceJunkGoalFlyIntro が読むための窓口（中身は上の同じ名前の値）
+
+    /// <summary>① ゴールエリアが飛んでくる秒数。</summary>
+    public float FlyInSeconds => flyInSeconds;
+
+    /// <summary>① どちらの奥から飛んでくるか（水平の向き）。</summary>
+    public Vector3 FlyInFrom => flyInFrom;
+
+    /// <summary>① 飛び始めの位置が、マップに近づいた位置よりどれだけ奥か。</summary>
+    public float FlyInDistance => flyInDistance;
+
+    /// <summary>① 飛んでいるときの高さ。</summary>
+    public float FlyInHeight => flyInHeight;
+
+    /// <summary>① ゴールエリアどうしのすき間。</summary>
+    public float FlyInGap => flyInGap;
+
+    /// <summary>② 元の位置へ飛んで設置されるまでの秒数。</summary>
+    public float FlyInLandSeconds => flyInLandSeconds;
+
+    /// <summary>① 名前のタグを強調するときの倍率。</summary>
+    public float NameEmphasisScale => nameEmphasisScale;
+
+    /// <summary>① 1人の強調の間に、拡大と縮小をくり返す回数。</summary>
+    public int NameEmphasisPulses => nameEmphasisPulses;
 
     // ↓ 演出の設定を、演出の部品 SpaceJunkRoundIntro が読むための窓口（中身は上の同じ名前の値）
 
@@ -186,12 +262,14 @@ public partial class SpaceJunkRound : NetworkBehaviour
     public float IntroCountdownSeconds => introCountdownSeconds;
 
     /// <summary>
-    /// 演出の長さ（① マップの紹介〜START まで。読み込み待ちは入れない）。
-    /// カウントダウンは ④ の途中から数えるので、④⑤⑥ のカメラの動きはこの中に入ったり、START をまたいだりする。
+    /// 演出の長さ（① 〜START まで。読み込み待ちは入れない）。
+    /// ・ゴールが飛んでくる演出 … ① 飛んでくる ＋ ② 設置 ＋ カウントダウン
+    /// ・カメラが回る演出 … カウントダウンは ④ の途中から数えるので、④⑤⑥ のカメラの動きはこの中に入ったり、START をまたいだりする
     /// </summary>
-    private float IntroTotalSeconds =>
-        introFlyoverSeconds + introZoomSeconds + introHoldBeforeOrbitSeconds + introCountdownDelaySeconds +
-        introCountdownSeconds;
+    private float IntroTotalSeconds => introStyle == SpaceJunkIntroStyle.GoalFlyIn
+        ? flyInSeconds + flyInLandSeconds + introCountdownSeconds
+        : introFlyoverSeconds + introZoomSeconds + introHoldBeforeOrbitSeconds + introCountdownDelaySeconds +
+          introCountdownSeconds;
 
     /// <summary>
     /// **動き出してよい時刻**（全員で同期された時計 ServerTime）。これより前は始まりの演出中で、誰も動けない。
@@ -365,8 +443,15 @@ public partial class SpaceJunkRound : NetworkBehaviour
         wasIntro = IsIntro;
         SetLocalPlayerControlEnabled(!wasIntro);
 
-        // 始まりの演出（カメラとカウントダウン）を、全員のPCで出す
-        if (GetComponent<SpaceJunkRoundIntro>() == null)
+        // 始まりの演出を、全員のPCで出す。演出の種類で部品を選ぶ（カメラが回る演出は、いまは使っていないが残してある）
+        if (introStyle == SpaceJunkIntroStyle.GoalFlyIn)
+        {
+            if (GetComponent<SpaceJunkGoalFlyIntro>() == null)
+            {
+                gameObject.AddComponent<SpaceJunkGoalFlyIntro>();
+            }
+        }
+        else if (GetComponent<SpaceJunkRoundIntro>() == null)
         {
             gameObject.AddComponent<SpaceJunkRoundIntro>();
         }

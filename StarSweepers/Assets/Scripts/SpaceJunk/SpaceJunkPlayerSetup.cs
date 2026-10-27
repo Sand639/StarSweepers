@@ -23,7 +23,8 @@ using UnityEngine.InputSystem.LowLevel;
 ///
 /// ### 出てくる場所
 ///
-/// **自分のチームのゴールの手前に、ゴールから見て横一列**に出る（チームの人数ぶん均等に並ぶ）。
+/// **自分のチームのゴールエリアの上の決まった場所**に出る（ゴールから見て横に、チームの人数ぶん均等に並ぶ。2026/10/27）。
+/// Spawn On Goal Area を OFF にするか、ゴールエリアに床が無いマップでは、**ゴールの手前に横一列**で出る（2026/10/27 の朝の形）。
 /// ゴールが見つからなければ、接続番号ごとに円周上へ散らす。
 ///
 /// 使い方：宇宙ごみ用のプレイヤーのプレハブに、釣りの部品と一緒に付ける。
@@ -36,10 +37,18 @@ public class SpaceJunkPlayerSetup : MonoBehaviour
     [SerializeField] private Renderer[] teamRenderers;
 
     [Header("出てくる場所")]
-    [Tooltip("自分のゴールから、ステージの中心へ向かって何m離れた場所に出るか")]
+    [Tooltip("ON：自分のゴールエリアの上の決まった場所に出る（2026/10/27〜。ラウンドの始まりにゴールエリアに乗って飛んでくる演出と合わせた）。" +
+             "OFF：ゴールから Spawn Inset だけ内側に、横一列で出る（2026/10/27 の朝の形）。ゴールエリアに床が無いマップでは、ON でも横一列になる")]
+    [SerializeField] private bool spawnOnGoalArea = true;
+
+    [Tooltip("ゴールエリアの上には、ゴールエリアの幅をチームの人数で等分した場所に並ぶ。" +
+             "これは、ゴールエリアの見た目が無くて幅が分からないときに使う、となりの人との間隔（メートル）")]
+    [SerializeField] private float goalAreaSpacing = 1.5f;
+
+    [Tooltip("（横一列のとき）自分のゴールから、ステージの中心へ向かって何m離れた場所に出るか")]
     [SerializeField] private float spawnInset = 4f;
 
-    [Tooltip("チームの仲間と横一列に並ぶときの、となりの人との間隔（メートル）。ゴールから見て横に、人数ぶん均等に並ぶ")]
+    [Tooltip("（横一列のとき）チームの仲間と並ぶときの、となりの人との間隔（メートル）。ゴールから見て横に、人数ぶん均等に並ぶ")]
     [SerializeField] private float spawnSpacing = 2f;
 
     [Tooltip("ゴールが見つからないとき（ロビーなど）に、重ならないようにどれだけばらけさせるか（メートル）")]
@@ -361,6 +370,7 @@ public class SpaceJunkPlayerSetup : MonoBehaviour
     /// <summary>
     /// **このシーンにある、自分のチームのゴール**を探す。自分のチームがまだ届いていなければ false。
     /// （シーンの入れ替わりの途中に残っている「前のマップのゴール」はつかまない）
+    /// 自分のゴールが複数あるとき（1チーム）は番号のいちばん小さいもの（どのPCでも同じものを選ぶため）。
     /// </summary>
     private bool TryFindOwnGoal(out SpaceJunkGoal found)
     {
@@ -371,19 +381,8 @@ public class SpaceJunkPlayerSetup : MonoBehaviour
             return false;
         }
 
-        int team = MyTeam();
-        UnityEngine.SceneManagement.Scene active = UnityEngine.SceneManagement.SceneManager.GetActiveScene();
-
-        foreach (SpaceJunkGoal goal in SpaceJunkGoal.All)
-        {
-            if (goal != null && goal.gameObject.scene == active && goal.OwnerTeam == team)
-            {
-                found = goal;
-                return true;
-            }
-        }
-
-        return false;
+        found = SpaceJunkGoal.FirstOwnedBy(MyTeam(), UnityEngine.SceneManagement.SceneManager.GetActiveScene());
+        return found != null;
     }
 
     /// <summary>
@@ -620,7 +619,7 @@ public class SpaceJunkPlayerSetup : MonoBehaviour
     }
 
     /// <summary>
-    /// 出てくる場所を決める。ラウンド中で自分のゴールが分かれば**ゴールの少し内側に、チームで横一列**、
+    /// 出てくる場所を決める。ラウンド中で自分のゴールが分かれば**ゴールの近く**（<see cref="TryGetGoalSpawnPosition"/>）、
     /// それ以外（ロビー・ゴールがまだ届いていない）は床のある決まった場所。
     /// ゴールが届いていなかったときは <see cref="placedByFallback"/> を立て、あとで置き直す。
     /// </summary>
@@ -643,35 +642,71 @@ public class SpaceJunkPlayerSetup : MonoBehaviour
         }
 
         // **このシーンにある、自分のチームのゴール**（前のマップのゴールはつかまない。2026/10/6）
-        if (TryFindOwnGoal(out SpaceJunkGoal goal))
+        if (TryGetGoalSpawnPosition(out Vector3 goalSpot))
         {
             placedByFallback = false;
-
-            // ゴールから、ステージの中心へ向かって少し内側
-            Vector3 goalPosition = goal.transform.position;
-            Vector3 toCenter = new Vector3(-goalPosition.x, 0f, -goalPosition.z);
-
-            // ゴールがほぼ中心にあると向きが決まらないので、前向きにする
-            if (toCenter.sqrMagnitude < 0.01f)
-            {
-                toCenter = Vector3.forward;
-            }
-
-            Vector3 spot = goalPosition + toCenter.normalized * spawnInset;
-
-            // ゴールから見て横（中心へ向かう向きと直角）に、チームの人数ぶん Spawn Spacing（m）おきに並べる。
-            // 列の真ん中がゴールの真ん前に来る（2026/10/27・大槻さん。前はランダムにばらけていた）
-            Vector3 side = Vector3.Cross(Vector3.up, toCenter.normalized);
-            GetTeamLineSlot(out int index, out int count);
-            spot += side * ((index - (count - 1) * 0.5f) * spawnSpacing);
-
-            return new Vector3(spot.x, goalPosition.y, spot.z);
+            return goalSpot;
         }
 
         // ゴールが見つからないとき（まだ持ち主が配られていないなど）。**あとで届いたら置き直す**
         placedByFallback = true;
         fallbackRetryTimer = 0f;
         return SafeFallbackPosition(scatter);
+    }
+
+    /// <summary>
+    /// **ラウンド中の、ゴールを当てにした出てくる場所。** 自分のゴールがまだ分からなければ false。
+    ///
+    /// ・Spawn On Goal Area が ON … **ゴールエリアの上の決まった場所**（2026/10/27・大槻さん）。
+    ///   ゴールから見て横（中心へ向かう向きと直角）に、**ゴールエリアの幅をチームの人数で等分した場所**に並ぶ
+    ///   （2人なら幅の 1/4 と 3/4 の所。間を詰めすぎると名前のタグが重なるため）
+    /// ・OFF か、そこに床が無いとき（ゴールが床の外にあるマップ）… **ゴールから Spawn Inset だけ内側に横一列**、
+    ///   Spawn Spacing（m）おき（2026/10/27 の朝の形。前はランダムにばらけていた）
+    ///
+    /// どちらも列の真ん中がゴールの真ん前に来る。毎回同じ場所になる（ばらけさせない）ので、
+    /// **自分のぶん以外のプレイヤーでも求められる**（始まりの演出 <see cref="SpaceJunkGoalFlyIntro"/> が、
+    /// 全員を飛んでくるゴールエリアに乗せるのに使う）。
+    /// </summary>
+    public bool TryGetGoalSpawnPosition(out Vector3 position)
+    {
+        position = Vector3.zero;
+
+        if (!TryFindOwnGoal(out SpaceJunkGoal goal))
+        {
+            return false;
+        }
+
+        Vector3 goalPosition = goal.transform.position;
+        Vector3 toCenter = new Vector3(-goalPosition.x, 0f, -goalPosition.z);
+
+        // ゴールがほぼ中心にあると向きが決まらないので、前向きにする
+        if (toCenter.sqrMagnitude < 0.01f)
+        {
+            toCenter = Vector3.forward;
+        }
+
+        toCenter.Normalize();
+        Vector3 side = Vector3.Cross(Vector3.up, toCenter);
+        GetTeamLineSlot(out int index, out int count);
+        float slot = index - (count - 1) * 0.5f;
+
+        if (spawnOnGoalArea)
+        {
+            // ゴールエリアの横の幅を人数で等分した間隔（見た目が無くて幅が分からなければ Goal Area Spacing）
+            float spacing = goal.TryGetIntroVisualBounds(out Bounds area)
+                ? (Mathf.Abs(side.x) * area.size.x + Mathf.Abs(side.z) * area.size.z) / count
+                : goalAreaSpacing;
+
+            if (TryGroundAt(goalPosition + side * (slot * spacing), out Vector3 onArea))
+            {
+                position = onArea;
+                return true;
+            }
+        }
+
+        Vector3 spot = goalPosition + toCenter * spawnInset + side * (slot * spawnSpacing);
+        position = new Vector3(spot.x, goalPosition.y, spot.z);
+        return true;
     }
 
     /// <summary>
