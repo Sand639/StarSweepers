@@ -23,6 +23,7 @@
 
 | 日付 | 書いたAI | 何をしようとして | どう失敗したか | どうすればよかったか |
 | --- | --- | --- | --- | --- |
+| 2026/10/28 | Claude Code | 1つの Unity の中でホストと参加者をつなぐ自動テスト（EditMode の `[UnityTest]` ＋ `EnterPlayMode`）で、新しい体の光線 → 引っ掛け → 投げを確かめようとした（小野田さんのPC。`SweeperOnlineTests.cs`） | ①**`-nographics` だと、テスト中のゲームのフレームがほとんど進まず**、光線が伸びないまま失敗した ②`yield return null` ／ `WaitForSeconds` は、EditMode のテストではゲームの1フレームにならないことがある ③**`EnterPlayMode` より前に読んだアセットは、再生の切り替えで外れる**。さらに、同じ関数の中で**ラムダに渡す変数があると、その入れ物が `EnterPlayMode` より前に作られて消え、`EnterPlayMode` の直後の行で NullReferenceException** になった（行番号は関係ない行を指す） ④**ホストと参加者の物（物資の2つの写し）が同じ物理の世界の同じ場所に重なる**ので、押し合って物資が滑っていき、光線もホスト側の写しに当たることがあった | ①画面ありの `-batchmode`（`-nographics` を付けない）で `-runTests` する ②待つときは「実際の時間が過ぎるまで `yield return null` をくり返す」か、条件がそろうまで待つ ③アセットの読み込みとラムダを使う中身は、`EnterPlayMode` のあとに呼ぶ**別の IEnumerator の関数**に分ける ④テストの中だけ、2つの写しに `Physics.IgnoreCollision` をかけ、ホスト側の写しを Ignore Raycast の層に移して参加者の光線の当たる層から外す（本番は別々のPCなので要らない） |
 | 2026/10/13 | Claude Code | feature/SpriteStretchUI（レティクル切り替え）を develop へ取り込もうとした（小野田さんのPC） | 同じ日に、大槻さんが develop でタイトル画面をまるごと作り直していた。**両方のブランチが別々の意味で「プレハブの版 5」を使っていた**うえ、新しいタイトル画面には設定のページが無く、`TitleScreen.cs`・`TitleScreenPrefabBuilder.cs`・`TitleScreen.prefab` が衝突した | 小野田さんに確認して、タイトル画面の3つは develop 側をそのまま採用し、レティクルはポーズ画面だけにした。**タイトル画面（共有の画面）を触るブランチは、取り込む前に develop を何度か取り込んでおく**と、早めに気づける。版の番号は develop の今の版を見てから決める |
 | 2026/10/13 | Claude Code | タイトル画面のプレハブの版を上げ（`TitleScreenPrefabBuilder.PrefabVersion`）、**Unity をバッチモード（`-batchmode -quit`）で開けば自動で部品が足されるだろう**と思った（小野田さんのPC。レティクルの行を足したとき） | コンパイルは通ったが、**プレハブは変わらなかった。** 版上げの処理は `[InitializeOnLoadMethod]` から `EditorApplication.delayCall` で呼ばれていて、`-quit` だと呼ばれる前に終わる | 一回きりのエディタ用スクリプト（例：`Scripts/UI/Editor/TempRunTitleUpgrade.cs`）を書き、リフレクションで private の `Upgrade(いまの版)` を呼ぶ public static メソッドを `-executeMethod` で動かすと、ログに `[UI] タイトル画面のプレハブに、足りない部品を足しました` が出て更新された。**終わったら .cs と .meta を消す。** プレハブの差分で消えた行が出ても、Unity が並べ替えただけのことがある（`--- !u!` の番号を前後で突き合わせると、消えた部品が無いか確かめられる） |
 | 2026/10/13 | Claude Code | 2つのブランチを develop に取り込んだあと、Unity を開かずにコンパイルを確かめようとした（小野田さんのPC） | ①**このPCには Python が無い**（`python` は Microsoft Store を開く入口だけで、「Python」と表示して終わる）。②csproj を書き換える Perl の置き換えに Windows のパス（`C:\Users\bond\…`）を直接埋め込んだら、**`\b` が制御文字（バックスペース）に化けて** csproj が読めなくなった。③Git Bash の `sed`／`tr` に `\\` を渡すと引用の段階で壊れた | 文字の加工は **Perl をファイルに書いてから** `perl ファイル.pl` で動かす。パスは**環境変数で渡して `$ENV{名前}` で読む**（文字列に直接埋め込まない）。エディタ用は `<ProjectReference>` を、先に作った `Assembly-CSharp.dll` への `<Reference>` に差し替えると通った |
@@ -249,6 +250,7 @@
 | 2026/10/21 | Claude Code | バッチモードでシーンをまとめて直すやり方と、手で書かれたシーンを保存すると差分が大きくなる癖を追加 |
 | 2026/10/21 | Claude Code | 「うまくいったやり方」に、Unity を開かずにコンパイルを確かめる手早い方法と、ボットを入力で動かすやり方を追加 |
 | 2026/10/27 | Claude Code | 「うまくいったやり方」に、画面なしの Unity で試合を自動で始めて演出を画像に撮る方法と、ほかの人のプレイヤーを LateUpdate で上書きして見せる方法を追加 |
+| 2026/10/28 | Claude Code | 1つの Unity でホストと参加者をつなぐ自動テストの落とし穴（画面なし・待ち方・EnterPlayMode とラムダ・写しの重なり）を追記 |
 
 ## 2026/10/22 プレイヤーの名前を3段の番号にした（ソウホイチョン／Codex）
 
