@@ -163,16 +163,26 @@ public class TitleScreenPrefabTests
         Assert.That(InputKindsUnder(page).Contains(TitleInputKind.JoinPassword), Is.False, "部屋を探す画面にパスワードの欄が残っている");
     }
 
-    /// <summary>「部屋を探す」の右下の操作の案内（A 確認　B 戻る）は消した（2026/10/22・大槻さん）。</summary>
-    [Test]
-    public void TitlePrefab_FindRoomPageHasNoButtonHint()
+    /// <summary>
+    /// マルチプレイ・部屋を探す・部屋を作るは、どれもタブレットの中にある（枠＝TabletPanel と、右下の操作の案内＝TabletHint を持つ。2026/10/27）。
+    /// 設定はタブレットに入れない。
+    /// </summary>
+    [TestCase(TitlePartRole.PageMultiMenu)]
+    [TestCase(TitlePartRole.PageMulti)]
+    [TestCase(TitlePartRole.PageCreate)]
+    public void TitlePrefab_TabletPageHasPanelAndHint(TitlePartRole pageRole)
     {
-        Transform page = FindPart(TitlePartRole.PageMulti);
+        Transform page = FindPart(pageRole);
         Assert.That(page, Is.Not.Null);
-        foreach (UnityEngine.UI.Text text in page.GetComponentsInChildren<UnityEngine.UI.Text>(true))
+
+        HashSet<TitlePartRole> roles = new HashSet<TitlePartRole>();
+        foreach (TitlePart part in page.GetComponentsInChildren<TitlePart>(true))
         {
-            Assert.That(text.text.Contains("確認"), Is.False, $"操作の案内「{text.text}」が残っている");
+            roles.Add(part.Role);
         }
+
+        Assert.That(roles.Contains(TitlePartRole.TabletPanel), Is.True, $"{pageRole} にタブレットの枠が無い");
+        Assert.That(roles.Contains(TitlePartRole.TabletHint), Is.True, $"{pageRole} に操作の案内が無い");
     }
 
     /// <summary>一覧の行の見本は、行そのものが押せるボタンで、鍵・部屋番号・人数を中に持つ（写真の形。2026/10/22）。</summary>

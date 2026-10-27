@@ -12,6 +12,8 @@ using UnityEngine.UI;
 ///   （遊んでいる間は、プレイヤーの照準 <see cref="PlayerAimController"/> が地面に同じ絵を出すので、こちらは出さない）
 /// ・**マウス**…マウスの位置に出る。クリックはいつもどおり
 /// ・**コントローラー**…**右スティックで動かし、LT（左クリックと同じ）か A で押す**。LB／RB でスクロール
+///   （**<see cref="StickScrollTarget"/> の一覧がスクロールの要る長さのときは、右スティックの上下でその一覧をスクロールする**。2026/10/27）
+/// ・最後に触ったのがコントローラーか（<see cref="LastInputWasGamepad"/>）を覚えておく。操作の案内の出し分けに使う
 /// ・**左スティック・十字キーでは選択肢を選ぶ**（何も選ばれていなければ、いちばん上の選択肢から。A で決定。<see cref="UpdateNavigation"/>）
 /// ・画面のポインターは**白**で出す（絵の形だけを使って白く塗る。暗い画面で見やすいように）
 ///
@@ -58,6 +60,10 @@ public class UiPointer : MonoBehaviour
     [Min(0f)]
     [SerializeField] private float scrollNotchesPerSecond = 8f;
 
+    [Tooltip("右スティックで一覧（StickScrollTarget）をスクロールするとき、倒しきって1秒に動く量（画面の高さ 1080 のときのピクセル）")]
+    [Min(0f)]
+    [SerializeField] private float stickScrollSpeed = 1200f;
+
     /// <summary>ゲームの中に1つだけあるポインター。</summary>
     public static UiPointer Current { get; private set; }
 
@@ -70,6 +76,28 @@ public class UiPointer : MonoBehaviour
 
     /// <summary>いま、コントローラーの右スティックでポインターを動かしているか。</summary>
     public static bool UsingStick => Current != null && Current.usingStick;
+
+    /// <summary>
+    /// **最後に触ったのがコントローラーか。**（2026/10/27。タイトル画面のタブレットの右下の案内を、コントローラー／キーボードで出し分けるため）
+    /// コントローラーのボタン・スティックで true、マウス・キーボードで false になる。最初は false。
+    /// </summary>
+    public static bool LastInputWasGamepad { get; private set; }
+
+    /// <summary>
+    /// **右スティックの上下でスクロールさせたい一覧。**（2026/10/27・大槻さん「部屋数が多くてスクロールしなくちゃいけない場合、右スティックでスクロール」）
+    /// 中身が枠より長いときだけ、右スティックの上下はポインターではなくこの一覧を動かす。短いときや null のときは今までどおり。
+    /// 出している画面が入れて、閉じるときに null に戻す（タイトル画面の「部屋を探す」）。
+    /// </summary>
+    public static ScrollRect StickScrollTarget { get; set; }
+
+    /// <summary>「最後に触ったのがコントローラーか」を決めるのに見るボタン（押した瞬間を見る）。</summary>
+    private static readonly GamepadButton[] UsageButtons =
+    {
+        GamepadButton.South, GamepadButton.East, GamepadButton.West, GamepadButton.North,
+        GamepadButton.LeftShoulder, GamepadButton.RightShoulder, GamepadButton.LeftTrigger, GamepadButton.RightTrigger,
+        GamepadButton.Start, GamepadButton.Select,
+        GamepadButton.DpadUp, GamepadButton.DpadDown, GamepadButton.DpadLeft, GamepadButton.DpadRight,
+    };
 
     // 遊びの照準（地面のスコープレンズ）が出ていたフレーム。出ている間は画面のポインターを出さない。
     // -10 は「まだ一度も無い」。いまのフレームから 1〜2 引いた数と比べるので、0 より十分小さければよい
@@ -127,6 +155,8 @@ public class UiPointer : MonoBehaviour
         Current = null;
         gameplayAimFrame = -10;
         panelHoverFrame = -10;
+        LastInputWasGamepad = false;
+        StickScrollTarget = null;
     }
 
     [RuntimeInitializeOnLoadMethod(RuntimeInitializeLoadType.AfterSceneLoad)]
@@ -248,6 +278,8 @@ public class UiPointer : MonoBehaviour
                            (gameplayAimFrame >= Time.frameCount - 1 || Cursor.lockState == CursorLockMode.Locked);
 
         Mouse realMouse = RealMouse();
+        UpdateLastInput(realMouse);
+
         if (usingStick && RealMouseWasUsed(realMouse))
         {
             // マウスを触ったら、マウスに戻す
@@ -312,6 +344,13 @@ public class UiPointer : MonoBehaviour
         }
 
         Vector2 stick = pad.rightStick.ReadValue();
+        if (ScrollTargetWithStick(stick))
+        {
+            // 一覧をスクロールしている間はポインターを動かさない（選んでいる行を外さないように、ポインターの操作もやめる）
+            usingStick = false;
+            return;
+        }
+
         bool moved = stick.magnitude >= stickDeadZone;
 
         if (moved && !usingStick)
@@ -343,6 +382,61 @@ public class UiPointer : MonoBehaviour
         if (stickPosition != lastSentPosition || left != lastSentLeft || scroll != 0f || virtualMouse == null)
         {
             SendVirtual(stickPosition, left, scroll);
+        }
+    }
+
+    /// <summary>
+    /// **右スティックの上下で <see cref="StickScrollTarget"/> の一覧をスクロールする。** スクロールしたら true。
+    /// 一覧が出ていない・中身が枠に収まっている・スティックが上下より左右に倒れているときは何もしない（false）。
+    /// </summary>
+    private bool ScrollTargetWithStick(Vector2 stick)
+    {
+        ScrollRect target = StickScrollTarget;
+        if (target == null || !target.isActiveAndEnabled || target.content == null ||
+            Mathf.Abs(stick.y) < stickDeadZone || Mathf.Abs(stick.y) < Mathf.Abs(stick.x))
+        {
+            return false;
+        }
+
+        RectTransform viewport = target.viewport != null ? target.viewport : (RectTransform)target.transform;
+        float range = target.content.rect.height - viewport.rect.height;
+        if (range <= 1f)
+        {
+            return false;
+        }
+
+        // 上へ倒すと一覧の上のほうへ（verticalNormalizedPosition は 1 が一番上）
+        float step = stick.y * stickScrollSpeed * Time.unscaledDeltaTime / range;
+        target.StopMovement();
+        target.verticalNormalizedPosition = Mathf.Clamp01(target.verticalNormalizedPosition + step);
+        return true;
+    }
+
+    /// <summary>最後に触ったのがコントローラーか（<see cref="LastInputWasGamepad"/>）を、このフレームの入力で決め直す。</summary>
+    private static void UpdateLastInput(Mouse realMouse)
+    {
+        Keyboard keyboard = Keyboard.current;
+        if (RealMouseWasUsed(realMouse) || (keyboard != null && keyboard.anyKey.wasPressedThisFrame))
+        {
+            LastInputWasGamepad = false;
+            return;
+        }
+
+        Gamepad pad = Gamepad.current;
+        if (pad == null)
+        {
+            return;
+        }
+
+        bool used = pad.leftStick.ReadValue().magnitude >= 0.5f || pad.rightStick.ReadValue().magnitude >= 0.5f;
+        foreach (GamepadButton button in UsageButtons)
+        {
+            used |= pad[button].wasPressedThisFrame;
+        }
+
+        if (used)
+        {
+            LastInputWasGamepad = true;
         }
     }
 

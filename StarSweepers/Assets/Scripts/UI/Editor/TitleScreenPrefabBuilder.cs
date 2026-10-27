@@ -68,9 +68,6 @@ public static class TitleScreenPrefabBuilder
     /// <summary>メイン・マルチプレイの画面のボタンが、重なった・選ばれたときに大きくなる割合（<see cref="TitleMenuButton"/> の highlightScale）。</summary>
     private const float MenuButtonHighlightScale = 1.08f;
 
-    /// <summary>マルチプレイの画面（クイックマッチ／部屋を探す／部屋を作る）のボタンの大きさ。</summary>
-    private static readonly Vector2 MultiMenuButtonSize = new Vector2(640f, 96f);
-
     /// <summary>「部屋を作る」の画面を、名前の欄を消したぶん全体（文字・欄・ボタン）を大きくする割合（2026/10/22）。</summary>
     private const float CreatePageEnlarge = 1.25f;
 
@@ -142,9 +139,10 @@ public static class TitleScreenPrefabBuilder
     /// ／ 11：「部屋を探す」を大槻さんの写真の形（真ん中の枠・番号で検索・鍵と部屋番号の出る行・■パスワード不要）に作り直し、
     ///        「部屋を作る」の参加コードの注意書きを水色にした（2026/10/22）
     /// ／ 12：「部屋を作る」の参加コードの枠を水色・文字を白にし、「部屋を探す」の右下の操作の案内（A 確認　B 戻る）を消した（2026/10/22）
+    /// ／ 13：マルチプレイ・部屋を探す・部屋を作るを、右に出てくるタブレットの中に作り直した。右下に、コントローラー／キーボードで変わる操作の案内（2026/10/27）
     /// **版 3 からは作り直さず、<see cref="Upgrade"/> で足りない部品だけを足す**（手で直した配置を消さない）。版を上げたら Upgrade に足す処理を書くこと
     /// </summary>
-    public const int PrefabVersion = 12;
+    public const int PrefabVersion = 13;
 
     /// <summary>
     /// **作り直さずに、足りない部品だけを足す。**
@@ -157,6 +155,7 @@ public static class TitleScreenPrefabBuilder
     /// 版 9 → 10：メインの並び替え・マルチプレイの画面を分ける・部屋を作るの名前の欄を消す（<see cref="RestructureForRoomMenu"/>）。
     /// 版 10 → 11：「部屋を探す」を写真の形に作り直し、参加コードの注意書きを水色にする（<see cref="RebuildFindRoomPage"/>）。
     /// 版 11 → 12：参加コードの枠を水色・文字を白にし、「部屋を探す」の右下の操作の案内を消す（<see cref="RecolorCodeBoxAndRemoveHint"/>）。
+    /// 版 12 → 13：マルチプレイ・部屋を探す・部屋を作るをタブレットの形に作り直す（<see cref="RebuildAsTablet"/>）。
     /// </summary>
     private static void Upgrade(int fromVersion)
     {
@@ -222,6 +221,11 @@ public static class TitleScreenPrefabBuilder
             if (fromVersion < 12)
             {
                 RecolorCodeBoxAndRemoveHint(root);
+            }
+
+            if (fromVersion < 13)
+            {
+                RebuildAsTablet(root);
             }
 
             root.GetComponent<TitleScreen>().EditorSetPrefabVersion(PrefabVersion);
@@ -315,69 +319,55 @@ public static class TitleScreenPrefabBuilder
 
     /// <summary>
     /// **部屋を探す**の画面（印は PageMulti のまま。2026/10/19 に「マルチプレイ」の画面として作った名残）。
-    /// 2026/10/22 に**大槻さんの写真の形**にした：画面の真ん中に青緑の枠が1枚あり、その中に
+    /// 2026/10/22 に大槻さんの写真の形にし、2026/10/27 から**右に出てくるタブレットの中**に置く（<see cref="NewTabletPage"/>）。
     ///
     /// ・左上：戻る ／ 右上：「番号入力で検索する」（部屋番号で絞り込む。印は PrivateCode の入力欄）
     /// ・「募集中の部屋」と「更新」、その下に部屋の一覧（1行＝部屋の名前・#部屋番号・鍵・人数。行そのものを押すと入る）
-    /// ・下：■パブリック ■フレンド ■パスワード不要 と、操作の案内（A 確認／B 戻る）
+    /// ・下：■パブリック ■フレンド ■パスワード不要。右下：操作の案内（コントローラー／キーボードで出し分ける）
     ///
-    /// 版 7 → 8・版 10 → 11 の <see cref="Upgrade"/> でも、これを使って作る。
+    /// 版 7 → 8・版 10 → 11・版 12 → 13 の <see cref="Upgrade"/> でも、これを使って作る。
     /// </summary>
     private static GameObject BuildMultiPage(Transform root)
     {
-        GameObject page = NewPage("MultiPage", root, TitlePartRole.PageMulti);
+        Transform panel = NewTabletPage("MultiPage", root, TitlePartRole.PageMulti, out GameObject page);
 
-        // 枠（青緑）と、その内側の暗い板。部品はすべて板の中に、板の左上（右上）を基準に置く
-        Image frame = NewImage("Frame", page.transform, FindFrameColor);
-        Place(frame.rectTransform, new Vector2(0.5f, 0.5f), Vector2.zero, new Vector2(1240f, 960f), new Vector2(0.5f, 0.5f));
-        Image board = NewImage("Board", frame.transform, new Color(0.06f, 0.07f, 0.09f, 0.97f));
-        Stretch(board.rectTransform);
-        board.rectTransform.offsetMin = new Vector2(16f, 16f);
-        board.rectTransform.offsetMax = new Vector2(-16f, -16f);
-        Transform panel = board.transform;
+        // 右上：番号で検索
+        Image search = NewInputField(panel, "番号入力で検索する", TitleInputKind.PrivateCode, new Vector2(420f, 60f), false);
+        Place(search.rectTransform, new Vector2(1f, 1f), new Vector2(-28f, -24f), new Vector2(420f, 60f), new Vector2(1f, 1f));
 
-        // 右上：番号で検索（コントローラーで開いたときに最初に選ばれるように、板の中で一番前に置く）
-        Image search = NewInputField(panel, "番号入力で検索する", TitleInputKind.PrivateCode, new Vector2(520f, 64f), false);
-        Place(search.rectTransform, new Vector2(1f, 1f), new Vector2(-36f, -28f), new Vector2(520f, 64f), new Vector2(1f, 1f));
-
-        // 左上：戻る
-        TitleMenuButton back = NewButton(panel, "↩ 戻る", new Vector2(170f, 64f), FontSize, TitleButtonAction.Back);
-        Place((RectTransform)back.transform, new Vector2(0f, 1f), new Vector2(36f, -28f), new Vector2(170f, 64f), new Vector2(0f, 1f));
+        AddTabletBackButton(panel);
 
         // 見出し「募集中の部屋」と「更新」、その下の線
-        Text heading = NewText("Heading", panel, "募集中の部屋", FontSize + 10, TextColor, TextAnchor.MiddleLeft);
-        Place(heading.rectTransform, new Vector2(0f, 1f), new Vector2(70f, -118f), new Vector2(300f, 60f), new Vector2(0f, 1f));
-        TitleMenuButton refresh = NewButton(panel, "更新", new Vector2(120f, 50f), FontSize - 2, TitleButtonAction.RefreshRoomList);
-        Place((RectTransform)refresh.transform, new Vector2(0f, 1f), new Vector2(370f, -123f), new Vector2(120f, 50f), new Vector2(0f, 1f));
-        AddLine(panel, -186f);
+        Text heading = NewText("Heading", panel, "募集中の部屋", FontSize + 8, TextColor, TextAnchor.MiddleLeft);
+        Place(heading.rectTransform, new Vector2(0f, 1f), new Vector2(48f, -108f), new Vector2(260f, 56f), new Vector2(0f, 1f));
+        TitleMenuButton refresh = NewButton(panel, "更新", new Vector2(110f, 48f), FontSize - 2, TitleButtonAction.RefreshRoomList);
+        Place((RectTransform)refresh.transform, new Vector2(0f, 1f), new Vector2(318f, -112f), new Vector2(110f, 48f), new Vector2(0f, 1f));
+        AddLine(panel, -176f, 856f);
 
         // 部屋の一覧（ここだけ自動で並べる）
         RectTransform listArea = NewRect("JoinableBox", panel);
-        Place(listArea, new Vector2(0f, 1f), new Vector2(50f, -198f), new Vector2(1108f, 560f), new Vector2(0f, 1f));
+        Place(listArea, new Vector2(0f, 1f), new Vector2(36f, -186f), new Vector2(856f, 560f), new Vector2(0f, 1f));
         RectTransform content = NewScrollList(listArea);
         Mark(content, TitlePartRole.JoinableListContent);
-        BuildRoomCardTemplate(content);
+        BuildRoomCardTemplate(content, 816f);
 
         // 見つからないときの案内・取れなかった理由（一覧の下のほうに出す。行と重なりにくいように）
-        Text message = NewText("Message", listArea, string.Empty, FontSize, TextColor, TextAnchor.LowerCenter);
-        Place(message.rectTransform, new Vector2(0.5f, 0f), new Vector2(0f, 12f), new Vector2(1000f, 160f), new Vector2(0.5f, 0f));
+        Text message = NewText("Message", listArea, string.Empty, FontSize - 2, TextColor, TextAnchor.LowerCenter);
+        Place(message.rectTransform, new Vector2(0.5f, 0f), new Vector2(0f, 12f), new Vector2(820f, 160f), new Vector2(0.5f, 0f));
         message.verticalOverflow = VerticalWrapMode.Overflow;
         Mark(message, TitlePartRole.JoinableListMessage);
 
-        // 下：線・チェック（■パブリック ■フレンド ■パスワード不要）・操作の案内
-        AddLine(panel, -772f);
+        // 下：線・チェック（■パブリック ■フレンド ■パスワード不要）・説明
+        AddLine(panel, -756f, 856f);
         RectTransform checks = NewRect("Checks", panel);
-        Place(checks, new Vector2(0f, 1f), new Vector2(60f, -790f), new Vector2(760f, 60f), new Vector2(0f, 1f));
+        Place(checks, new Vector2(0f, 1f), new Vector2(44f, -770f), new Vector2(840f, 56f), new Vector2(0f, 1f));
         float x = 0f;
         x = AddInlineCheck(checks, x, "パブリック", 150f, TitleButtonAction.ToggleSearchPublic, TitlePartRole.SearchPublicCheckText);
         x = AddInlineCheck(checks, x, "フレンド", 130f, TitleButtonAction.ToggleSearchFriends, TitlePartRole.SearchFriendsCheckText);
         AddInlineCheck(checks, x, "パスワード不要", 210f, TitleButtonAction.ToggleSearchNoPassword, TitlePartRole.SearchNoPasswordCheckText);
 
-        // 右下の操作の案内（A 確認　B 戻る）は、大槻さんの依頼で置かない（2026/10/22）
-
-        Text note = NewText("Note", panel, "番号を6文字すべて入れると、プライベートの部屋にも入れます。鍵の付いた部屋は、押すとパスワードを聞かれます",
-            FontSize - 6, NoteColor, TextAnchor.MiddleLeft);
-        Place(note.rectTransform, new Vector2(0f, 1f), new Vector2(60f, -856f), new Vector2(1100f, 40f), new Vector2(0f, 1f));
+        Text note = NewText("Note", panel, "番号を6文字すべて入れると、プライベートの部屋にも入れます", FontSize - 6, NoteColor, TextAnchor.MiddleLeft);
+        Place(note.rectTransform, new Vector2(0f, 1f), new Vector2(44f, -832f), new Vector2(840f, 32f), new Vector2(0f, 1f));
 
         return page;
     }
@@ -386,27 +376,27 @@ public static class TitleScreenPrefabBuilder
     /// 部屋1つぶんの行の見本（再生すると隠れ、見つかった数だけ複製される）。**行そのものが押せるボタン**（写真の形）。
     /// 左に部屋の名前（ボタンの文字。選ぶと色が変わる）と、その下に薄く #部屋番号。右に鍵（パスワードあり）と人数。
     /// </summary>
-    private static void BuildRoomCardTemplate(RectTransform content)
+    private static void BuildRoomCardTemplate(RectTransform content, float width)
     {
-        TitleMenuButton card = NewButton(content, "サーバーの名前", new Vector2(1060f, 92f), FontSize + 6, TitleButtonAction.JoinListedServer);
+        TitleMenuButton card = NewButton(content, "サーバーの名前", new Vector2(width, 88f), FontSize + 4, TitleButtonAction.JoinListedServer);
         card.gameObject.name = "JoinableCardTemplate";
-        SetLayoutSize(card.gameObject, 1060f, 92f);
+        SetLayoutSize(card.gameObject, width, 88f);
         Mark(card, TitlePartRole.JoinableCardTemplate);
 
         Text name = card.Label;
         name.alignment = TextAnchor.MiddleLeft;
-        Place(name.rectTransform, new Vector2(0f, 1f), new Vector2(30f, -6f), new Vector2(720f, 52f), new Vector2(0f, 1f));
+        Place(name.rectTransform, new Vector2(0f, 1f), new Vector2(26f, -6f), new Vector2(width - 300f, 50f), new Vector2(0f, 1f));
         Mark(name, TitlePartRole.ServerCardName);
 
         Text code = NewText("Code", card.transform, "#B57R9", FontSize - 4, DimTextColor, TextAnchor.MiddleLeft);
-        Place(code.rectTransform, new Vector2(0f, 0f), new Vector2(32f, 6f), new Vector2(400f, 32f), new Vector2(0f, 0f));
+        Place(code.rectTransform, new Vector2(0f, 0f), new Vector2(28f, 4f), new Vector2(400f, 32f), new Vector2(0f, 0f));
         Mark(code, TitlePartRole.ServerCardCode);
 
-        Text count = NewText("Players", card.transform, "1/8", FontSize + 6, TextColor, TextAnchor.MiddleRight);
-        Place(count.rectTransform, new Vector2(1f, 0.5f), new Vector2(-30f, 0f), new Vector2(180f, 70f), new Vector2(1f, 0.5f));
+        Text count = NewText("Players", card.transform, "1/8", FontSize + 4, TextColor, TextAnchor.MiddleRight);
+        Place(count.rectTransform, new Vector2(1f, 0.5f), new Vector2(-26f, 0f), new Vector2(170f, 70f), new Vector2(1f, 0.5f));
         Mark(count, TitlePartRole.ServerCardPlayers);
 
-        BuildLockIcon(card.transform, new Vector2(-230f, 0f));
+        BuildLockIcon(card.transform, new Vector2(-210f, 0f));
     }
 
     /// <summary>鍵の印（絵文字はフォントに無いことがあるので、四角を組み合わせて描く）。パスワードのかかった部屋の行だけに出る。</summary>
@@ -427,11 +417,11 @@ public static class TitleScreenPrefabBuilder
         Place(top.rectTransform, new Vector2(0.5f, 1f), Vector2.zero, new Vector2(23f, 5f), new Vector2(0.5f, 1f));
     }
 
-    /// <summary>「部屋を探す」の板の中の横線（写真の、見出しの下と一覧の下の線）。y は板の上の端からの位置。</summary>
-    private static void AddLine(Transform panel, float y)
+    /// <summary>板の中の横線（写真の、見出しの下と一覧の下の線）。y は板の上の端からの位置。</summary>
+    private static void AddLine(Transform panel, float y, float width)
     {
         Image line = NewImage("Line", panel, new Color(1f, 1f, 1f, 0.6f));
-        Place(line.rectTransform, new Vector2(0.5f, 1f), new Vector2(0f, y), new Vector2(1100f, 3f), new Vector2(0.5f, 1f));
+        Place(line.rectTransform, new Vector2(0.5f, 1f), new Vector2(0f, y), new Vector2(width, 3f), new Vector2(0.5f, 1f));
     }
 
     /// <summary>横に並べる「■ 名前」のチェック1つ。x の位置に置き、次のチェックを置く x を返す。</summary>
@@ -444,6 +434,98 @@ public static class TitleScreenPrefabBuilder
         Text text = NewText("Label " + label, row, label, FontSize, TextColor, TextAnchor.MiddleLeft);
         Place(text.rectTransform, new Vector2(0f, 0.5f), new Vector2(x + 66f, 0f), new Vector2(labelWidth, 52f), new Vector2(0f, 0.5f));
         return x + 66f + labelWidth + 20f;
+    }
+
+    // ------------------------------------------------------------
+    // タブレット（2026/10/27・大槻さんの絵コンテ）
+    // ------------------------------------------------------------
+
+    /// <summary>タブレットの大きさ（枠ごと）。画面の右側、メインのボタンとロゴに重ならない所に置く。</summary>
+    private static readonly Vector2 TabletSize = new Vector2(960f, 960f);
+
+    /// <summary>タブレットの中の板の色（暗い）。</summary>
+    private static readonly Color TabletBoardColor = new Color(0.06f, 0.07f, 0.09f, 0.97f);
+
+    /// <summary>
+    /// **タブレットの画面を1つ作る。**（マルチプレイ・部屋を探す・部屋を作る）
+    /// 画面の右に青緑の枠（印 TabletPanel。開くときに右から出てくる）を置き、その中の暗い板を返す。部品は板の中に、板の端を基準に置く。
+    /// 右下には操作の案内（印 TabletHint。再生中はコントローラー／キーボードで文字が変わる）を置く。
+    /// メインの画面は、タブレットが開いている間も左に出たまま（<see cref="TitleScreen"/> が出し分ける）。
+    /// </summary>
+    private static Transform NewTabletPage(string name, Transform root, TitlePartRole role, out GameObject page)
+    {
+        page = NewPage(name, root, role);
+
+        Image frame = NewImage("Tablet", page.transform, FindFrameColor);
+        Place(frame.rectTransform, new Vector2(1f, 0.5f), new Vector2(-60f, 0f), TabletSize, new Vector2(1f, 0.5f));
+        Mark(frame, TitlePartRole.TabletPanel);
+
+        Image board = NewImage("Board", frame.transform, TabletBoardColor);
+        Stretch(board.rectTransform);
+        board.rectTransform.offsetMin = new Vector2(16f, 16f);
+        board.rectTransform.offsetMax = new Vector2(-16f, -16f);
+
+        // 右下：操作の案内（版 12 の「Hint」を消す処理に巻き込まれないよう、別の名前にしてある）
+        Text hint = NewText("OperationHint", board.transform, "<b>Esc</b>　戻る", FontSize, DimTextColor, TextAnchor.MiddleRight);
+        Place(hint.rectTransform, new Vector2(1f, 0f), new Vector2(-28f, 16f), new Vector2(560f, 44f), new Vector2(1f, 0f));
+        Mark(hint, TitlePartRole.TabletHint);
+
+        return board.transform;
+    }
+
+    /// <summary>タブレットの左上の「↩ 戻る」。</summary>
+    private static void AddTabletBackButton(Transform board)
+    {
+        TitleMenuButton back = NewButton(board, "↩ 戻る", new Vector2(160f, 60f), FontSize, TitleButtonAction.Back);
+        Place((RectTransform)back.transform, new Vector2(0f, 1f), new Vector2(28f, -24f), new Vector2(160f, 60f), new Vector2(0f, 1f));
+    }
+
+    /// <summary>タブレットの見出し（「↩ 戻る」の右）と、その下の線。</summary>
+    private static void AddTabletHeading(Transform board, string text)
+    {
+        Text heading = NewText("Heading", board, text, FontSize + 10, TitleColor, TextAnchor.MiddleLeft);
+        heading.fontStyle = FontStyle.Bold;
+        Place(heading.rectTransform, new Vector2(0f, 1f), new Vector2(214f, -26f), new Vector2(500f, 56f), new Vector2(0f, 1f));
+        AddLine(board, -96f, 856f);
+    }
+
+    /// <summary>
+    /// 版 12 → 13（2026/10/27）：**マルチプレイ・部屋を探す・部屋を作るの3つの画面を、タブレットの形で作り直す**
+    /// （前の画面は消して、同じ並び順に置く。どれもツールで作ったままで、まだ誰も手で直していないため）。
+    /// もうタブレットがあれば何もしない。
+    /// </summary>
+    private static void RebuildAsTablet(GameObject root)
+    {
+        if (FindPart(root, TitlePartRole.TabletPanel) != null)
+        {
+            return;
+        }
+
+        ReplacePage(root, TitlePartRole.PageMultiMenu, BuildMultiMenuPage);
+        ReplacePage(root, TitlePartRole.PageMulti, BuildMultiPage);
+        ReplacePage(root, TitlePartRole.PageCreate, BuildCreatePage);
+    }
+
+    /// <summary>その印の画面を消して build で作り直し、同じ並び順（無ければ、つないでいる途中の表示の前）に置く。</summary>
+    private static void ReplacePage(GameObject root, TitlePartRole role, System.Func<Transform, GameObject> build)
+    {
+        TitlePart old = FindPart(root, role);
+        int index = old != null ? old.transform.GetSiblingIndex() : -1;
+        if (old != null)
+        {
+            Object.DestroyImmediate(old.gameObject);
+        }
+
+        GameObject page = build(root.transform);
+        page.SetActive(false);
+        if (index >= 0)
+        {
+            page.transform.SetSiblingIndex(index);
+        }
+        else
+        {
+            PutBehindBusyOverlay(root, page);
+        }
     }
 
     /// <summary>
@@ -602,32 +684,34 @@ public static class TitleScreenPrefabBuilder
     }
 
     /// <summary>
-    /// **マルチプレイの画面**（2026/10/22）。クイックマッチ／部屋を探す／部屋を作る の3つのボタンと、ゲーム内で表示する名前の欄。
-    /// コントローラーで開いたときに「クイックマッチ」が選ばれるように、ボタンの列を名前の欄より前に並べる。
+    /// **マルチプレイの画面**（2026/10/22）。2026/10/27 から**タブレットの中**に置く（大槻さんの絵コンテ）。
+    /// 上にゲーム内で表示する名前の欄、その下に大きな「クイックマッチ」、線を挟んで「部屋を探す」「部屋を作る」。
+    /// コントローラーで開いたときは「クイックマッチ」が選ばれる（入力欄は最初に選ばない。<see cref="TitleScreen"/>）。
     /// </summary>
     private static GameObject BuildMultiMenuPage(Transform root)
     {
-        GameObject page = NewPage("MultiMenuPage", root, TitlePartRole.PageMultiMenu);
+        Transform board = NewTabletPage("MultiMenuPage", root, TitlePartRole.PageMultiMenu, out GameObject page);
+        AddTabletHeading(board, "マルチプレイ");
 
-        Text heading = NewText("Heading", page.transform, "マルチプレイ", 64, TitleColor, TextAnchor.MiddleLeft);
-        heading.fontStyle = FontStyle.Bold;
-        heading.gameObject.AddComponent<Outline>().effectDistance = new Vector2(3f, -3f);
-        Place(heading.rectTransform, new Vector2(0f, 1f), new Vector2(140f, -50f), new Vector2(1000f, 100f), new Vector2(0f, 1f));
-
-        Column buttons = new Column("Buttons", page.transform, MultiMenuButtonSize.x, MenuButtonSpacing,
-            new Vector2(0f, 1f), new Vector2(140f, -380f), new Vector2(0f, 1f));
-        AddMenuButton(buttons, "クイックマッチ", MultiMenuButtonSize, ButtonFontSize + 6, TitleButtonAction.QuickPlay);
-        AddMenuButton(buttons, "部屋を探す", MultiMenuButtonSize, ButtonFontSize + 6, TitleButtonAction.OpenFindRoom);
-        AddMenuButton(buttons, "部屋を作る", MultiMenuButtonSize, ButtonFontSize + 6, TitleButtonAction.OpenCreate);
-        buttons.Finish();
-
-        Column name = new Column("Name", page.transform, MultiMenuButtonSize.x, 10f,
-            new Vector2(0f, 1f), new Vector2(140f, -180f), new Vector2(0f, 1f));
+        Column name = new Column("Name", board, 760f, 10f, new Vector2(0.5f, 1f), new Vector2(0f, -116f), new Vector2(0.5f, 1f));
         AddNameInput(name);
         name.Finish();
 
-        AddBackButton(page.transform);
+        AddTabletMenuButton(board, "クイックマッチ", new Vector2(620f, 120f), ButtonFontSize + 10, TitleButtonAction.QuickPlay, -290f);
+        AddLine(board, -450f, 680f);
+        AddTabletMenuButton(board, "部屋を探す", new Vector2(540f, 96f), ButtonFontSize + 4, TitleButtonAction.OpenFindRoom, -496f);
+        AddTabletMenuButton(board, "部屋を作る", new Vector2(540f, 96f), ButtonFontSize + 4, TitleButtonAction.OpenCreate, -628f);
+
+        AddTabletBackButton(board);
         return page;
+    }
+
+    /// <summary>タブレットの真ん中に並べるボタンを1つ（y は板の上の端からの位置。選ぶと真ん中から少し大きくなる）。</summary>
+    private static void AddTabletMenuButton(Transform board, string label, Vector2 size, int fontSize, TitleButtonAction action, float y)
+    {
+        TitleMenuButton button = NewButton(board, label, size, fontSize, action);
+        Place((RectTransform)button.transform, new Vector2(0.5f, 1f), new Vector2(0f, y), size, new Vector2(0.5f, 1f));
+        GrowOnHighlight(button);
     }
 
     /// <summary>メイン・マルチプレイの画面のボタンを1つ足す（重なった・選ばれたときに真ん中から少し大きくなる）。</summary>
@@ -1275,43 +1359,45 @@ public static class TitleScreenPrefabBuilder
         return page;
     }
 
+    /// <summary>
+    /// **部屋を作る**の画面。2026/10/27 から**タブレットの中**に置く（中身は今までどおり。名前の欄は無い）。
+    /// 最大人数（−1・＋1）／サーバーの名前／パスワード（LAN のときは隠す）／□パブリック □プライベート □LAN／参加コードの枠（水色・白い文字）／サーバーを作成。
+    /// </summary>
     private static GameObject BuildCreatePage(Transform root)
     {
-        GameObject page = NewPage("CreatePage", root, TitlePartRole.PageCreate);
+        Transform board = NewTabletPage("CreatePage", root, TitlePartRole.PageCreate, out GameObject page);
+        AddTabletHeading(board, "部屋を作る");
 
-        // 名前の欄は無い（マルチプレイの画面で入れる。2026/10/22）。そのぶん、最後に全体を大きくする（Enlarge）
-        Column column = new Column("Column", page.transform, 1100f, 10f,
-            new Vector2(0.5f, 1f), new Vector2(0f, -36f), new Vector2(0.5f, 1f));
+        Column column = new Column("Column", board, 832f, 8f, new Vector2(0.5f, 1f), new Vector2(0f, -112f), new Vector2(0.5f, 1f));
 
         // 最大人数
         AddLabel(column, "最大人数", "2〜8人");
-        Row players = new Row(column, 70f, 12f);
-        players.Add(NewButton(players.Rect, "-1", new Vector2(110f, 64f), FontSize, TitleButtonAction.MaxPlayersDown));
+        Row players = new Row(column, 60f, 12f);
+        players.Add(NewButton(players.Rect, "-1", new Vector2(100f, 56f), FontSize, TitleButtonAction.MaxPlayersDown));
         Image playersBox = NewImage("Players", players.Rect, PanelColor);
-        playersBox.rectTransform.sizeDelta = new Vector2(300f, 64f);
+        playersBox.rectTransform.sizeDelta = new Vector2(260f, 56f);
         players.Add(playersBox.rectTransform);
         Text playersValue = NewText("Value", playersBox.transform, "4 人", FontSize + 6, TextColor, TextAnchor.MiddleCenter);
         Stretch(playersValue.rectTransform);
         Mark(playersValue, TitlePartRole.MaxPlayersText);
-        players.Add(NewButton(players.Rect, "+1", new Vector2(110f, 64f), FontSize, TitleButtonAction.MaxPlayersUp));
+        players.Add(NewButton(players.Rect, "+1", new Vector2(100f, 56f), FontSize, TitleButtonAction.MaxPlayersUp));
 
         // サーバーの名前
-        AddLabel(column, "サーバーの名前を入力", "パブリックサーバーの一覧に出る名前。空なら「（名前）のサーバー」");
+        AddLabel(column, "サーバーの名前", "空なら「（名前）のサーバー」");
         AddInput(column, "テキストを入力", TitleInputKind.ServerName);
 
         // パスワード（インターネットのときだけ。LAN のときは隠す）
         Column passwordGroup = new Column("PasswordRow", column.Rect, column.Width, 6f,
             new Vector2(0f, 1f), Vector2.zero, new Vector2(0f, 1f));
         AddLabel(passwordGroup, "パスワード",
-            $"空ならパスワードなし。{InternetConnection.PasswordMinLength}〜{InternetConnection.PasswordMaxLength}文字。入る人に伝える");
+            $"空ならなし。{InternetConnection.PasswordMinLength}〜{InternetConnection.PasswordMaxLength}文字。入る人に伝える");
         AddInput(passwordGroup, "パスワードなし", TitleInputKind.CreatePassword);
         passwordGroup.Finish();
         column.Add(passwordGroup.Rect);
         Mark(passwordGroup.Rect, TitlePartRole.PasswordRow);
 
-        // 部屋の公開のしかた：□パブリック □プライベート □LAN（どれか1つだけにチェックが付く。2026/10/15）
-        // （前は「つなぎかた（インターネット／LAN）」のボタンの行が別にあった）
-        AddLabel(column, RoomKindLabel, RoomKindNote);
+        // 部屋の公開のしかた：□パブリック □プライベート □LAN（どれか1つだけにチェックが付く）。説明はタブレットの幅に収まるよう下の行に
+        AddLabel(column, RoomKindLabel, null);
         Row privateRow = new Row(column, 60f, 12f, "PrivateRow");
         Mark(privateRow.Rect, TitlePartRole.PrivateRow);
         TitleMenuButton publicCheck = NewButton(privateRow.Rect, "■", new Vector2(64f, 56f), FontSize + 6, TitleButtonAction.SetPublic);
@@ -1333,22 +1419,26 @@ public static class TitleScreenPrefabBuilder
         lanLabel.rectTransform.sizeDelta = new Vector2(120f, 56f);
         privateRow.Add(lanLabel.rectTransform);
 
-        // 参加コードの枠
+        Text kindNote = NewText("Note", column.Rect, "パブリック＝一覧に出る／プライベート＝番号を知っている人だけ／LAN＝同じネットワーク（展示会場）",
+            FontSize - 6, NoteColor, TextAnchor.MiddleLeft);
+        kindNote.rectTransform.sizeDelta = new Vector2(832f, 28f);
+        column.Add(kindNote.rectTransform);
+
+        // 参加コードの枠（水色・白い文字。2026/10/22・大槻さん）
         Image codeBox = NewImage("CodeBox", column.Rect, CodeBoxColor);
-        codeBox.rectTransform.sizeDelta = new Vector2(1100f, 120f);
+        codeBox.rectTransform.sizeDelta = new Vector2(832f, 104f);
         column.Add(codeBox.rectTransform);
-        Text codeTitle = NewText("Title", codeBox.transform, "参加コード", FontSize + 4, TextColor, TextAnchor.UpperCenter);
-        Place(codeTitle.rectTransform, new Vector2(0.5f, 1f), new Vector2(0f, -10f), new Vector2(1060f, 40f), new Vector2(0.5f, 1f));
+        Text codeTitle = NewText("Title", codeBox.transform, "参加コード", FontSize + 2, TextColor, TextAnchor.UpperCenter);
+        Place(codeTitle.rectTransform, new Vector2(0.5f, 1f), new Vector2(0f, -8f), new Vector2(800f, 36f), new Vector2(0.5f, 1f));
         Mark(codeTitle, TitlePartRole.CodeBoxTitle);
         Text codeBody = NewText("Body", codeBox.transform, "（再生すると、つなぎかたに合わせた説明が入る）", FontSize - 4, TextColor, TextAnchor.UpperCenter);
-        Place(codeBody.rectTransform, new Vector2(0.5f, 1f), new Vector2(0f, -52f), new Vector2(1060f, 64f), new Vector2(0.5f, 1f));
+        Place(codeBody.rectTransform, new Vector2(0.5f, 1f), new Vector2(0f, -44f), new Vector2(800f, 56f), new Vector2(0.5f, 1f));
         Mark(codeBody, TitlePartRole.CodeBoxBody);
 
-        column.Add(NewButton(column.Rect, "サーバーを作成", new Vector2(1100f, 70f), ButtonFontSize, TitleButtonAction.CreateServer));
+        column.Add(NewButton(column.Rect, "サーバーを作成", new Vector2(832f, 66f), ButtonFontSize, TitleButtonAction.CreateServer));
         column.Finish();
-        Enlarge(column.Rect, CreatePageEnlarge);
 
-        AddBackButton(page.transform);
+        AddTabletBackButton(board);
         return page;
     }
 
