@@ -170,17 +170,22 @@ public partial class SpaceJunkRound : NetworkBehaviour
     [Min(0f)]
     [SerializeField] private float flyInGap = 3f;
 
+    [Tooltip("① カメラが見下ろす角度（度）。カメラはゴールエリアの手前（飛んでくる先）の斜め上から、乗っている人を映したまま一緒に下がる")]
+    [Range(5f, 85f)]
+    [SerializeField] private float flyInCameraPitch = 45f;
+
+    [Tooltip("① 飛び始めのとき、カメラが ① の終わりのときの何倍離れているか。" +
+             "1 より大きいほど、カメラがゴールエリアよりゆっくり下がり、ゴールエリアがこちらへ近づいてくるように見える")]
+    [Min(1f)]
+    [SerializeField] private float flyInCameraStartScale = 1.8f;
+
     [Tooltip("② マップに近づいたあと、元のゴールの位置へ飛んで設置されるまでの秒数。設置されたらカウントダウンが始まる")]
     [Min(0f)]
     [SerializeField] private float flyInLandSeconds = 1.5f;
 
-    [Tooltip("① 名前のタグを強調するときの、いちばん大きくなったときの倍率")]
+    [Tooltip("① 名前のタグを強調するときの倍率。自分の番の間はこの大きさになり、番が終わると元の大きさに戻る")]
     [Min(1f)]
     [SerializeField] private float nameEmphasisScale = 1.8f;
-
-    [Tooltip("① 1人の強調の間に、拡大と縮小を何回くり返すか")]
-    [Min(1)]
-    [SerializeField] private int nameEmphasisPulses = 2;
 
     /// <summary>演出の種類。</summary>
     public SpaceJunkIntroStyle IntroStyle => introStyle;
@@ -202,14 +207,17 @@ public partial class SpaceJunkRound : NetworkBehaviour
     /// <summary>① ゴールエリアどうしのすき間。</summary>
     public float FlyInGap => flyInGap;
 
+    /// <summary>① カメラが見下ろす角度（度）。</summary>
+    public float FlyInCameraPitch => flyInCameraPitch;
+
+    /// <summary>① 飛び始めのとき、カメラが ① の終わりのときの何倍離れているか。</summary>
+    public float FlyInCameraStartScale => flyInCameraStartScale;
+
     /// <summary>② 元の位置へ飛んで設置されるまでの秒数。</summary>
     public float FlyInLandSeconds => flyInLandSeconds;
 
     /// <summary>① 名前のタグを強調するときの倍率。</summary>
     public float NameEmphasisScale => nameEmphasisScale;
-
-    /// <summary>① 1人の強調の間に、拡大と縮小をくり返す回数。</summary>
-    public int NameEmphasisPulses => nameEmphasisPulses;
 
     // ↓ 演出の設定を、演出の部品 SpaceJunkRoundIntro が読むための窓口（中身は上の同じ名前の値）
 
