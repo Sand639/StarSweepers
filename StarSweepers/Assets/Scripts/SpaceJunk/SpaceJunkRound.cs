@@ -183,13 +183,9 @@ public partial class SpaceJunkRound : NetworkBehaviour
     [Min(0f)]
     [SerializeField] private float flyInLandSeconds = 1.5f;
 
-    [Tooltip("① 名前のタグを強調するときの、いちばん大きくなったときの倍率")]
+    [Tooltip("① 名前のタグを強調するときの倍率。自分の番の間はこの大きさになり、番が終わると元の大きさに戻る")]
     [Min(1f)]
     [SerializeField] private float nameEmphasisScale = 1.8f;
-
-    [Tooltip("① 1人の強調の間に、拡大と縮小を何回くり返すか")]
-    [Min(1)]
-    [SerializeField] private int nameEmphasisPulses = 2;
 
     /// <summary>演出の種類。</summary>
     public SpaceJunkIntroStyle IntroStyle => introStyle;
@@ -222,9 +218,6 @@ public partial class SpaceJunkRound : NetworkBehaviour
 
     /// <summary>① 名前のタグを強調するときの倍率。</summary>
     public float NameEmphasisScale => nameEmphasisScale;
-
-    /// <summary>① 1人の強調の間に、拡大と縮小をくり返す回数。</summary>
-    public int NameEmphasisPulses => nameEmphasisPulses;
 
     // ↓ 演出の設定を、演出の部品 SpaceJunkRoundIntro が読むための窓口（中身は上の同じ名前の値）
 
