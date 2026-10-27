@@ -92,14 +92,7 @@ public static class SweeperPlayerSetup
     [MenuItem("Tools/StarSweepers/プレイヤー（本実装）のプレハブを作り直す")]
     public static GameObject CreatePrefab()
     {
-        PrepareTextures();
-        Material ringMaterial = GetOrCreateShaderMaterial(RingMaterialPath, "StarSweepers/SweeperRing");
-        Material stripMaterial = GetOrCreateShaderMaterial(StripMaterialPath, "StarSweepers/SweeperAimStrip");
-        Material bodyMaterial = FishingSceneBuilder.GetOrCreateMaterial(BodyMaterialPath, new Color(0.88f, 0.9f, 0.93f));
-        Texture2D bodyTexture = AssetDatabase.LoadAssetAtPath<Texture2D>(BodyTexturePath);
-        Texture2D tipTexture = AssetDatabase.LoadAssetAtPath<Texture2D>(TipTexturePath);
-        LiquidBeam beamPrefab = AssetDatabase.LoadAssetAtPath<LiquidBeam>(BeamPrefabPath);
-        var inputActions = FishingSceneBuilder.LoadInputActions();
+        Material bodyMaterial = BodyMaterial();
 
         // ----- 体（足元が原点。高さ 2m） -----
         GameObject root = new GameObject("SweeperPlayer");
@@ -108,15 +101,7 @@ public static class SweeperPlayerSetup
         controller.height = 2f;
         controller.radius = 0.4f;
 
-        root.AddComponent<PlayerInputSource>();
-        SweeperPlayer profile = root.AddComponent<SweeperPlayer>();
-        SweeperMover mover = root.AddComponent<SweeperMover>();
-        SweeperAim aim = root.AddComponent<SweeperAim>();
-        SweeperRing ring = root.AddComponent<SweeperRing>();
-        SweeperNameTag nameTag = root.AddComponent<SweeperNameTag>();
-        SweeperReel reel = root.AddComponent<SweeperReel>();
-        SweeperAnimation animationPlayer = root.AddComponent<SweeperAnimation>();
-        SweeperShooter shooter = root.AddComponent<SweeperShooter>();
+        AddSweeperParts(root, true);
 
         // キャラクターのモデルの代わり（カプセル）。当たり判定は CharacterController が持つので外す
         GameObject body = GameObject.CreatePrimitive(PrimitiveType.Capsule);
@@ -133,6 +118,52 @@ public static class SweeperPlayerSetup
         visor.transform.localPosition = new Vector3(0f, 1.5f, 0.42f);
         visor.transform.localScale = new Vector3(0.5f, 0.15f, 0.12f);
         Object.DestroyImmediate(visor.GetComponent<Collider>());
+
+        FishingSceneBuilder.EnsureFolder("Assets/Prefabs/Common");
+        GameObject prefab = PrefabUtility.SaveAsPrefabAsset(root, PrefabPath);
+        Object.DestroyImmediate(root);
+
+        Debug.Log($"[SweeperPlayer] プレイヤー（本実装）のプレハブを作りました：{PrefabPath}");
+        return prefab;
+    }
+
+    /// <summary>体（カプセル）のマテリアル（薄い灰色）。無ければ作る。</summary>
+    internal static Material BodyMaterial()
+    {
+        return FishingSceneBuilder.GetOrCreateMaterial(BodyMaterialPath, new Color(0.88f, 0.9f, 0.93f));
+    }
+
+    /// <summary>
+    /// **Sweeper の部品（移動・狙い・リング・帯・光線・巻き取り・アニメーション）を体に付けて、参照をつなぐ。**
+    /// 体の見た目（カプセル）と当たり判定（CharacterController）は付けないので、呼ぶ側で用意する。
+    /// <paramref name="withNameTag"/> が false なら、頭の上の名前（<see cref="SweeperNameTag"/>）は付けない
+    /// （宇宙ごみのオンラインの体は、今の名前のタグを使うため。<see cref="SweeperOnlineSetup"/>）。
+    /// </summary>
+    internal static void AddSweeperParts(GameObject root, bool withNameTag)
+    {
+        PrepareTextures();
+        Material ringMaterial = GetOrCreateShaderMaterial(RingMaterialPath, "StarSweepers/SweeperRing");
+        Material stripMaterial = GetOrCreateShaderMaterial(StripMaterialPath, "StarSweepers/SweeperAimStrip");
+        Texture2D bodyTexture = AssetDatabase.LoadAssetAtPath<Texture2D>(BodyTexturePath);
+        Texture2D tipTexture = AssetDatabase.LoadAssetAtPath<Texture2D>(TipTexturePath);
+        LiquidBeam beamPrefab = AssetDatabase.LoadAssetAtPath<LiquidBeam>(BeamPrefabPath);
+        var inputActions = FishingSceneBuilder.LoadInputActions();
+
+        if (root.GetComponent<PlayerInputSource>() == null)
+        {
+            root.AddComponent<PlayerInputSource>();
+        }
+        root.AddComponent<SweeperPlayer>();
+        SweeperMover mover = root.AddComponent<SweeperMover>();
+        SweeperAim aim = root.AddComponent<SweeperAim>();
+        SweeperRing ring = root.AddComponent<SweeperRing>();
+        if (withNameTag)
+        {
+            root.AddComponent<SweeperNameTag>();
+        }
+        SweeperReel reel = root.AddComponent<SweeperReel>();
+        SweeperAnimation animationPlayer = root.AddComponent<SweeperAnimation>();
+        SweeperShooter shooter = root.AddComponent<SweeperShooter>();
 
         // ----- 狙いのカーソル（小さな円。SweeperAim が位置を動かす） -----
         GameObject cursor = new GameObject("AimCursor");
@@ -168,13 +199,6 @@ public static class SweeperPlayerSetup
         FishingSceneBuilder.SetRef(shooter, "animationPlayer", animationPlayer);
         FishingSceneBuilder.SetRef(shooter, "inputActions", inputActions);
         FishingSceneBuilder.SetRef(shooter, "beamPrefab", beamPrefab);
-
-        FishingSceneBuilder.EnsureFolder("Assets/Prefabs/Common");
-        GameObject prefab = PrefabUtility.SaveAsPrefabAsset(root, PrefabPath);
-        Object.DestroyImmediate(root);
-
-        Debug.Log($"[SweeperPlayer] プレイヤー（本実装）のプレハブを作りました：{PrefabPath}");
-        return prefab;
     }
 
     /// <summary>リングの形と色の見本。カプセルとリングと名前だけ（動かない）。</summary>

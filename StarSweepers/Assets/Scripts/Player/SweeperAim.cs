@@ -81,16 +81,31 @@ public class SweeperAim : MonoBehaviour
 
     private void Update()
     {
-        UpdateMouseLock();
+        // ポーズ中・タイトルやロビーの設定画面などが開いている間は、遊びの狙いを止める（マウスは画面のボタンに使う）
+        bool playing = !GamePause.BlocksInput && !UiPointer.MenuActive;
 
-        if (!GamePause.BlocksInput)
+        UpdateMouseLock(playing);
+
+        if (playing)
         {
             ReadInput();
+
+            // 地面にカーソルを出しているので、画面のポインター（UiPointer）は出さないでもらう
+            UiPointer.ReportGameplayAim();
         }
 
         if (cursorOffset.sqrMagnitude > 0.0025f)
         {
             lastDirection = cursorOffset.normalized;
+        }
+    }
+
+    /// <summary>カーソルの目印を出す・隠す（オンラインのほかの人の体では隠す）。</summary>
+    public void SetCursorVisible(bool visible)
+    {
+        if (cursorVisual != null)
+        {
+            cursorVisual.gameObject.SetActive(visible);
         }
     }
 
@@ -103,15 +118,15 @@ public class SweeperAim : MonoBehaviour
         }
     }
 
-    /// <summary>遊んでいる間はカーソルを閉じ込め、ポーズ中は外す（ポーズ画面のボタンを押せるように）。</summary>
-    private void UpdateMouseLock()
+    /// <summary>遊んでいる間はカーソルを閉じ込め、ポーズ中・画面が開いている間は外す（ボタンを押せるように）。</summary>
+    private void UpdateMouseLock(bool playing)
     {
         if (!lockMouseCursor || input.UsesSeat || input.UsesVirtual)
         {
             return;
         }
 
-        CursorLockMode wanted = GamePause.IsPaused ? CursorLockMode.None : CursorLockMode.Locked;
+        CursorLockMode wanted = playing ? CursorLockMode.Locked : CursorLockMode.None;
         if (Cursor.lockState != wanted)
         {
             Cursor.lockState = wanted;

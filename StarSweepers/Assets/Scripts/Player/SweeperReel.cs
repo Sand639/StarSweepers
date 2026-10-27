@@ -15,6 +15,14 @@ using UnityEngine;
 /// 引く時間を固定しているのは、ボタンを押すタイミングを毎回同じにするため。
 /// クリティカルの受付が始まった瞬間に、物資の足元に光の輪が広がる（これが合図。ゲージなどの画面の表示は出さない）。
 /// 1回押したら、それで決まる（連打で当てられないように）。
+///
+/// ## オンライン（宇宙ごみのオンラインの体。2026/10/28）
+///
+/// 物資に <see cref="FishingNetSupply"/> が付いていて通信中なら、今の物資の通信の決まりに合わせる。
+/// ・当たったら**ホストに引っ掛けを頼み**、認められて持ち主が自分に移ってから巻き取る（Reel Seconds はそこから数える）。
+///   ほかの人が先に引っ掛けていた・返事が来ないときは、投げずにやめる
+/// ・途中でホストに外された（爆風など）ら、投げずにやめる
+/// ・投げるときは、ここで計算した速さを**そのままホストへ渡す**（落ちた場所・ゴールの判定はホスト）
 /// </summary>
 public class SweeperReel : MonoBehaviour
 {
@@ -85,17 +93,63 @@ public class SweeperReel : MonoBehaviour
     private float startTime;
     private bool cueShown;
 
+    /// <summary>自分の参加番号を持つ通信上のプレイヤー（オフラインの検証シーンでは null）。</summary>
+    private FishingNetPlayer netPlayer;
+
+    /// <summary>巻き取っている物資の通信の部品。オンラインで巻き取っている間だけ入る。</summary>
+    private FishingNetSupply supply;
+
+    /// <summary>ホストの返事（引っ掛けてよいか）を待っている間。この間は引かない。</summary>
+    private bool waitingForClaim;
+
+    /// <summary>返事を待ち始めてからの秒数。</summary>
+    private float claimWait;
+
+    /// <summary>これだけ待っても返事が来なければ、あきらめて光線を戻す（秒）。</summary>
+    private const float ClaimTimeout = 1.5f;
+
+    /// <summary>エフェクトの種類（オンラインでほかの人の画面にも出すときに使う）。</summary>
+    public enum Effect
+    {
+        CriticalCue,
+        CriticalHit
+    }
+
+    /// <summary>エフェクトを出した瞬間に呼ばれる（<see cref="SweeperNetSync"/> がほかの人へ知らせる）。</summary>
+    public event System.Action<Effect, HookableObject> EffectShown;
+
     /// <summary>巻き取っている最中か。</summary>
     public bool IsActive => item != null;
 
     /// <summary>巻き取っている物資。</summary>
     public HookableObject Item => item;
 
-    /// <summary>当たってからの秒数。</summary>
-    public float Elapsed => IsActive ? Time.time - startTime : 0f;
+    /// <summary>当たってから（オンラインでは、ホストに認められてから）の秒数。</summary>
+    public float Elapsed => IsActive && !waitingForClaim ? Time.time - startTime : 0f;
 
     /// <summary>いまクリティカルの受付中か。</summary>
-    public bool InCriticalWindow => IsActive && Elapsed >= criticalStart && Elapsed <= criticalStart + criticalLength;
+    public bool InCriticalWindow => IsActive && !waitingForClaim && Elapsed >= criticalStart && Elapsed <= criticalStart + criticalLength;
+
+    /// <summary>
+    /// その物資を引っ掛けてよいか。オンラインで**ほかの人が引っ掛けている物は false**（すり抜ける）。
+    /// オフラインの検証シーンでは、いつも true。
+    /// </summary>
+    public bool CanHook(HookableObject target)
+    {
+        FishingNetSupply netSupply = target != null ? target.GetComponent<FishingNetSupply>() : null;
+        if (netSupply == null || !netSupply.IsSpawned || !IsOnline)
+        {
+            return true;
+        }
+
+        return !netSupply.IsClaimed || netSupply.HookedByPlayerIndex == MyIndex;
+    }
+
+    /// <summary>通信上のプレイヤーとして動いているか。</summary>
+    private bool IsOnline => netPlayer != null && netPlayer.IsSpawned;
+
+    /// <summary>自分の参加番号（物資の通信で「誰が引っ掛けているか」に使う）。</summary>
+    private int MyIndex => netPlayer != null ? Mathf.Max(0, netPlayer.PlayerIndex) : 0;
 
     /// <summary>最後の投げがクリティカルだったか（エフェクトや検証用の表示に使う）。</summary>
     public bool LastWasCritical { get; private set; }
@@ -106,6 +160,7 @@ public class SweeperReel : MonoBehaviour
     private void Awake()
     {
         playerCollider = GetComponent<Collider>();
+        netPlayer = GetComponent<FishingNetPlayer>();
     }
 
     /// <summary>巻き取りを始める。物資の Rigidbody の物理はそのまま使う（床の上を引きずる）。</summary>
@@ -120,6 +175,18 @@ public class SweeperReel : MonoBehaviour
         body = target.Body;
         startTime = Time.time;
         cueShown = false;
+        waitingForClaim = false;
+        supply = null;
+
+        // オンラインなら、ホストに引っ掛けを頼む。認められるまでは引かない
+        FishingNetSupply netSupply = target.GetComponent<FishingNetSupply>();
+        if (IsOnline && netSupply != null && netSupply.IsSpawned)
+        {
+            supply = netSupply;
+            waitingForClaim = true;
+            claimWait = 0f;
+            supply.RequestClaim(MyIndex);
+        }
 
         item.SetHooked(true);
         // 手前まで来たときに、自分の体とぶつかって跳ねないようにする
@@ -129,25 +196,26 @@ public class SweeperReel : MonoBehaviour
 
     /// <summary>
     /// 巻き取りの途中でボタンが押された。後ろへ投げる（受付中ならクリティカル）。
+    /// オンラインでホストの返事を待っている間（ほんの一瞬）は、押しても何もしない。
     /// </summary>
     public void Press()
     {
-        if (!IsActive)
+        if (!IsActive || waitingForClaim)
         {
             return;
         }
 
         bool critical = InCriticalWindow;
         ThrowBack(critical);
-        Finish(critical ? "クリティカル" : "後ろ", critical);
+        Finish(critical ? "クリティカル" : "後ろ", critical, false);
     }
 
-    /// <summary>投げずにやめる（物資を離すだけ）。</summary>
+    /// <summary>投げずにやめる（物資を離すだけ）。オンラインでは、離したことをホストへ知らせる。</summary>
     public void Cancel()
     {
         if (IsActive)
         {
-            Finish("やめた", false);
+            Finish("やめた", false, true);
         }
     }
 
@@ -161,26 +229,73 @@ public class SweeperReel : MonoBehaviour
         // 物資が消えた（ゴールに入った・爆発した・場外に落ちた）ら、投げずに終わる
         if (item.IsVanished || !item.gameObject.activeInHierarchy)
         {
-            Finish("消えた", false);
+            Finish("消えた", false, false);
+            return;
+        }
+
+        if (supply != null && !UpdateOnlineClaim())
+        {
             return;
         }
 
         if (!cueShown && Elapsed >= criticalStart)
         {
             cueShown = true;
-            SpawnEffect(criticalCuePrefab, 1.2f, 3.2f, criticalLength + 0.15f, true);
+            PlayEffect(Effect.CriticalCue);
         }
 
         if (Elapsed >= reelSeconds)
         {
             ThrowForward();
-            Finish("前", false);
+            Finish("前", false, false);
         }
+    }
+
+    /// <summary>
+    /// オンラインで、ホストの記録を見る。**巻き取ってよければ true。**
+    /// 返事待ちのうちは false（認められた瞬間から時間を数える）。ほかの人に取られた・ホストに外されたら、投げずにやめて false。
+    /// </summary>
+    private bool UpdateOnlineClaim()
+    {
+        bool mine = supply.IsOwner && supply.HookedByPlayerIndex == MyIndex;
+
+        if (waitingForClaim)
+        {
+            if (mine)
+            {
+                waitingForClaim = false;
+                startTime = Time.time;
+                body.WakeUp();
+                return true;
+            }
+
+            claimWait += Time.deltaTime;
+            bool takenByOther = supply.IsClaimed && supply.HookedByPlayerIndex != MyIndex;
+            if (takenByOther)
+            {
+                Finish("取られた", false, false);
+            }
+            else if (claimWait >= ClaimTimeout)
+            {
+                // 返事が来ない。あとから認められても持ったままにならないよう、離したと送っておく
+                Finish("返事なし", false, true);
+            }
+            return false;
+        }
+
+        if (!mine)
+        {
+            // 爆風などで、ホストに外された
+            Finish("外れた", false, false);
+            return false;
+        }
+
+        return true;
     }
 
     private void FixedUpdate()
     {
-        if (!IsActive || body == null)
+        if (!IsActive || body == null || waitingForClaim)
         {
             return;
         }
@@ -245,7 +360,7 @@ public class SweeperReel : MonoBehaviour
 
         if (critical)
         {
-            SpawnEffect(criticalHitPrefab, 1.5f, 6f, 0.5f, false);
+            PlayEffect(Effect.CriticalHit);
         }
     }
 
@@ -262,19 +377,35 @@ public class SweeperReel : MonoBehaviour
 
     private void Launch(Vector3 velocity)
     {
+        if (supply != null)
+        {
+            // オンライン：飛ばすのはホスト。計算した速さをそのまま渡し、離した位置から飛ばしてもらう
+            supply.RequestThrow(Vector3.zero, 0f, 0f, MyIndex, true, velocity, body.angularVelocity, true, body.position);
+        }
+
         if (body.isKinematic)
         {
             return;
         }
 
+        // 自分の画面でも同じ速さで飛ばしておく（ホストに持ち主が戻るまでの間、止まって見えないように）
         body.linearVelocity = velocity;
         body.WakeUp();
     }
 
-    private void Finish(string result, bool critical)
+    /// <summary>
+    /// 巻き取りを終える。<paramref name="releaseOnline"/> が true なら、オンラインで「離した」とホストへ知らせる
+    /// （投げたとき・取られた／外されたとき・消えたときは知らせない）。
+    /// </summary>
+    private void Finish(string result, bool critical, bool releaseOnline)
     {
         LastResult = result;
         LastWasCritical = critical;
+
+        if (releaseOnline && supply != null && supply.IsSpawned)
+        {
+            supply.RequestRelease(Vector3.zero, 0f, MyIndex);
+        }
 
         if (item != null)
         {
@@ -285,19 +416,49 @@ public class SweeperReel : MonoBehaviour
 
         item = null;
         body = null;
+        supply = null;
+        waitingForClaim = false;
     }
 
-    /// <summary>エフェクトのプレハブがあればそれを、無ければ仮の光の輪を、物資の足元に出す。<paramref name="followItem"/> なら光の輪が物資に付いていく。</summary>
-    private void SpawnEffect(GameObject prefab, float startSize, float endSize, float duration, bool followItem)
+    /// <summary>巻き取っている物資にエフェクトを出し、出したことを知らせる（オンラインではほかの人の画面にも出る）。</summary>
+    private void PlayEffect(Effect kind)
     {
         if (item == null)
         {
             return;
         }
 
-        Vector3 position = item.transform.position;
+        ShowEffect(kind, item);
+        EffectShown?.Invoke(kind, item);
+    }
+
+    /// <summary>
+    /// **その物資にエフェクトを出す。** 合図（<see cref="Effect.CriticalCue"/>）は物資に付いていき、決まったときの光はその場に出る。
+    /// オンラインのほかの人の体では、本人から知らせが来たときに <see cref="SweeperNetSync"/> が呼ぶ。
+    /// </summary>
+    public void ShowEffect(Effect kind, HookableObject target)
+    {
+        if (target == null)
+        {
+            return;
+        }
+
+        if (kind == Effect.CriticalCue)
+        {
+            SpawnEffect(target, criticalCuePrefab, 1.2f, 3.2f, criticalLength + 0.15f, true);
+        }
+        else
+        {
+            SpawnEffect(target, criticalHitPrefab, 1.5f, 6f, 0.5f, false);
+        }
+    }
+
+    /// <summary>エフェクトのプレハブがあればそれを、無ければ仮の光の輪を、物資の足元に出す。<paramref name="followItem"/> なら光の輪が物資に付いていく。</summary>
+    private void SpawnEffect(HookableObject target, GameObject prefab, float startSize, float endSize, float duration, bool followItem)
+    {
+        Vector3 position = target.transform.position;
         Bounds bounds = default;
-        Collider itemCollider = item.GetComponent<Collider>();
+        Collider itemCollider = target.GetComponent<Collider>();
         if (itemCollider != null)
         {
             bounds = itemCollider.bounds;
@@ -311,7 +472,7 @@ public class SweeperReel : MonoBehaviour
         }
 
         float scale = itemCollider != null ? Mathf.Max(bounds.size.x, bounds.size.z) : 1f;
-        SweeperFlash.Spawn(position, followItem ? item.transform : null, flashColor, startSize * scale, endSize * scale, duration, flashMaterial);
+        SweeperFlash.Spawn(position, followItem ? target.transform : null, flashColor, startSize * scale, endSize * scale, duration, flashMaterial);
     }
 
     private static Vector3 Flat(Vector3 direction)

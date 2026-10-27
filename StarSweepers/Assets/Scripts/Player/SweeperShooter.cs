@@ -17,7 +17,8 @@ using UnityEngine.InputSystem;
 /// </summary>
 public class SweeperShooter : MonoBehaviour
 {
-    private enum Phase
+    /// <summary>光線の段階。オンラインでは、ほかの人の画面にこれを配って同じ見た目を出す（<see cref="SweeperNetSync"/>）。</summary>
+    public enum ShotPhase
     {
         Idle,       // 何もしていない
         Charging,   // 押して狙っている（歩ける）
@@ -96,7 +97,7 @@ public class SweeperShooter : MonoBehaviour
     private InputAction attackAction;
     private LiquidBeam beam;
 
-    private Phase phase = Phase.Idle;
+    private ShotPhase phase = ShotPhase.Idle;
     private float charge;
     private float targetDistance;
     private float traveled;
@@ -105,16 +106,45 @@ public class SweeperShooter : MonoBehaviour
     private Color teamColor = new Color(0.3f, 0.6f, 0.95f);
 
     /// <summary>押して狙っている最中か。</summary>
-    public bool IsCharging => phase == Phase.Charging;
+    public bool IsCharging => phase == ShotPhase.Charging;
 
     /// <summary>光線が出ている（伸びている・戻っている・巻き取っている）か。この間は歩けない。</summary>
-    public bool IsBeamOut => phase == Phase.Extending || phase == Phase.Retracting || phase == Phase.Reeling;
+    public bool IsBeamOut => phase == ShotPhase.Extending || phase == ShotPhase.Retracting || phase == ShotPhase.Reeling;
 
     /// <summary>いま離したら、光線がどこまで伸びるか（プレイヤーの中心から m）。</summary>
     public float CurrentReach => Mathf.Lerp(minReach, Mathf.Max(minReach, maxReach), charge);
 
     /// <summary>いまの段階の名前（検証用の表示に使う）。</summary>
     public string PhaseName => phase.ToString();
+
+    /// <summary>いまの段階。</summary>
+    public ShotPhase Phase => phase;
+
+    /// <summary>狙っている向き（狙っている間）／光線を撃った向き（撃ったあと）。</summary>
+    public Vector3 ShotDirection => phase == ShotPhase.Charging && aim != null ? aim.Direction : launchDirection;
+
+    /// <summary>光線の先の位置（巻き取り中は物資の引っ掛けた所）。</summary>
+    public Vector3 BeamTip => phase == ShotPhase.Reeling && reel != null && reel.Item != null
+        ? reel.Item.AnchorPoint
+        : launchOrigin + launchDirection * Mathf.Max(0f, traveled);
+
+    /// <summary>巻き取っている物資。巻き取っていなければ null。</summary>
+    public HookableObject ReelItem => phase == ShotPhase.Reeling && reel != null ? reel.Item : null;
+
+    /// <summary>
+    /// **撃っている光線をしまい、巻き取りもやめる**（物資は投げずに離す）。
+    /// オンラインで、出てくる場所へ戻されたときなどに呼ぶ（<see cref="SweeperNetSync"/>）。
+    /// </summary>
+    public void CancelShot()
+    {
+        if (phase == ShotPhase.Idle)
+        {
+            return;
+        }
+
+        reel?.Cancel();
+        EndShot();
+    }
 
     private void Awake()
     {
@@ -159,7 +189,7 @@ public class SweeperShooter : MonoBehaviour
     private void OnDisable()
     {
         playerMap?.Disable();
-        if (phase != Phase.Idle)
+        if (phase != ShotPhase.Idle)
         {
             reel?.Cancel();
             EndShot();
@@ -170,7 +200,7 @@ public class SweeperShooter : MonoBehaviour
     public void SetColor(Color color)
     {
         teamColor = color;
-        if (beam != null && phase != Phase.Reeling)
+        if (beam != null && phase != ShotPhase.Reeling)
         {
             beam.SetColor(IdleColor);
         }
@@ -187,22 +217,22 @@ public class SweeperShooter : MonoBehaviour
 
         switch (phase)
         {
-            case Phase.Idle:
+            case ShotPhase.Idle:
                 if (pressed && !stunned)
                 {
                     BeginCharge();
                 }
                 break;
 
-            case Phase.Charging:
+            case ShotPhase.Charging:
                 UpdateCharge(released, stunned);
                 break;
 
-            case Phase.Extending:
+            case ShotPhase.Extending:
                 UpdateExtend();
                 break;
 
-            case Phase.Retracting:
+            case ShotPhase.Retracting:
                 traveled -= retractSpeed * Time.deltaTime;
                 if (traveled <= 0f)
                 {
@@ -210,7 +240,7 @@ public class SweeperShooter : MonoBehaviour
                 }
                 break;
 
-            case Phase.Reeling:
+            case ShotPhase.Reeling:
                 if (pressed)
                 {
                     reel.Press();
@@ -230,10 +260,67 @@ public class SweeperShooter : MonoBehaviour
             return;
         }
 
-        Vector3 tip = phase == Phase.Reeling && reel.Item != null
-            ? reel.Item.AnchorPoint
-            : launchOrigin + launchDirection * Mathf.Max(0f, traveled);
-        beam.Follow(HandPosition, tip);
+        beam.Follow(HandPosition, BeamTip);
+    }
+
+    // ------------------------------------------------------------
+    // オンラインのほかの人の体（2026/10/28）
+    // ------------------------------------------------------------
+
+    /// <summary>ほかの人の体で、最後に見せた段階。段階が変わった瞬間だけ色やアニメーションを切り替えるために持つ。</summary>
+    private ShotPhase remotePhase = ShotPhase.Idle;
+
+    /// <summary>
+    /// **ほかの人の体に、本人から届いた光線の様子をそのまま見せる。**（<see cref="SweeperNetSync"/> が毎フレーム呼ぶ）
+    /// ほかの人の体ではこの部品は止まっている（操作はしない）ので、見た目だけをここで出す。
+    /// </summary>
+    public void ShowRemote(ShotPhase newPhase, Vector3 direction, float reach, Vector3 tip, HookableObject item)
+    {
+        if (newPhase != remotePhase)
+        {
+            OnRemotePhaseChanged(remotePhase, newPhase);
+            remotePhase = newPhase;
+        }
+
+        if (newPhase == ShotPhase.Charging)
+        {
+            float ringRadius = ring != null ? ring.Radius : 0.5f;
+            aimArea?.Show(transform.position, direction, ringRadius, reach);
+            return;
+        }
+
+        aimArea?.Hide();
+
+        if (beam != null && newPhase != ShotPhase.Idle)
+        {
+            beam.Follow(HandPosition, newPhase == ShotPhase.Reeling && item != null ? item.AnchorPoint : tip);
+        }
+    }
+
+    private void OnRemotePhaseChanged(ShotPhase before, ShotPhase after)
+    {
+        switch (after)
+        {
+            case ShotPhase.Idle:
+                beam?.Stop();
+                beam?.SetColor(IdleColor);
+                aimArea?.Hide();
+                animationPlayer?.PlayIdle();
+                break;
+
+            case ShotPhase.Charging:
+                animationPlayer?.PlayAim();
+                break;
+
+            case ShotPhase.Extending:
+                beam?.SetColor(IdleColor);
+                animationPlayer?.PlayShoot();
+                break;
+
+            case ShotPhase.Reeling:
+                beam?.ChangeColorFromTip(teamColor);
+                break;
+        }
     }
 
     /// <summary>光線が出てくる手元の位置。</summary>
@@ -250,7 +337,7 @@ public class SweeperShooter : MonoBehaviour
 
     private void BeginCharge()
     {
-        phase = Phase.Charging;
+        phase = ShotPhase.Charging;
         charge = 0f;
         if (mover != null) mover.FaceAim = true;
         animationPlayer?.PlayAim();
@@ -287,7 +374,7 @@ public class SweeperShooter : MonoBehaviour
         launchOrigin = transform.position + Vector3.up * castHeight;
         targetDistance = CurrentReach;
         traveled = 0f;
-        phase = Phase.Extending;
+        phase = ShotPhase.Extending;
 
         // 撃った瞬間から投げ終わるまで歩けない（向きは狙いで変えられる）
         if (mover != null) mover.MoveLocked = true;
@@ -312,21 +399,21 @@ public class SweeperShooter : MonoBehaviour
 
             if (hookable != null)
             {
-                phase = Phase.Reeling;
+                phase = ShotPhase.Reeling;
                 reel.Begin(hookable);
                 beam?.ChangeColorFromTip(teamColor);
                 return;
             }
 
             // 壁などに当たった：そこから戻る
-            phase = Phase.Retracting;
+            phase = ShotPhase.Retracting;
             return;
         }
 
         traveled = to;
         if (traveled >= targetDistance)
         {
-            phase = Phase.Retracting;
+            phase = ShotPhase.Retracting;
         }
     }
 
@@ -358,10 +445,17 @@ public class SweeperShooter : MonoBehaviour
             }
 
             HookableObject candidate = hit.collider.GetComponentInParent<HookableObject>();
-            bool usable = candidate != null && !candidate.IsHooked && !candidate.IsVanished;
+
+            // 重いデブリは、いまは引っ張れない（壁と同じ扱い。2026/10/28）
+            if (candidate != null && HeavyHookable.TryGetWeight(candidate, out _))
+            {
+                candidate = null;
+            }
+
+            bool usable = candidate != null && !candidate.IsHooked && !candidate.IsVanished && reel.CanHook(candidate);
             if (!usable && (!stopAtWalls || candidate != null || hit.distance <= 0f))
             {
-                // 引っ掛けられない物資（誰かが引いている）はすり抜ける。壁で止まらない設定のときも同じ
+                // 引っ掛けられない物資（誰かが引いている。オンラインではほかの人が引いている物も）はすり抜ける。壁で止まらない設定のときも同じ
                 continue;
             }
 
@@ -379,7 +473,7 @@ public class SweeperShooter : MonoBehaviour
     /// <summary>光線をしまい、歩けるように戻す。</summary>
     private void EndShot()
     {
-        phase = Phase.Idle;
+        phase = ShotPhase.Idle;
         traveled = 0f;
         charge = 0f;
 

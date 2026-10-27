@@ -10,6 +10,9 @@ using UnityEngine.InputSystem;
 /// ・光線を撃ってから投げ終わるまでは、<see cref="SweeperShooter"/> が <see cref="MoveLocked"/> を ON にして止める
 ///
 /// 釣り・宇宙ごみのプレイヤー（<see cref="FishingPlayerController"/>）とは別の部品。あちらは変えていない。
+///
+/// **同じ体に <see cref="FishingPlayerController"/> が付いているとき**（宇宙ごみのオンラインの体 `SpaceJunkSweeperPlayer.prefab`。2026/10/28）は、
+/// 重力と吹き飛ばし（ベルトコンベア・爆弾など）はあちらに任せ、ここは**歩くことと向きだけ**を受け持つ（重力が二重にかからないように）。
 /// </summary>
 [DefaultExecutionOrder(-20)]
 [RequireComponent(typeof(CharacterController))]
@@ -40,6 +43,9 @@ public class SweeperMover : MonoBehaviour
     private PlayerInputSource input;
     private InputActionMap playerMap;
     private InputAction moveAction;
+
+    /// <summary>重力と吹き飛ばしを任せる相手（宇宙ごみのオンラインの体）。いなければ null で、重力もここでかける。</summary>
+    private FishingPlayerController sharedBody;
 
     /// <summary>上下方向の速さ（メートル／秒）。</summary>
     private float verticalVelocity;
@@ -76,6 +82,7 @@ public class SweeperMover : MonoBehaviour
         characterController = GetComponent<CharacterController>();
         stun = GetComponent<PlayerStun>();
         input = PlayerInputSource.Get(this);
+        sharedBody = GetComponent<FishingPlayerController>();
 
         if (aim == null)
         {
@@ -117,6 +124,12 @@ public class SweeperMover : MonoBehaviour
 
     private void Update()
     {
+        // 当たり判定が切られている間（ほかの人の体・始まりの演出で運ばれている間）は動かさない
+        if (!characterController.enabled)
+        {
+            return;
+        }
+
         Vector3 direction = Vector3.zero;
 
         bool canMove = !GamePause.BlocksInput && !MoveLocked && (stun == null || !stun.IsStunned);
@@ -137,12 +150,21 @@ public class SweeperMover : MonoBehaviour
             }
         }
 
-        // 地面に着いているときは少し下向きに押し付けておく（段差で isGrounded がちらつかないように）
-        if (characterController.isGrounded && verticalVelocity < 0f)
+        if (sharedBody != null)
         {
+            // 重力は FishingPlayerController がかける。ここでは少しだけ下へ押して、地面に着いているかが正しく分かるようにする
+            // （このあとあちらが isGrounded を見るので、横にだけ動かすと「浮いている」と思われて重力がたまり続ける）
             verticalVelocity = -2f;
         }
-        verticalVelocity += gravity * Time.deltaTime;
+        else
+        {
+            // 地面に着いているときは少し下向きに押し付けておく（段差で isGrounded がちらつかないように）
+            if (characterController.isGrounded && verticalVelocity < 0f)
+            {
+                verticalVelocity = -2f;
+            }
+            verticalVelocity += gravity * Time.deltaTime;
+        }
 
         Vector3 velocity = direction * moveSpeed;
         velocity.y = verticalVelocity;

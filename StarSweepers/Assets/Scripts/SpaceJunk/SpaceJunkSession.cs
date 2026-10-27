@@ -859,7 +859,8 @@ public class SpaceJunkSession : NetworkBehaviour
             player.NetworkObject.Despawn(true);
         }
 
-        GameObject prefab = NetworkManager.NetworkConfig.PlayerPrefab;
+        // ボットはいつも今の体（フックの部品で動くため）。ホストが新しい体を選んでいても、ボットだけは今の体で出す（2026/10/28）
+        GameObject prefab = SweeperOnlineSwitch.BotPrefabOr(NetworkManager.NetworkConfig.PlayerPrefab);
         if (prefab == null)
         {
             Debug.LogError("[JUNK] NetworkManager に Player Prefab が入っていないので、ボットを出せません。");
