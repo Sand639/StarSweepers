@@ -23,7 +23,8 @@ using UnityEngine.InputSystem.LowLevel;
 ///
 /// ### 出てくる場所
 ///
-/// **自分のチームのゴールの近く**に出る。見つからなければ、接続番号ごとに円周上へ散らす。
+/// **自分のチームのゴールの手前に、ゴールから見て横一列**に出る（チームの人数ぶん均等に並ぶ）。
+/// ゴールが見つからなければ、接続番号ごとに円周上へ散らす。
 ///
 /// 使い方：宇宙ごみ用のプレイヤーのプレハブに、釣りの部品と一緒に付ける。
 /// **釣りのプレハブには付けないこと**（釣りの動きが変わってしまう）。
@@ -38,7 +39,10 @@ public class SpaceJunkPlayerSetup : MonoBehaviour
     [Tooltip("自分のゴールから、ステージの中心へ向かって何m離れた場所に出るか")]
     [SerializeField] private float spawnInset = 4f;
 
-    [Tooltip("重ならないように、どれだけばらけさせるか（メートル）")]
+    [Tooltip("チームの仲間と横一列に並ぶときの、となりの人との間隔（メートル）。ゴールから見て横に、人数ぶん均等に並ぶ")]
+    [SerializeField] private float spawnSpacing = 2f;
+
+    [Tooltip("ゴールが見つからないとき（ロビーなど）に、重ならないようにどれだけばらけさせるか（メートル）")]
     [SerializeField] private float spawnScatter = 1.5f;
 
     [Tooltip("ゴールが見つからないときに使う、中心からの距離")]
@@ -583,7 +587,7 @@ public class SpaceJunkPlayerSetup : MonoBehaviour
     }
 
     /// <summary>
-    /// **自分のチームのゴールの近く**へ移す。見つからなければ円周上へ散らす。
+    /// **自分のチームのゴールの手前（横一列の自分の場所）**へ移す。見つからなければ円周上へ散らす。
     ///
     /// **移す前に、フックを手元に戻して、つかんでいる物資も離す**（2026/9/22）。
     /// R キー・落下・ラウンドの始まり・ロビーへ戻ったとき、のどれでもここを通るので、
@@ -616,13 +620,13 @@ public class SpaceJunkPlayerSetup : MonoBehaviour
     }
 
     /// <summary>
-    /// 出てくる場所を決める。ラウンド中で自分のゴールが分かれば**ゴールの少し内側**、
+    /// 出てくる場所を決める。ラウンド中で自分のゴールが分かれば**ゴールの少し内側に、チームで横一列**、
     /// それ以外（ロビー・ゴールがまだ届いていない）は床のある決まった場所。
     /// ゴールが届いていなかったときは <see cref="placedByFallback"/> を立て、あとで置き直す。
     /// </summary>
     private Vector3 FindSpawnPosition()
     {
-        // 重ならないよう、Spawn Scatter（m）の円の中でばらけさせる
+        // ゴールを当てにしないとき用。重ならないよう、Spawn Scatter（m）の円の中でばらけさせる
         Vector2 scatter = Random.insideUnitCircle * spawnScatter;
 
         // **ゴールを当てにするのは、ラウンドが動いているときだけ。**
@@ -654,13 +658,57 @@ public class SpaceJunkPlayerSetup : MonoBehaviour
             }
 
             Vector3 spot = goalPosition + toCenter.normalized * spawnInset;
-            return new Vector3(spot.x + scatter.x, goalPosition.y, spot.z + scatter.y);
+
+            // ゴールから見て横（中心へ向かう向きと直角）に、チームの人数ぶん Spawn Spacing（m）おきに並べる。
+            // 列の真ん中がゴールの真ん前に来る（2026/10/27・大槻さん。前はランダムにばらけていた）
+            Vector3 side = Vector3.Cross(Vector3.up, toCenter.normalized);
+            GetTeamLineSlot(out int index, out int count);
+            spot += side * ((index - (count - 1) * 0.5f) * spawnSpacing);
+
+            return new Vector3(spot.x, goalPosition.y, spot.z);
         }
 
         // ゴールが見つからないとき（まだ持ち主が配られていないなど）。**あとで届いたら置き直す**
         placedByFallback = true;
         fallbackRetryTimer = 0f;
         return SafeFallbackPosition(scatter);
+    }
+
+    /// <summary>
+    /// **自分がチームの列の何番目か（0から）と、チームの人数（ボットも数える）。**
+    /// 並び順は席に入った順。席の一覧は全員のPCで同じなので、各自が自分の場所を決めても重ならない。
+    /// 自分の席が見つからなければ、1人だけのチームとして扱う（ゴールの真ん前）。
+    /// </summary>
+    private void GetTeamLineSlot(out int index, out int count)
+    {
+        index = 0;
+        count = 0;
+
+        ulong key = netPlayer != null ? netPlayer.PlayerKey : 0UL;
+        int team = MyTeam();
+        bool found = false;
+
+        foreach (SpaceJunkPlayerSlot slot in SpaceJunkSession.Current.Slots)
+        {
+            if (slot.Team != team)
+            {
+                continue;
+            }
+
+            if (slot.ClientId == key)
+            {
+                index = count;
+                found = true;
+            }
+
+            count++;
+        }
+
+        if (!found)
+        {
+            index = 0;
+            count = 1;
+        }
     }
 
     /// <summary>
