@@ -55,6 +55,9 @@ public class SpaceJunkNameplate : MonoBehaviour
     /// </summary>
     private GameObject visual;
 
+    /// <summary>もともとの大きさ。始まりの演出で強調するとき（<see cref="SpaceJunkGoalFlyIntro"/>）は、これに倍率を掛ける。</summary>
+    private Vector3 baseScale;
+
     /// <summary>どのプレイヤーの名前を出すかを決める。</summary>
     public void Attach(FishingNetPlayer player)
     {
@@ -63,6 +66,7 @@ public class SpaceJunkNameplate : MonoBehaviour
 
     private void Awake()
     {
+        baseScale = transform.localScale;
         Font font = UiFont.Find(fontSize);
 
         visual = new GameObject("Visual");
@@ -125,14 +129,18 @@ public class SpaceJunkNameplate : MonoBehaviour
             return;
         }
 
-        // 頭の上に置き、カメラのほうを向ける（プレイヤーが回っても、タグは回らない）
+        // 頭の上に置き、カメラのほうを向ける（プレイヤーが回っても、タグは回らない）。
+        // 始まりの演出中は、ふだんのカメラの上に重ねた演出のカメラのほうを向ける（2026/10/27）
         transform.position = owner.transform.position + Vector3.up * height;
 
-        Camera view = Camera.main;
+        Camera view = SpaceJunkGoalFlyIntro.ViewCamera != null ? SpaceJunkGoalFlyIntro.ViewCamera : Camera.main;
         if (view != null)
         {
             transform.rotation = view.transform.rotation;
         }
+
+        // 始まりの演出で、順番に強調されている間だけ大きくなる（ふだんは倍率 1）
+        transform.localScale = baseScale * SpaceJunkGoalFlyIntro.NameEmphasisOf(owner);
 
         // 人ごとの番号で引く（1台で複数人の2人目以降も、自分の名前とチームが出るように）
         string label = session.NameOf(owner.PlayerKey);
