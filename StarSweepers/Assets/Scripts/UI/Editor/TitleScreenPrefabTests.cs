@@ -86,6 +86,7 @@ public class TitleScreenPrefabTests
     [TestCase(TitlePartRole.PageFindLan)]
     [TestCase(TitlePartRole.PageFindFriends)]
     [TestCase(TitlePartRole.PageFindPrivate)]
+    [TestCase(TitlePartRole.PlayerNameText)] // メインの左上の「名前：○○」も 2026/10/27 に消した
     public void TitlePrefab_HasNoOldFindPage(TitlePartRole role)
     {
         Assert.That(FindPart(role), Is.Null, $"使わなくなった画面 {role} が残っている");
@@ -136,7 +137,8 @@ public class TitleScreenPrefabTests
             kinds.Add(input.Kind);
         }
 
-        Assert.That(kinds.Contains(TitleInputKind.PlayerName), Is.True);
+        // 名前の欄は無い（名前はロビーでランダムに付く。2026/10/27・大槻さん）
+        Assert.That(kinds.Contains(TitleInputKind.PlayerName), Is.False, "名前の欄が残っている");
         Assert.That(kinds.Contains(TitleInputKind.ServerName), Is.True);
         Assert.That(kinds.Contains(TitleInputKind.PrivateCode), Is.True);
         Assert.That(kinds.Contains(TitleInputKind.CreatePassword), Is.True);
