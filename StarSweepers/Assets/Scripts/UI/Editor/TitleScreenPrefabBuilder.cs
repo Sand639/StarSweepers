@@ -140,9 +140,10 @@ public static class TitleScreenPrefabBuilder
     ///        「部屋を作る」の参加コードの注意書きを水色にした（2026/10/22）
     /// ／ 12：「部屋を作る」の参加コードの枠を水色・文字を白にし、「部屋を探す」の右下の操作の案内（A 確認　B 戻る）を消した（2026/10/22）
     /// ／ 13：マルチプレイ・部屋を探す・部屋を作るを、右に出てくるタブレットの中に作り直した。右下に、コントローラー／キーボードで変わる操作の案内（2026/10/27）
+    /// ／ 14：名前の欄とメインの「名前：○○」を消した（名前はロビーでランダムに付く。2026/10/27）
     /// **版 3 からは作り直さず、<see cref="Upgrade"/> で足りない部品だけを足す**（手で直した配置を消さない）。版を上げたら Upgrade に足す処理を書くこと
     /// </summary>
-    public const int PrefabVersion = 13;
+    public const int PrefabVersion = 14;
 
     /// <summary>
     /// **作り直さずに、足りない部品だけを足す。**
@@ -156,6 +157,7 @@ public static class TitleScreenPrefabBuilder
     /// 版 10 → 11：「部屋を探す」を写真の形に作り直し、参加コードの注意書きを水色にする（<see cref="RebuildFindRoomPage"/>）。
     /// 版 11 → 12：参加コードの枠を水色・文字を白にし、「部屋を探す」の右下の操作の案内を消す（<see cref="RecolorCodeBoxAndRemoveHint"/>）。
     /// 版 12 → 13：マルチプレイ・部屋を探す・部屋を作るをタブレットの形に作り直す（<see cref="RebuildAsTablet"/>）。
+    /// 版 13 → 14：名前の欄とメインの「名前：○○」を消す（<see cref="RemoveNameInputs"/>）。
     /// </summary>
     private static void Upgrade(int fromVersion)
     {
@@ -226,6 +228,11 @@ public static class TitleScreenPrefabBuilder
             if (fromVersion < 13)
             {
                 RebuildAsTablet(root);
+            }
+
+            if (fromVersion < 14)
+            {
+                RemoveNameInputs(root);
             }
 
             root.GetComponent<TitleScreen>().EditorSetPrefabVersion(PrefabVersion);
@@ -489,6 +496,59 @@ public static class TitleScreenPrefabBuilder
         AddLine(board, -96f, 856f);
     }
 
+    /// <summary>「部屋を作る」のサーバーの名前の説明（2026/10/27 まで「空なら「（名前）のサーバー」」だった。名前を入れる欄が無くなったため）。</summary>
+    private const string CreateServerNameNote = "空なら自動で付く";
+
+    /// <summary>
+    /// 版 13 → 14（2026/10/27・大槻さん「ロビーで名前をランダムにする処理ができたので、名前の入力欄を消してよい」）：
+    /// マルチプレイの画面の「ゲーム内で表示する名前」の欄を消して、下のボタンと線を上へ詰める。
+    /// メインの左上の「名前：○○」も消し、「部屋を作る」のサーバーの名前の説明を直す。何度動いても二重には直さない。
+    /// </summary>
+    private static void RemoveNameInputs(GameObject root)
+    {
+        TitlePart nameText = FindPart(root, TitlePartRole.PlayerNameText);
+        if (nameText != null)
+        {
+            Object.DestroyImmediate(nameText.gameObject);
+        }
+
+        foreach (Text text in root.GetComponentsInChildren<Text>(true))
+        {
+            if (text.text == "空なら「（名前）のサーバー」")
+            {
+                text.text = CreateServerNameNote;
+            }
+        }
+
+        foreach (TitleInput input in root.GetComponentsInChildren<TitleInput>(true))
+        {
+            if (input.Kind != TitleInputKind.PlayerName)
+            {
+                continue;
+            }
+
+            // 欄の入れ物（見出しと欄の Column）ごと消す。タブレットの板の中なら、それより下の部品を上へ詰める
+            RectTransform column = (RectTransform)input.transform.parent;
+            RectTransform board = column.parent as RectTransform;
+            float top = column.anchoredPosition.y;
+            const float removed = 120f;
+            Object.DestroyImmediate(column.gameObject);
+
+            if (board != null)
+            {
+                foreach (Transform child in board)
+                {
+                    // 板の上の端を基準にした部品だけ（右下の操作の案内のような、下の端が基準の物は動かさない）
+                    if (child is RectTransform rect && Mathf.Approximately(rect.anchorMin.y, 1f) && rect.anchoredPosition.y < top)
+                    {
+                        rect.anchoredPosition += new Vector2(0f, removed);
+                    }
+                }
+            }
+            break;
+        }
+    }
+
     /// <summary>
     /// 版 12 → 13（2026/10/27）：**マルチプレイ・部屋を探す・部屋を作るの3つの画面を、タブレットの形で作り直す**
     /// （前の画面は消して、同じ並び順に置く。どれもツールで作ったままで、まだ誰も手で直していないため）。
@@ -685,22 +745,18 @@ public static class TitleScreenPrefabBuilder
 
     /// <summary>
     /// **マルチプレイの画面**（2026/10/22）。2026/10/27 から**タブレットの中**に置く（大槻さんの絵コンテ）。
-    /// 上にゲーム内で表示する名前の欄、その下に大きな「クイックマッチ」、線を挟んで「部屋を探す」「部屋を作る」。
-    /// コントローラーで開いたときは「クイックマッチ」が選ばれる（入力欄は最初に選ばない。<see cref="TitleScreen"/>）。
+    /// 大きな「クイックマッチ」、線を挟んで「部屋を探す」「部屋を作る」。コントローラーで開いたときは「クイックマッチ」が選ばれる。
+    /// （名前の欄は、ロビーで名前がランダムに付くようになったので 2026/10/27 に消した）
     /// </summary>
     private static GameObject BuildMultiMenuPage(Transform root)
     {
         Transform board = NewTabletPage("MultiMenuPage", root, TitlePartRole.PageMultiMenu, out GameObject page);
         AddTabletHeading(board, "マルチプレイ");
 
-        Column name = new Column("Name", board, 760f, 10f, new Vector2(0.5f, 1f), new Vector2(0f, -116f), new Vector2(0.5f, 1f));
-        AddNameInput(name);
-        name.Finish();
-
-        AddTabletMenuButton(board, "クイックマッチ", new Vector2(620f, 120f), ButtonFontSize + 10, TitleButtonAction.QuickPlay, -290f);
-        AddLine(board, -450f, 680f);
-        AddTabletMenuButton(board, "部屋を探す", new Vector2(540f, 96f), ButtonFontSize + 4, TitleButtonAction.OpenFindRoom, -496f);
-        AddTabletMenuButton(board, "部屋を作る", new Vector2(540f, 96f), ButtonFontSize + 4, TitleButtonAction.OpenCreate, -628f);
+        AddTabletMenuButton(board, "クイックマッチ", new Vector2(620f, 120f), ButtonFontSize + 10, TitleButtonAction.QuickPlay, -170f);
+        AddLine(board, -330f, 680f);
+        AddTabletMenuButton(board, "部屋を探す", new Vector2(540f, 96f), ButtonFontSize + 4, TitleButtonAction.OpenFindRoom, -376f);
+        AddTabletMenuButton(board, "部屋を作る", new Vector2(540f, 96f), ButtonFontSize + 4, TitleButtonAction.OpenCreate, -508f);
 
         AddTabletBackButton(board);
         return page;
@@ -1337,10 +1393,7 @@ public static class TitleScreenPrefabBuilder
         title.gameObject.AddComponent<Outline>().effectDistance = new Vector2(4f, -4f);
         Place(title.rectTransform, new Vector2(0f, 1f), new Vector2(140f, -120f), new Vector2(1200f, 200f), new Vector2(0f, 1f));
 
-        // 左上：いまの名前
-        Text name = NewText("PlayerName", page.transform, "名前：（再生すると入る）", FontSize - 4, TextColor, TextAnchor.UpperLeft);
-        Place(name.rectTransform, new Vector2(0f, 1f), new Vector2(24f, -16f), new Vector2(900f, 40f), new Vector2(0f, 1f));
-        Mark(name, TitlePartRole.PlayerNameText);
+        // （左上の「名前：○○」は、ロビーで名前がランダムに付くようになったので 2026/10/27 に消した）
 
         // メインのボタン（左下に縦に並べる。2026/10/22 から マルチプレイ／プラクティス／設定／ゲームを終了 の順）
         Column column = new Column("Buttons", page.transform, MainButtonSize.x, MenuButtonSpacing,
@@ -1383,7 +1436,7 @@ public static class TitleScreenPrefabBuilder
         players.Add(NewButton(players.Rect, "+1", new Vector2(100f, 56f), FontSize, TitleButtonAction.MaxPlayersUp));
 
         // サーバーの名前
-        AddLabel(column, "サーバーの名前", "空なら「（名前）のサーバー」");
+        AddLabel(column, "サーバーの名前", CreateServerNameNote);
         AddInput(column, "テキストを入力", TitleInputKind.ServerName);
 
         // パスワード（インターネットのときだけ。LAN のときは隠す）

@@ -20,7 +20,7 @@ using UnityEngine.UI;
 /// | 画面 | できること |
 /// | --- | --- |
 /// | メイン | マルチプレイ／プラクティス（オフラインでロビーへ）／設定／ゲームを終了。右下にバージョン（2026/10/22 から） |
-/// | マルチプレイ | 名前・クイックマッチ／部屋を探す／部屋を作る（2026/10/22）。**2026/10/27 から、この3つの画面は右に出てくるタブレットの中に出し、メインは左に出したまま** |
+/// | マルチプレイ | クイックマッチ／部屋を探す／部屋を作る（2026/10/22。名前の欄は 2026/10/27 に消した。名前はロビーでランダムに付く）。**2026/10/27 から、この3つの画面は右に出てくるタブレットの中に出し、メインは左に出したまま** |
 /// | 部屋を探す | 真ん中の枠に：右上の「番号入力で検索する」（番号の近い部屋に絞る。プライベートは全部一致で出す）／募集中の部屋の一覧（**LAN の部屋はいつも一番上**。鍵＝パスワードあり）／下に ■パブリック ■フレンド ■パスワード不要（2026/10/22。大槻さんの写真の形） |
 /// | 部屋を作る | 最大人数（2〜8。初期値8）・サーバーの名前・パスワード・□パブリック □プライベート □LAN → 作成（名前の欄は無い。2026/10/22） |
 /// | 設定 | サウンド（音量）／グラフィック（解像度・画面モード・フレームレート上限・垂直同期・画質）／ゲーム全般（マウス感度・操作タイプ） |
@@ -569,8 +569,6 @@ public class TitleScreen : MonoBehaviour
         {
             case TitleInputKind.PlayerName:
                 GameSettings.PlayerName = value;
-                // タブレットの後ろに出ているメインの「名前：○○」も、打つたびに合わせる
-                RefreshMainName();
                 break;
             case TitleInputKind.ServerName:
                 createServerName = value;
@@ -723,11 +721,7 @@ public class TitleScreen : MonoBehaviour
         UiPointer.StickScrollTarget = page == Page.Multi ? JoinableScrollRect() : null;
 
         // 画面ごとの中身を、いまの値で出し直す
-        if (page == Page.Main || tablet)
-        {
-            RefreshMainName();
-        }
-
+        // （左上の「名前：○○」と名前の欄は、ロビーで名前がランダムに付くようになったので 2026/10/27 に消した）
         switch (page)
         {
             case Page.Create:
@@ -910,13 +904,6 @@ public class TitleScreen : MonoBehaviour
 
             // メインには戻る先が無いので、何もしない
         }
-    }
-
-    private void RefreshMainName()
-    {
-        string name = GameSettings.PlayerName;
-        SetText(TitlePartRole.PlayerNameText,
-            string.IsNullOrEmpty(name) ? "名前：未設定（マルチプレイの画面で入れられます）" : $"名前：{name}");
     }
 
     /// <summary>「サーバーを作る」の画面を、いまの選び方（人数・公開のしかた）で出し直す。</summary>
@@ -1116,8 +1103,8 @@ public class TitleScreen : MonoBehaviour
     private bool searchFriends = true;
     private bool searchSettingsLoaded;
 
-    /// <summary>■パスワード不要：パスワードのかかった部屋を一覧に出さない（2026/10/22。最初は外れている）。</summary>
-    private bool searchNoPassword;
+    /// <summary>■パスワード不要：パスワードのかかった部屋を一覧に出さない（2026/10/22。2026/10/27 から最初はチェックあり）。</summary>
+    private bool searchNoPassword = true;
 
     // 一覧に並べる元（取り直すたびに入れ替わる）
     private readonly List<ISessionInfo> publicSessions = new List<ISessionInfo>();
@@ -1188,7 +1175,7 @@ public class TitleScreen : MonoBehaviour
             searchSettingsLoaded = true;
             searchPublic = PlayerPrefs.GetInt(SearchPublicKey, 1) != 0;
             searchFriends = PlayerPrefs.GetInt(SearchFriendsKey, 1) != 0;
-            searchNoPassword = PlayerPrefs.GetInt(SearchNoPasswordKey, 0) != 0;
+            searchNoPassword = PlayerPrefs.GetInt(SearchNoPasswordKey, 1) != 0; // 最初はチェックあり（2026/10/27・大槻さん）
         }
 
         RefreshSearchChecks();
