@@ -1,4 +1,3 @@
-using System;
 using System.Collections.Generic;
 using NUnit.Framework;
 using Unity.Services.Multiplayer;
@@ -9,26 +8,10 @@ using Unity.Services.Multiplayer;
 /// </summary>
 public class QuickPlayOrderTests
 {
-    /// <summary>テスト用の部屋の情報（中継サーバーにはつながない）。</summary>
-    private class FakeRoom : ISessionInfo
-    {
-        public string Name { get; set; }
-        public string Id { get; set; }
-        public string Upid => string.Empty;
-        public string HostId => string.Empty;
-        public int AvailableSlots { get; set; }
-        public int MaxPlayers { get; set; }
-        public bool IsLocked { get; set; }
-        public bool HasPassword { get; set; }
-        public DateTime LastUpdated => DateTime.MinValue;
-        public DateTime Created => DateTime.MinValue;
-        public IReadOnlyDictionary<string, SessionProperty> Properties => null;
-    }
-
     /// <summary>定員8人で、<paramref name="players"/> 人が入っている部屋。</summary>
-    private static FakeRoom Room(string name, int players, bool locked = false, bool password = false)
+    private static FakeSessionInfo Room(string name, int players, bool locked = false, bool password = false)
     {
-        return new FakeRoom
+        return new FakeSessionInfo
         {
             Name = name,
             Id = name,
