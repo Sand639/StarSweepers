@@ -42,6 +42,18 @@ public enum ThrowOperationType
 }
 
 /// <summary>
+/// **宇宙ごみのオンラインで使うプレイヤーの体**（2026/10/28）。効くのは部屋を作る人（ホスト）の設定だけ（<see cref="SweeperOnlineSwitch"/>）。
+/// </summary>
+public enum PlayerBodyType
+{
+    /// <summary>今までどおり。フックで引っ掛けて投げる体（`SpaceJunkPlayer.prefab`）。</summary>
+    Current = 0,
+
+    /// <summary>プレイヤーの本実装（試作）。リング・光線・巻き取りの体（`SpaceJunkSweeperPlayer.prefab`）。</summary>
+    Sweeper = 1
+}
+
+/// <summary>
 /// **設定画面で変えられる値**を、どこからでも見られるようにしたもの。
 ///
 /// 音量・マウス感度・コントローラー操作方法・レティクル・投げ方を保存する。
@@ -53,6 +65,7 @@ public enum ThrowOperationType
 /// | **操作タイプ**（<see cref="ControllerOperation"/>） | コントローラーの移動・向き、フックの引き寄せ方 |
 /// | **レティクル**（<see cref="AimReticle"/>） | 溜めている間の狙いの見せ方（HookChargeStrip） |
 /// | **投げ方**（<see cref="ThrowOperation"/>） | 宇宙ごみ式のフックの撃ち方・投げ方（HookController・ThrowController） |
+/// | **プレイヤーの体**（<see cref="PlayerBody"/>） | 次に部屋を作ったときの、全員の体（<see cref="SweeperOnlineSwitch"/>。ホストの設定だけが効く） |
 /// | **名前・フレームレート・垂直同期・画質** | タイトル画面で変える（下のほうにまとめてある。2026/10/6） |
 ///
 /// 上の5つはポーズ画面（<see cref="PauseMenu"/>）の設定で変える（音量・マウス感度・操作タイプは、タイトル画面でも変えられる）。
@@ -78,6 +91,7 @@ public static class GameSettings
     private const string ControllerOperationKey = "StarSweepers.ControllerOperationType";
     private const string AimReticleKey = "StarSweepers.AimReticleType";
     private const string ThrowOperationKey = "StarSweepers.ThrowOperationType";
+    private const string PlayerBodyKey = "StarSweepers.PlayerBodyType";
 
     // 読み込んだ値の控え（Load のあとはこちらを返す）
     private static float volume = 1f;
@@ -88,6 +102,24 @@ public static class GameSettings
     private static ControllerOperationType controllerOperationType = ControllerOperationType.TypeA;
     private static AimReticleType aimReticleType = AimReticleType.TypeA;
     private static ThrowOperationType throwOperationType = ThrowOperationType.TwoButtons;
+    private static PlayerBodyType playerBodyType = PlayerBodyType.Current;
+
+    /// <summary>宇宙ごみのオンラインで使うプレイヤーの体。Current が今までの体。次に部屋を作ったときから効く。</summary>
+    public static PlayerBodyType PlayerBody
+    {
+        get
+        {
+            Load();
+            return playerBodyType;
+        }
+        set
+        {
+            Load();
+            playerBodyType = value == PlayerBodyType.Sweeper ? PlayerBodyType.Sweeper : PlayerBodyType.Current;
+            PlayerPrefs.SetInt(PlayerBodyKey, (int)playerBodyType);
+            PlayerPrefs.Save();
+        }
+    }
 
     /// <summary>フックの投げ方。TwoButtons が今までの操作。</summary>
     public static ThrowOperationType ThrowOperation
@@ -213,6 +245,9 @@ public static class GameSettings
         throwOperationType = PlayerPrefs.GetInt(ThrowOperationKey, 0) == 1
             ? ThrowOperationType.OneButton
             : ThrowOperationType.TwoButtons;
+        playerBodyType = PlayerPrefs.GetInt(PlayerBodyKey, 0) == 1
+            ? PlayerBodyType.Sweeper
+            : PlayerBodyType.Current;
 
         AudioListener.volume = volume;
     }

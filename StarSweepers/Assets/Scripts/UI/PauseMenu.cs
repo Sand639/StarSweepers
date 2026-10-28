@@ -11,7 +11,7 @@ using UnityEngine.UI;
 /// | 項目 | 押すとどうなるか |
 /// | --- | --- |
 /// | **ゲームをつづける** | 画面を閉じて、続きから遊ぶ |
-/// | **設定** | 音量・マウス感度・操作タイプ・レティクル・投げ方を変える画面へ（下の表） |
+/// | **設定** | 音量・マウス感度・操作タイプ・レティクル・投げ方・プレイヤーの体を変える画面へ（下の表） |
 /// | **ロビーに戻る** | **宇宙ごみの試合中だけ出る。** 確かめてから試合を抜けてロビーへ（ホストなら全員で戻る）。`SpaceJunkLeaveMatch` |
 /// | **タイトルにもどる** | **つながっている間（ロビーでも）出る。** 確かめてからタイトルへ（ホストなら全員がタイトルへ）。`SpaceJunkLeaveMatch` |
 /// | **ゲームをやめる** | 確かめてから、ゲームを終了する（エディタでは再生を止める） |
@@ -30,6 +30,7 @@ using UnityEngine.UI;
 /// | **操作タイプ：タイプA／B** | コントローラーの移動・向きの操作と、フックの引き寄せ方 | FishingPlayerController・PlayerAimController・ThrowController |
 /// | **レティクル：タイプA／B** | 溜めている間の狙いの見せ方 | HookChargeStrip |
 /// | **投げ方：左右で使い分け／ZRワンボタン** | 宇宙ごみ式のフックの撃ち方・投げ方 | HookController・ThrowController |
+/// | **プレイヤー：今の体／新しい体** | 宇宙ごみのオンラインの体（**次に部屋を作ったときから**。ホストの設定だけが効く。2026/10/28） | <see cref="SweeperOnlineSwitch"/> |
 ///
 /// 切り替えの項目は、押すたびにもう片方へ変わり、**設定の画面を作り直して**新しい文字を見せる
 /// （<see cref="BuildSettingsPageRefresh"/>）。
@@ -597,7 +598,7 @@ public class PauseMenu : MonoBehaviour
     /// 設定の画面の項目を並べる。y は画面の真ん中からの高さ（上が＋）。
     /// 1段目（y＝90）から「項目の高さ＋すき間」（88）の何段ぶん下か（× 2f、× 3f …）で置いている。
     /// ただし2本目のスライダーだけは、1段目から 96 下げた位置に直接置いている。
-    /// 項目を足すときは、下の「もどる」の段の数（× 5f）も1つ増やす。
+    /// 項目を足すときは、下の「もどる」の段の数（× 6f）も1つ増やす。
     /// </summary>
     private void BuildSettingsPage()
     {
@@ -616,7 +617,10 @@ public class PauseMenu : MonoBehaviour
         CreateMenuItem(settingsPage.transform, ThrowOperationLabel(), 90f - (ItemHeight + ItemGap) * 4f,
             ToggleThrowOperation);
 
-        CreateMenuItem(settingsPage.transform, "もどる", 90f - (ItemHeight + ItemGap) * 5f,
+        CreateMenuItem(settingsPage.transform, PlayerBodyLabel(), 90f - (ItemHeight + ItemGap) * 5f,
+            TogglePlayerBody);
+
+        CreateMenuItem(settingsPage.transform, "もどる", 90f - (ItemHeight + ItemGap) * 6f,
             () => ShowSettings(false));
     }
 
@@ -668,6 +672,23 @@ public class PauseMenu : MonoBehaviour
         GameSettings.ThrowOperation = GameSettings.ThrowOperation == ThrowOperationType.TwoButtons
             ? ThrowOperationType.OneButton
             : ThrowOperationType.TwoButtons;
+        BuildSettingsPageRefresh();
+    }
+
+    /// <summary>プレイヤーの体の項目に出す文字（いまの設定を見せる）。</summary>
+    private static string PlayerBodyLabel()
+    {
+        return GameSettings.PlayerBody == PlayerBodyType.Sweeper
+            ? "プレイヤー：新しい体"
+            : "プレイヤー：今の体";
+    }
+
+    // プレイヤーの体の切り替え（宇宙ごみのオンライン。次に部屋を作ったときから効く。2026/10/28）
+    private void TogglePlayerBody()
+    {
+        GameSettings.PlayerBody = GameSettings.PlayerBody == PlayerBodyType.Current
+            ? PlayerBodyType.Sweeper
+            : PlayerBodyType.Current;
         BuildSettingsPageRefresh();
     }
 
