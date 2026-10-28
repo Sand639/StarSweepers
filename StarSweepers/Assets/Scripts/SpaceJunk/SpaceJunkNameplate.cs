@@ -130,10 +130,12 @@ public class SpaceJunkNameplate : MonoBehaviour
         }
 
         // 頭の上に置き、カメラのほうを向ける（プレイヤーが回っても、タグは回らない）。
-        // 始まりの演出中は、ふだんのカメラの上に重ねた演出のカメラのほうを向ける（2026/10/27）
+        // 始まりの演出中は、ふだんのカメラの上に重ねた演出のカメラのほうを向ける（2026/10/27。10/28 に降りてくる演出のぶんも足した）
         transform.position = owner.transform.position + Vector3.up * height;
 
-        Camera view = SpaceJunkGoalFlyIntro.ViewCamera != null ? SpaceJunkGoalFlyIntro.ViewCamera : Camera.main;
+        Camera view = SpaceJunkGoalFlyIntro.ViewCamera != null ? SpaceJunkGoalFlyIntro.ViewCamera
+            : SpaceJunkLandingIntro.ViewCamera != null ? SpaceJunkLandingIntro.ViewCamera
+            : Camera.main;
         if (view != null)
         {
             transform.rotation = view.transform.rotation;
