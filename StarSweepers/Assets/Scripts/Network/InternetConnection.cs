@@ -478,23 +478,34 @@ public class InternetConnection : MonoBehaviour
     /// <summary>**一覧で選んだ部屋に入る。** タイトル画面のパブリックサーバーの一覧から呼ぶ。</summary>
     public async void JoinGameById(string sessionId, string joinPassword = "")
     {
+        await JoinGameByIdAsync(sessionId, joinPassword, false);
+    }
+
+    /// <summary>
+    /// **一覧の部屋に入り、入れたら true を返す。**
+    /// <paramref name="quietFailure"/> を true にすると（クイックプレイ。2026/10/28）、入れなくても失敗の表示を出さず、
+    /// 何もしていない状態に戻す（呼んだ側が次の部屋を試すため）。
+    /// つなぐ準備の失敗（インターネットにつながっていない など）は、どの部屋でも同じなので、どちらでも失敗の表示を出す。
+    /// </summary>
+    public async Task<bool> JoinGameByIdAsync(string sessionId, string joinPassword, bool quietFailure)
+    {
         LastJoinFailedByPassword = false;
 
         if (IsBusy || string.IsNullOrEmpty(sessionId))
         {
-            return;
+            return false;
         }
 
         string passwordProblem = PasswordProblem(joinPassword);
         if (passwordProblem != null)
         {
             FailBeforeStart(passwordProblem);
-            return;
+            return false;
         }
 
         if (!await PrepareAsync())
         {
-            return;
+            return false;
         }
 
         // 前の部屋から抜け損ねていたら、先に抜ける
@@ -513,11 +524,22 @@ public class InternetConnection : MonoBehaviour
             Message = "つながりました。";
 
             Debug.Log($"[NET] 一覧から部屋に入りました。合言葉：{JoinCode}");
+            return true;
         }
         catch (Exception error)
         {
+            if (quietFailure)
+            {
+                // 相手のゲームと中身（版）が違う・満員になった・閉じられた など。表示は出さずに、次を試せる状態に戻す
+                State = Phase.Idle;
+                Message = string.Empty;
+                Debug.LogWarning($"[NET] 一覧の部屋に入れませんでした（ほかの部屋を試します）：{error.Message}");
+                return false;
+            }
+
             LastJoinFailedByPassword = LooksLikeWrongPassword(error, joinPassword);
             Fail("部屋に入れませんでした。パスワードが違うか、満員か、部屋が閉じられています", error);
+            return false;
         }
     }
 
