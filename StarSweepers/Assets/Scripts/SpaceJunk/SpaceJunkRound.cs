@@ -31,7 +31,7 @@ public enum SpaceJunkIntroStyle
     CameraTour,
 
     /// <summary>
-    /// **ステージを回って見せる間にプレイヤーが降りてきて着地し、チームごとに順に映す**（2026/10/28 から試している演出）。
+    /// **ステージを回って見せる間に、ゴールエリアがプレイヤーを乗せて飛んできて着地し、チームごとに別のカメラで順に映す**（2026/10/28 から試している演出）。
     /// 一番後ろに足したのは、前からある種類（GoalFlyIn・CameraTour）の番号を変えないため（保存された値がずれないように）
     /// </summary>
     LandingTour
@@ -88,7 +88,7 @@ public partial class SpaceJunkRound : NetworkBehaviour
     [Tooltip("OFF にすると演出をせず、すぐに始まる")]
     [SerializeField] private bool playIntro = true;
 
-    [Tooltip("演出の種類。LandingTour：ステージを回る間にプレイヤーが降りてきて、チームごとに順に映す（2026/10/28〜）／" +
+    [Tooltip("演出の種類。LandingTour：ステージを回る間にゴールエリアとプレイヤーが飛んできて着地し、チームごとに順に映す（2026/10/28〜）／" +
              "GoalFlyIn：ゴールエリアがプレイヤーを乗せて飛んでくる（2026/10/27）／" +
              "CameraTour：カメラがマップを回って見せる（2026/10/7〜10/26）")]
     [SerializeField] private SpaceJunkIntroStyle introStyle = SpaceJunkIntroStyle.LandingTour;
@@ -194,36 +194,31 @@ public partial class SpaceJunkRound : NetworkBehaviour
     [Min(1f)]
     [SerializeField] private float nameEmphasisScale = 1.8f;
 
-    [Header("プレイヤーが降りてきてチームを順に映す演出（Intro Style が LandingTour のとき。2026/10/28）")]
-    [Tooltip("① ステージの中心を狙ってカメラが回る秒数。この間にプレイヤーが空から降りてきて、終わりに着地する")]
+    [Header("ゴールエリアと一緒に着地してチームを順に映す演出（Intro Style が LandingTour のとき。2026/10/28）")]
+    [Tooltip("① ステージの中心を狙ってカメラが回る秒数。この間に、ゴールエリアがプレイヤーを乗せて飛んできて、終わりに着地（設置）する。" +
+             "飛び方は「ゴールが飛んでくる演出」と同じ（Fly In From・Fly In Distance・Fly In Height・Fly In Gap を使い、" +
+             "Fly In Seconds と Fly In Land Seconds の割合のまま、この秒数に縮めて入れる）")]
     [Min(0f)]
     [SerializeField] private float landingSeconds = 3f;
 
     [Tooltip("① カメラが横に回る角度（度）。ふだんのカメラと同じ南側を真ん中にして、左右に半分ずつ回る")]
-    [SerializeField] private float landingOrbitDegrees = 30f;
+    [SerializeField] private float landingOrbitDegrees = 45f;
 
-    [Tooltip("① 回り始めの、カメラが見下ろす角度（度）")]
+    [Tooltip("① 回り始めの、カメラが見下ろす角度（度）。全体カメラ（ステージのふだんのカメラ。約 60 度）より少し低くして始める")]
     [Range(5f, 80f)]
-    [SerializeField] private float landingStartPitch = 30f;
+    [SerializeField] private float landingStartPitch = 50f;
 
     [Tooltip("① 回る間に、カメラが上へ回る角度（度）。回り始めの角度にこれを足した角度で終わる")]
-    [SerializeField] private float landingOrbitRiseDegrees = 15f;
+    [SerializeField] private float landingOrbitRiseDegrees = 10f;
 
-    [Tooltip("① カメラとステージの中心の距離が、ステージの大きさの何倍か")]
+    [Tooltip("① カメラとステージの中心の距離が、ステージの大きさ（中央からいちばん遠いゴール＋4m）の何倍か。全体カメラは約 1.7 倍")]
     [Min(0.5f)]
     [SerializeField] private float landingCameraDistanceScale = 1.5f;
 
-    [Tooltip("① プレイヤーが、着地する場所のどれだけ上から降りてくるか（m）")]
-    [Min(0f)]
-    [SerializeField] private float landingDropHeight = 12f;
-
-    [Tooltip("②③ チームを1つ映す秒数（青 → 赤 …の順に、チームの数だけ映す）。全部映し終えたら全体の画面に切り替わってカウントダウン")]
+    [Tooltip("②③ チームを1つ映す秒数（青 → 赤 …の順に、チームの数だけ映す）。チームごとの別のカメラに切り替えて映す。" +
+             "全部映し終えたら、全体の画面（ふだんのカメラ）に切り替わってカウントダウン")]
     [Min(0f)]
     [SerializeField] private float teamShotSeconds = 3f;
-
-    [Tooltip("②③ 前の映し方から、チームを映す位置へカメラが移る秒数（チームを映す秒数の中に入る）")]
-    [Min(0f)]
-    [SerializeField] private float teamShotMoveSeconds = 1f;
 
     [Tooltip("②③ チームの中心からカメラまでの距離（m）。味方が離れているほど、自動で少し足す")]
     [Min(1f)]
@@ -268,9 +263,9 @@ public partial class SpaceJunkRound : NetworkBehaviour
     /// <summary>① 名前のタグを強調するときの倍率。</summary>
     public float NameEmphasisScale => nameEmphasisScale;
 
-    // ↓ プレイヤーが降りてくる演出の設定を、演出の部品 SpaceJunkLandingIntro が読むための窓口（中身は上の同じ名前の値）
+    // ↓ ゴールエリアと一緒に着地する演出の設定を、演出の部品 SpaceJunkLandingIntro が読むための窓口（中身は上の同じ名前の値）
 
-    /// <summary>① カメラが回り、プレイヤーが降りてきて着地するまでの秒数。</summary>
+    /// <summary>① カメラが回り、ゴールエリアがプレイヤーを乗せて飛んできて着地するまでの秒数。</summary>
     public float LandingSeconds => landingSeconds;
 
     /// <summary>① カメラが横に回る角度。</summary>
@@ -285,14 +280,8 @@ public partial class SpaceJunkRound : NetworkBehaviour
     /// <summary>① カメラとステージの中心の距離（ステージの大きさの何倍か）。</summary>
     public float LandingCameraDistanceScale => landingCameraDistanceScale;
 
-    /// <summary>① プレイヤーが降りてくる高さ。</summary>
-    public float LandingDropHeight => landingDropHeight;
-
     /// <summary>②③ チームを1つ映す秒数。</summary>
     public float TeamShotSeconds => teamShotSeconds;
-
-    /// <summary>②③ チームを映す位置へカメラが移る秒数。</summary>
-    public float TeamShotMoveSeconds => teamShotMoveSeconds;
 
     /// <summary>②③ チームの中心からカメラまでの距離。</summary>
     public float TeamShotDistance => teamShotDistance;

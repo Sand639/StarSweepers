@@ -4,27 +4,28 @@ using UnityEngine.SceneManagement;
 using UnityEngine.UI;
 
 /// <summary>
-/// **ラウンドの始まりの演出（プレイヤーが降りてきて、チームを順に映す）。**（2026/10/28・大槻さん）
+/// **ラウンドの始まりの演出（ゴールエリアと一緒に着地して、チームを順に映す）。**（2026/10/28・大槻さん）
 ///
 /// | 順番 | 何が起きるか | 長さ（初期値） |
 /// | --- | --- | --- |
-/// | ⓪ 読み込み待ち | カメラは ① の回り始めの位置。プレイヤーは空の上で止まっている。マップの名前と「ラウンド ○」が出る | 1.5 秒 |
-/// | ① 回って着地 | カメラが**ステージの中心を狙って、横に 30 度・上に 15 度回る**。その間に**プレイヤーが空から降りてきて、終わりに着地する** | 3 秒 |
-/// | ② 青チーム | 着地したら、カメラが**青チームの中心を狙って、少し斜めから映す位置**へ移る（1 秒で移って、残りは止まる） | 3 秒 |
-/// | ③ 赤チーム | 同じように赤チームを映す（3チーム以上なら、チームの数だけ続く） | 3 秒 |
-/// | ④ カウントダウン | **ゲームの全体の画面に切り替えて**、3・2・1 → START!（ここから動ける） | 3 秒 |
+/// | ⓪ 読み込み待ち | カメラは ① の回り始めの位置。ゴールエリアとプレイヤーは奥の飛び始めの位置で止まっている。マップの名前と「ラウンド ○」が出る | 1.5 秒 |
+/// | ① 回って着地 | カメラが**ステージの中心を狙って、全体カメラより少し低い角度（50 度）から、横に 45 度・上に 10 度回る**。
+///   その間に、**ゴールエリアがプレイヤーを乗せて奥から飛んできて、元の位置に設置（着地）する**（ゴールが飛んでくる演出と同じ動きを、この秒数に縮める） | 3 秒 |
+/// | ② 青チーム | **青チーム用の別のカメラに切り替える**。青チームの中心を狙い、少し斜めから映す（動かない） | 3 秒 |
+/// | ③ 赤チーム | 赤チーム用の別のカメラに切り替える（3チーム以上なら、チームの数だけ続く） | 3 秒 |
+/// | ④ カウントダウン | **全体の画面（ふだんのカメラ）に切り替えて**、3・2・1 → START!（ここから動ける） | 3 秒 |
 ///
-/// プレイヤーが着地する場所は、ふだんの出てくる場所（<see cref="SpaceJunkPlayerSetup.TryGetGoalSpawnPosition"/>。ゴールエリアの上の決まった場所）。
-/// その真上から降ろす。**全員のPCで全員ぶん**置く（自分のぶんはその位置が通信で配られ、
-/// ほかの人のぶんは、通信の遅れで降り方がずれて見えないように、こちらで上書きする）。着地した時点で、ずれは 0 になる。
+/// ゴールエリアを飛ばしてプレイヤーを乗せる動きは <see cref="SpaceJunkGoalCarrier"/>（ゴールが飛んでくる演出 <see cref="SpaceJunkGoalFlyIntro"/> と共用）。
+/// カメラは、① 用・チームごとに、ふだんのカメラの上に重ねる別のカメラを作り、使うものだけを ON にして切り替える
+/// （大槻さん「別のカメラに切り替える」）。全部 OFF にすると、ふだんのカメラ（全体の画面）が見える。
 ///
-/// 秒数・角度・距離は、マップに置いた <see cref="SpaceJunkRound"/>（プレハブ）の「プレイヤーが降りてきてチームを順に映す演出」で変えられる。
+/// 秒数・角度・距離は、マップに置いた <see cref="SpaceJunkRound"/>（プレハブ）の「ゴールエリアと一緒に着地してチームを順に映す演出」で変えられる。
 /// **時間は全員で同期された時計（ServerTime）で決めている**ので、どのPCでも同じ場面になる。
 /// <see cref="SpaceJunkRound"/> が、演出の種類が LandingTour のときに自分で付ける。
-/// ほかの演出は <see cref="SpaceJunkGoalFlyIntro"/>（ゴールエリアが飛んでくる）と <see cref="SpaceJunkRoundIntro"/>（カメラが回る）。
 ///
 /// `DefaultExecutionOrder(10000)` で、ほかの部品より**あとに** LateUpdate が動くようにしてある。
-/// 通信の位置合わせ（NetworkTransform。LateUpdate より前に動く）が置いたほかの人の位置を、そのフレームのうちに上書きするため。
+/// 通信の位置合わせ（NetworkTransform。LateUpdate より前に動く）が置いたほかの人の位置を、そのフレームのうちに上書きするため
+/// （<see cref="SpaceJunkGoalCarrier"/> の説明）。
 /// </summary>
 [DefaultExecutionOrder(10000)]
 public class SpaceJunkLandingIntro : MonoBehaviour
@@ -32,25 +33,23 @@ public class SpaceJunkLandingIntro : MonoBehaviour
     /// <summary>START! の文字を出しておく秒数。</summary>
     private const float StartTextSeconds = 1f;
 
-    /// <summary>②③ カメラが狙う高さ（チームの足もとから上へ。m）。乗っている人の胸のあたり。</summary>
+    /// <summary>②③ カメラが狙う高さ（チームの足もとから上へ。m）。立っている人の胸のあたり。</summary>
     private const float TeamTargetHeight = 1f;
 
-    /// <summary>
-    /// ②③ カメラが移るときに、道筋を上へふくらませる量（移る水平の距離に対する割合）。
-    /// まっすぐ移ると、チームからチームへ移るときに低いままステージの真ん中を通り、真ん中の物に突っ込んだ。
-    /// 真上へふくらませるだけだと、途中で真下を向いて画面が回った（どちらも画像で確かめた）ので、
-    /// ステージの中心のまわりを南側から回り込みつつ、少しだけ上へふくらませる（<see cref="SwingAround"/>）。
-    /// </summary>
-    private const float MoveArc = 0.2f;
-
-    /// <summary>演出のカメラ。演出中だけ入る（名前のタグがこちらを向くために使う）。</summary>
+    /// <summary>演出のカメラのうち、いま映しているもの。演出中だけ入る（名前のタグがこちらを向くために使う）。</summary>
     public static Camera ViewCamera { get; private set; }
 
     /// <summary>同じ物に付いているラウンドの係。演出の時刻と設定はここから読む。</summary>
     private SpaceJunkRound round;
 
-    /// <summary>演出のあいだだけ、ふだんのカメラの上に重ねるカメラ。</summary>
-    private Camera introCamera;
+    /// <summary>ゴールエリアを飛ばしてプレイヤーを乗せる係。</summary>
+    private SpaceJunkGoalCarrier carrier;
+
+    /// <summary>① ステージを回って映すカメラ。</summary>
+    private Camera stageCamera;
+
+    /// <summary>②③ チームを映すカメラ（チームの番号ごと。映す番が来たときに作って置く）。</summary>
+    private readonly Dictionary<int, Camera> teamCameras = new Dictionary<int, Camera>();
 
     /// <summary>文字を出す画面（Canvas）。</summary>
     private GameObject overlay;
@@ -64,21 +63,16 @@ public class SpaceJunkLandingIntro : MonoBehaviour
     /// <summary>演出が終わったか。終わったら、このラウンドの間は二度と動かない。</summary>
     private bool finished;
 
-    /// <summary>着地し終えたか。</summary>
-    private bool landed;
-
     /// <summary>マップの大きさを、もう求めたか（求めるのは1回だけ）。</summary>
     private bool boundsReady;
 
     /// <summary>マップの大きさ（中央からいちばん遠いゴールまでの水平の距離＋4m。メートル）。① のカメラの距離に使う。</summary>
     private float radius = 20f;
 
-    /// <summary>降りてくる間に切った、プレイヤーの当たり判定（着地したら戻す）。</summary>
-    private readonly List<CharacterController> disabledControllers = new List<CharacterController>();
-
     private void Awake()
     {
         round = GetComponent<SpaceJunkRound>();
+        carrier = new SpaceJunkGoalCarrier(round);
     }
 
     private void OnDestroy()
@@ -119,22 +113,17 @@ public class SpaceJunkLandingIntro : MonoBehaviour
             return;
         }
 
-        EnsureCameraAndOverlay();
+        EnsureOverlay();
         PrepareBounds();
+        carrier.Prepare();
 
-        if (!landed)
-        {
-            if (sinceIntro < landEnd)
-            {
-                DropPlayers(sinceIntro, landEnd);
-            }
-            else
-            {
-                Land();
-            }
-        }
+        // ① の間に、ゴールが飛んでくる演出と同じ動き（飛ぶ → 設置）を入れる。
+        // 飛ぶ秒数と設置の秒数の割合はそのままにして、合計を ① の秒数に縮める（初期値なら 3 秒と 1.5 秒 → 2 秒と 1 秒）
+        float motion = round.FlyInSeconds + round.FlyInLandSeconds;
+        float scale = motion > 0.01f ? landEnd / motion : 0f;
+        carrier.Update(sinceIntro, round.FlyInSeconds * scale, round.FlyInLandSeconds * scale);
 
-        UpdateCamera(sinceIntro, landEnd, shotsEnd);
+        UpdateCameras(sinceIntro, landEnd, shotsEnd);
 
         // 文字：⓪① はマップの名前 → ②③ は何も出さない → 全体の画面に切り替えたら 3・2・1 → START!
         // 数字は START までの残り秒数を切り上げて出す（2.4 秒なら「3」）
@@ -152,72 +141,6 @@ public class SpaceJunkLandingIntro : MonoBehaviour
     }
 
     // ------------------------------------------------------------
-    // プレイヤー
-    // ------------------------------------------------------------
-
-    /// <summary>
-    /// ⓪① **全員を、着地する場所の真上に置く**（全員のPCで、全員ぶん）。
-    /// 高さは Landing Drop Height から、① の終わりに 0 になる。だんだん速く落ちるようにする（落ちてくる感じを出すため）。
-    /// 降りている間は当たり判定（CharacterController）を切る（ほかの人のぶんは元から切れている）。
-    /// </summary>
-    private void DropPlayers(float sinceIntro, float landEnd)
-    {
-        // 下の Mathf.Max(0.01f, …) は、秒数が 0 に設定されたときに 0 で割らないための保険。⓪ の間（マイナス）はいちばん上
-        float t = Mathf.Clamp01(sinceIntro / Mathf.Max(0.01f, landEnd));
-        float height = round.LandingDropHeight * (1f - t * t);
-        PlacePlayers(height);
-    }
-
-    /// <summary>着地する。全員を着地する場所（高さ 0）に置いてから、当たり判定を戻す。</summary>
-    private void Land()
-    {
-        landed = true;
-        PlacePlayers(0f);
-        RestoreControllers();
-    }
-
-    /// <summary>全員を、着地する場所から <paramref name="height"/> だけ上に置く（当たり判定は切る）。</summary>
-    private void PlacePlayers(float height)
-    {
-        foreach (FishingNetPlayer player in FishingNetPlayer.All)
-        {
-            if (player == null || !player.IsSpawned)
-            {
-                continue;
-            }
-
-            SpaceJunkPlayerSetup setup = player.GetComponent<SpaceJunkPlayerSetup>();
-            if (setup == null || !setup.TryGetGoalSpawnPosition(out Vector3 spot))
-            {
-                continue;
-            }
-
-            CharacterController controller = player.GetComponent<CharacterController>();
-            if (controller != null && controller.enabled)
-            {
-                controller.enabled = false;
-                disabledControllers.Add(controller);
-            }
-
-            player.transform.position = spot + Vector3.up * height;
-        }
-    }
-
-    /// <summary>切った当たり判定を戻す（着地したとき・途中で片付けるとき）。</summary>
-    private void RestoreControllers()
-    {
-        foreach (CharacterController controller in disabledControllers)
-        {
-            if (controller != null)
-            {
-                controller.enabled = true;
-            }
-        }
-
-        disabledControllers.Clear();
-    }
-
-    // ------------------------------------------------------------
     // カメラ
     // ------------------------------------------------------------
 
@@ -225,95 +148,72 @@ public class SpaceJunkLandingIntro : MonoBehaviour
     private Vector3 Center => round.IntroLookCenter;
 
     /// <summary>
-    /// ⓪① ステージの中心を狙って回る → ②③ チームを順に映す（前の映し方から、Team Shot Move Seconds で移ってから止まる）
-    /// → 映し終えたら、重ねていたカメラを止めて、ふだんのカメラ（全体の画面）に切り替える。
-    /// 移る間は、カメラの位置と「狙う所」をそれぞれなめらかに動かし、狙う所のほうを向かせる（向きだけを回すより、移る途中も狙いが外れない）。
-    /// 位置は、ステージの中心のまわりを回り込むように動かす（<see cref="SwingAround"/>）。
+    /// いまの場面のカメラだけを ON にする。⓪① ステージを回るカメラ（毎フレーム動かす）→ ②③ そのチームのカメラ（置いたまま動かない）
+    /// → 映し終えたら全部 OFF（ふだんのカメラ＝全体の画面が見える）。どれもパッと切り替える。
     /// </summary>
-    private void UpdateCamera(float sinceIntro, float landEnd, float shotsEnd)
+    private void UpdateCameras(float sinceIntro, float landEnd, float shotsEnd)
     {
-        if (introCamera == null || !introCamera.enabled)
-        {
-            return;
-        }
-
-        if (sinceIntro >= shotsEnd)
-        {
-            // 全体の画面に切り替える（文字はまだ出ていてよい）
-            introCamera.enabled = false;
-            ViewCamera = null;
-            return;
-        }
-
-        Vector3 position;
-        Vector3 target;
+        Camera active = null;
 
         if (sinceIntro < landEnd)
         {
-            GetOrbitPose(sinceIntro / Mathf.Max(0.01f, landEnd), out position, out target);
+            if (stageCamera == null)
+            {
+                stageCamera = CreateCamera("RoundIntroCamera_Stage");
+            }
+
+            GetOrbitPose(sinceIntro / Mathf.Max(0.01f, landEnd), out Vector3 position, out Vector3 target);
+            stageCamera.transform.SetPositionAndRotation(position, Quaternion.LookRotation(target - position, Vector3.up));
+            active = stageCamera;
         }
-        else
+        else if (sinceIntro < shotsEnd)
         {
-            // 何番目のチームを映しているか（0 から）と、そのチームを映し始めてからの秒数
-            float shotSeconds = Mathf.Max(0.01f, round.TeamShotSeconds);
-            int shot = Mathf.Min(round.TeamShotCount - 1, Mathf.FloorToInt((sinceIntro - landEnd) / shotSeconds));
-            float inShot = sinceIntro - landEnd - shot * shotSeconds;
-
-            // 前の映し方（1つ目のチームなら ① の終わり、それ以外は前のチーム）から移る
-            Vector3 fromPosition;
-            Vector3 fromTarget;
-            if (shot == 0)
-            {
-                GetOrbitPose(1f, out fromPosition, out fromTarget);
-            }
-            else
-            {
-                GetTeamPose(shot - 1, out fromPosition, out fromTarget);
-            }
-
-            GetTeamPose(shot, out Vector3 toPosition, out Vector3 toTarget);
-            float blend = Mathf.SmoothStep(0f, 1f, inShot / Mathf.Max(0.01f, round.TeamShotMoveSeconds));
-
-            position = SwingAround(fromPosition, toPosition, blend);
-            target = Vector3.Lerp(fromTarget, toTarget, blend);
+            // 何番目のチームを映しているか（0 から。青＝0、赤＝1 …）
+            int team = Mathf.Min(round.TeamShotCount - 1,
+                Mathf.FloorToInt((sinceIntro - landEnd) / Mathf.Max(0.01f, round.TeamShotSeconds)));
+            active = TeamCamera(team);
         }
 
-        introCamera.transform.SetPositionAndRotation(position, Quaternion.LookRotation(target - position, Vector3.up));
+        SetActiveCamera(active);
     }
 
-    /// <summary>
-    /// 2つのカメラの位置の間を、**ステージの中心のまわりを回り込むように**移る（進み具合 0〜1）。
-    /// 中心から見た水平の向き・中心からの距離・高さを、それぞれなめらかに変える。
-    /// 回る向きは、**ふだんのカメラのある南側を通るほう**（北側を通ると、カメラが画面の奥側へ回り込んで見え方が逆になるため）。
-    /// 高さは、真ん中で移る水平の距離の <see cref="MoveArc"/> 倍だけ上へふくらませる。
-    /// </summary>
-    private Vector3 SwingAround(Vector3 from, Vector3 to, float blend)
+    /// <summary>そのチームを映すカメラ。まだ無ければ作り、そのチームを映す位置に置く（置いたあとは動かさない）。</summary>
+    private Camera TeamCamera(int team)
     {
-        Vector3 fromOffset = Flat(from - Center);
-        Vector3 toOffset = Flat(to - Center);
-
-        // 上から見て東（+x）を 0 度とし、北（+z）へ向かって増える角度。まずは近いほうの回り方で、真ん中が北側なら反対回りにする
-        float fromAngle = Mathf.Atan2(fromOffset.z, fromOffset.x) * Mathf.Rad2Deg;
-        float turn = Mathf.DeltaAngle(fromAngle, Mathf.Atan2(toOffset.z, toOffset.x) * Mathf.Rad2Deg);
-        if (Mathf.Sin((fromAngle + turn * 0.5f) * Mathf.Deg2Rad) > 0f)
+        if (!teamCameras.TryGetValue(team, out Camera camera) || camera == null)
         {
-            turn -= Mathf.Sign(turn) * 360f;
+            camera = CreateCamera($"RoundIntroCamera_Team{team}");
+            GetTeamPose(team, out Vector3 position, out Vector3 target);
+            camera.transform.SetPositionAndRotation(position, Quaternion.LookRotation(target - position, Vector3.up));
+            teamCameras[team] = camera;
         }
 
-        float angle = (fromAngle + turn * blend) * Mathf.Deg2Rad;
-        float distance = Mathf.Lerp(fromOffset.magnitude, toOffset.magnitude, blend);
-        float arc = Flat(to - from).magnitude * MoveArc * Mathf.Sin(blend * Mathf.PI);
+        return camera;
+    }
 
-        return new Vector3(
-            Center.x + Mathf.Cos(angle) * distance,
-            Mathf.Lerp(from.y, to.y, blend) + arc,
-            Center.z + Mathf.Sin(angle) * distance);
+    /// <summary>演出のカメラのうち <paramref name="active"/> だけを ON にし、ほかは OFF にする（null なら全部 OFF）。</summary>
+    private void SetActiveCamera(Camera active)
+    {
+        if (stageCamera != null)
+        {
+            stageCamera.enabled = stageCamera == active;
+        }
+
+        foreach (Camera camera in teamCameras.Values)
+        {
+            if (camera != null)
+            {
+                camera.enabled = camera == active;
+            }
+        }
+
+        ViewCamera = active;
     }
 
     /// <summary>
     /// ⓪① ステージの中心を狙って回るカメラ（進み具合 0〜1。始めと終わりをゆっくりにする）。
     /// ふだんのカメラと同じ南側を真ん中にして、横に Landing Orbit Degrees（左右に半分ずつ）回り、
-    /// 見下ろす角度は Landing Start Pitch から Landing Orbit Rise Degrees だけ上がる。
+    /// 見下ろす角度は Landing Start Pitch（全体カメラより少し低い）から Landing Orbit Rise Degrees だけ上がる。
     /// </summary>
     private void GetOrbitPose(float progress, out Vector3 position, out Vector3 target)
     {
@@ -329,7 +229,7 @@ public class SpaceJunkLandingIntro : MonoBehaviour
     }
 
     /// <summary>
-    /// ②③ そのチームを映すカメラ。チームの中心を狙い、**ステージの中心の側（プレイヤーが向いている側）から、
+    /// ②③ そのチームを映すカメラの位置。チームの中心を狙い、**ステージの中心の側（プレイヤーが向いている側）から、
     /// Team Shot Angle だけ横に回り込んだ斜め**から、Team Shot Pitch で見下ろす。
     /// </summary>
     private void GetTeamPose(int team, out Vector3 position, out Vector3 target)
@@ -457,32 +357,34 @@ public class SpaceJunkLandingIntro : MonoBehaviour
     // 作る・片付ける
     // ------------------------------------------------------------
 
-    /// <summary>演出用のカメラと文字の画面を、まだ無ければ作る（毎フレーム呼んでよい）。</summary>
-    private void EnsureCameraAndOverlay()
+    /// <summary>
+    /// ふだんのカメラの上に重ねる、演出用のカメラを1つ作る（ふだんのカメラの動きには手を出さない）。
+    /// 映し方の設定（画角・背景・映す層など）はふだんのカメラから写し、depth を 10 大きくして、
+    /// ふだんのカメラより後に描かせる（上に重なって、こちらの映像が見える）。
+    /// </summary>
+    private Camera CreateCamera(string cameraName)
     {
-        if (introCamera == null && !landed)
+        GameObject cameraObject = new GameObject(cameraName);
+        cameraObject.transform.SetParent(transform, false);
+        Camera camera = cameraObject.AddComponent<Camera>();
+
+        Camera main = Camera.main;
+        if (main != null)
         {
-            // ふだんのカメラの上に重ねる、演出用のカメラ（ふだんのカメラの動きには手を出さない）
-            GameObject cameraObject = new GameObject("RoundIntroCamera");
-            cameraObject.transform.SetParent(transform, false);
-            introCamera = cameraObject.AddComponent<Camera>();
-
-            // 映し方の設定（画角・背景・映す層など）はふだんのカメラから写し、
-            // depth を 10 大きくして、ふだんのカメラより後に描かせる（上に重なって、こちらの映像が見える）
-            Camera main = Camera.main;
-            if (main != null)
-            {
-                introCamera.CopyFrom(main);
-                introCamera.depth = main.depth + 10f;
-            }
-            else
-            {
-                introCamera.depth = 10f;
-            }
-
-            ViewCamera = introCamera;
+            camera.CopyFrom(main);
+            camera.depth = main.depth + 10f;
+        }
+        else
+        {
+            camera.depth = 10f;
         }
 
+        return camera;
+    }
+
+    /// <summary>文字の画面を、まだ無ければ作る（毎フレーム呼んでよい）。</summary>
+    private void EnsureOverlay()
+    {
         if (overlay == null)
         {
             BuildOverlay();
@@ -558,22 +460,32 @@ public class SpaceJunkLandingIntro : MonoBehaviour
 
     /// <summary>
     /// 作ったものを片付ける（演出が終わったとき・この部品が消えるとき）。
-    /// 途中で終わっても（結果の画面へ移った・シーンが変わった）、切った当たり判定は戻す。
+    /// 途中で終わっても（結果の画面へ移った・シーンが変わった）、ゴールエリアの見た目と切った当たり判定は戻す。
     /// </summary>
     private void Cleanup()
     {
-        RestoreControllers();
+        carrier?.Restore();
 
-        if (ViewCamera == introCamera)
+        if (ViewCamera != null && (ViewCamera == stageCamera || teamCameras.ContainsValue(ViewCamera)))
         {
             ViewCamera = null;
         }
 
-        if (introCamera != null)
+        if (stageCamera != null)
         {
-            Destroy(introCamera.gameObject);
-            introCamera = null;
+            Destroy(stageCamera.gameObject);
+            stageCamera = null;
         }
+
+        foreach (Camera camera in teamCameras.Values)
+        {
+            if (camera != null)
+            {
+                Destroy(camera.gameObject);
+            }
+        }
+
+        teamCameras.Clear();
 
         if (overlay != null)
         {
