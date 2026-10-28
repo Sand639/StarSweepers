@@ -279,6 +279,11 @@ public class InternetConnection : MonoBehaviour
                 MaxPlayers = maxPlayers,
                 IsPrivate = isPrivate,
                 Password = ToSessionPassword(password),
+                // 公開の部屋の一覧で、版の同じ人にだけ見せるため（2026/10/28。SameVersionOnly）
+                SessionProperties = new Dictionary<string, SessionProperty>
+                {
+                    { VersionPropertyKey, new SessionProperty(LocalVersion(), VisibilityPropertyOptions.Public) },
+                },
             }.WithRelayNetwork(string.IsNullOrWhiteSpace(region) ? null : region.Trim());
 
             // 部屋ができると、通信の開始（ホストとしての待ち受け）まで自動で行われる
@@ -289,7 +294,7 @@ public class InternetConnection : MonoBehaviour
             State = Phase.Connected;
             Message = "部屋ができました。合言葉を相手に伝えてください。";
 
-            Debug.Log($"[NET] 部屋を作りました。合言葉：{JoinCode}");
+            Debug.Log($"[NET] 部屋を作りました。合言葉：{JoinCode}（版：{LocalVersion()}）");
 
             if (!isPrivate)
             {
@@ -415,8 +420,10 @@ public class InternetConnection : MonoBehaviour
                 QuerySessionsResults results = await MultiplayerService.Instance.QuerySessionsAsync(new QuerySessionsOptions());
                 State = Phase.Idle;
                 Message = string.Empty;
+
+                // 版の違う人の部屋は出さない（入ろうとしても、つないだ直後に相手から切られるため。2026/10/28）
                 return results != null && results.Sessions != null
-                    ? new List<ISessionInfo>(results.Sessions)
+                    ? SameVersionOnly(results.Sessions, LocalVersion())
                     : new List<ISessionInfo>();
             }
             catch (SessionException error) when (error.Error == SessionError.RateLimitExceeded && attempt < QueryMaxAttempts)
@@ -457,10 +464,46 @@ public class InternetConnection : MonoBehaviour
     /// <summary>一覧の部屋の合言葉（部屋番号）。ホストが <see cref="PublishRoomCodeAsync"/> で書いていなければ空。</summary>
     public static string RoomCodeOf(ISessionInfo info)
     {
+        return PropertyOf(info, RoomCodePropertyKey);
+    }
+
+    /// <summary>一覧の部屋の情報に、ホストが書いた値。書かれていなければ空。</summary>
+    private static string PropertyOf(ISessionInfo info, string key)
+    {
         return info != null && info.Properties != null &&
-               info.Properties.TryGetValue(RoomCodePropertyKey, out SessionProperty property) && property != null
+               info.Properties.TryGetValue(key, out SessionProperty property) && property != null
             ? property.Value ?? string.Empty
             : string.Empty;
+    }
+
+    /// <summary>部屋の情報に入れておく、ゲームの版（<see cref="LocalVersion"/>）の名前。ホストが部屋を作るときに書く。</summary>
+    private const string VersionPropertyKey = "ver";
+
+    /// <summary>
+    /// **このゲームの版。**（2026/10/28・大槻さん「版の違う人の部屋を出さない」）
+    /// Netcode が、つないできた相手を入れてよいか確かめるのに使う番号（通信の設定とネットワークのプレハブの一覧から作る）と同じもの。
+    /// これが違う相手の部屋に入ろうとすると、つないだ直後に相手から切られる。
+    /// </summary>
+    private string LocalVersion()
+    {
+        return GetComponent<NetworkManager>().NetworkConfig.GetConfig(false).ToString("x16");
+    }
+
+    /// <summary>
+    /// **版が <paramref name="version"/> と同じ部屋だけ**を、一覧の順のまま残す。
+    /// 版の書かれていない部屋（2026/10/28 より前の版のホスト）も、版が違うので外す（テスト：<c>RoomVersionTests</c>）。
+    /// </summary>
+    public static List<ISessionInfo> SameVersionOnly(IEnumerable<ISessionInfo> sessions, string version)
+    {
+        List<ISessionInfo> same = new List<ISessionInfo>();
+        foreach (ISessionInfo info in sessions)
+        {
+            if (PropertyOf(info, VersionPropertyKey) == version)
+            {
+                same.Add(info);
+            }
+        }
+        return same;
     }
 
     /// <summary>サーバーの一覧を前回頼んだ時刻（Time.unscaledTime の秒）。続けて頼みすぎないために覚えておく。</summary>
