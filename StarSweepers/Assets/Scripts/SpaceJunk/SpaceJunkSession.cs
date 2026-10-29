@@ -845,16 +845,7 @@ public class SpaceJunkSession : NetworkBehaviour
                 break;
             }
 
-            int playerIndex = FirstFreePlayerIndex();
-            Vector3 spawnPosition = Vector3.zero;
-            Quaternion spawnRotation = Quaternion.identity;
-            SpaceJunkLobbyUI lobby = SpaceJunkLobbyUI.Current;
-            if (lobby != null)
-            {
-                lobby.TryGetLobbySpawnPoint(playerIndex, out spawnPosition, out spawnRotation);
-            }
-
-            GameObject spawned = Instantiate(prefab, spawnPosition, spawnRotation);
+            GameObject spawned = Instantiate(prefab);
             FishingNetPlayer netPlayer = spawned.GetComponent<FishingNetPlayer>();
             NetworkObject networkObject = spawned.GetComponent<NetworkObject>();
             if (netPlayer == null || networkObject == null)
@@ -871,31 +862,6 @@ public class SpaceJunkSession : NetworkBehaviour
             AddSlot(key);
 
             Debug.Log($"[JUNK] 1台で複数人：接続番号 {clientId} の {seat + 1} 人目を出しました。");
-        }
-    }
-
-    /// <summary>次に生成されるプレイヤーが使う、空いている最小の参加番号。</summary>
-    private static int FirstFreePlayerIndex()
-    {
-        int index = 0;
-        while (true)
-        {
-            bool occupied = false;
-            foreach (FishingNetPlayer player in FishingNetPlayer.All)
-            {
-                if (player != null && player.IsSpawned && player.PlayerIndex == index)
-                {
-                    occupied = true;
-                    break;
-                }
-            }
-
-            if (!occupied)
-            {
-                return index;
-            }
-
-            index++;
         }
     }
 

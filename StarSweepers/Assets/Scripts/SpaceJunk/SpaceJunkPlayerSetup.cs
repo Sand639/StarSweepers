@@ -577,8 +577,18 @@ public class SpaceJunkPlayerSetup : MonoBehaviour
         {
             Vector3 lobbyPosition = Vector3.zero;
             Quaternion lobbyRotation = Quaternion.identity;
-            SpaceJunkLobbyUI.Current?.TryGetLobbySpawnPoint(netPlayer.PlayerIndex, out lobbyPosition, out lobbyRotation);
-            SetSpawnTransform(lobbyPosition, lobbyRotation);
+
+            // PlayerIndex はホストが割り当てた空き番号優先の参加番号。
+            if (SpaceJunkLobbyUI.Current != null &&
+                SpaceJunkLobbyUI.Current.TryGetLobbySpawnPoint(netPlayer.PlayerIndex, out lobbyPosition, out lobbyRotation))
+            {
+                SetSpawnTransform(lobbyPosition, lobbyRotation);
+            }
+            else
+            {
+                SetSpawnTransform(FallbackSpawnPosition(Vector2.zero), Quaternion.identity);
+            }
+
             return;
         }
 
