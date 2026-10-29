@@ -14,6 +14,7 @@ using UnityEngine;
 /// 3. `FishingPlayerController` は**重力と吹き飛ばしの受け口として残し**、歩く速さと向き直る速さを 0 にする（歩く・向くは SweeperMover）
 /// 4. Sweeper の部品（<see cref="SweeperPlayerSetup.AddSweeperParts"/>。頭の上の名前は付けない）と <see cref="SweeperNetSync"/> を付ける
 /// 5. 体（カプセル）を薄い灰色にし、チームの色は顔の板（FrontMark）だけに塗る
+/// 6. カプセルの見た目をキャラクターダミーに替える（<see cref="SweeperPlayerSetup.PutModel"/>。2026/10/29）
 ///
 /// ⚠️ **作り直すと、このプレハブでインスペクターから調整した値は消える。** 今の体（`SpaceJunkPlayer.prefab`）は変えない。
 /// どの体で遊ぶかは、ポーズ画面の「設定」→「プレイヤー」で選ぶ（<see cref="SweeperOnlineSwitch"/>）。
@@ -39,6 +40,7 @@ public static class SweeperOnlineSetup
 
         RemoveHookParts(root);
         SetupBody(root);
+        SweeperPlayerSetup.PutModel(root);
 
         SweeperPlayerSetup.AddSweeperParts(root, false);
         root.AddComponent<SweeperNetSync>();
