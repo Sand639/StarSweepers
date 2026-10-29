@@ -72,15 +72,25 @@ public class SpaceJunkNameplate : MonoBehaviour
         visual = new GameObject("Visual");
         visual.transform.SetParent(transform, false);
 
-        // 影は右下へずらし、0.01m だけ奥（カメラから遠い側）に置いて、文字の後ろに見えるようにする
-        shadow = CreateText("Shadow", font, shadowColor);
+        // 影は右下へずらし、0.01m だけ奥（カメラから遠い側）に置いて、文字の後ろに見えるようにする。
+        // 描く順番は Sorting Order で「影 → 文字」に決める（下の ShadowSortingOrder）
+        shadow = CreateText("Shadow", font, shadowColor, ShadowSortingOrder);
         shadow.transform.localPosition = new Vector3(shadowOffset, -shadowOffset, 0.01f);
 
-        text = CreateText("Text", font, fixedColor);
+        text = CreateText("Text", font, fixedColor, TextSortingOrder);
     }
 
+    /// <summary>
+    /// 影と文字を描く順番（Sorting Order。大きいほど後に描かれて手前に見える）。**影を必ず文字より先に描く**（2026/10/28）。
+    /// 文字も影も半透明の扱いなので、順番を決めないとカメラからの距離で並べられ、
+    /// カメラの角度によっては**影が文字の上に重なって**見えた（大槻さんの報告）。
+    /// どの名前のタグの影も、どの名前のタグの文字より先に描かれるので、タグどうしが重なっても影が文字にかぶらない。
+    /// </summary>
+    private const int ShadowSortingOrder = 0;
+    private const int TextSortingOrder = 1;
+
     /// <summary>文字を1つ作り、<see cref="visual"/> の子にする。下の真ん中を基準に置く（頭の真上に文字が乗るように）。</summary>
-    private TextMesh CreateText(string name, Font font, Color color)
+    private TextMesh CreateText(string name, Font font, Color color, int sortingOrder)
     {
         GameObject textObject = new GameObject(name, typeof(TextMesh));
         textObject.transform.SetParent(visual.transform, false);
@@ -102,6 +112,7 @@ public class SpaceJunkNameplate : MonoBehaviour
         }
         meshRenderer.shadowCastingMode = UnityEngine.Rendering.ShadowCastingMode.Off;
         meshRenderer.receiveShadows = false;
+        meshRenderer.sortingOrder = sortingOrder;
 
         return mesh;
     }
