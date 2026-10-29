@@ -88,10 +88,13 @@ public partial class SpaceJunkRound : NetworkBehaviour
     [Tooltip("OFF にすると演出をせず、すぐに始まる")]
     [SerializeField] private bool playIntro = true;
 
-    [Tooltip("演出の種類。LandingTour：ステージを回る間にゴールエリアとプレイヤーが飛んできて着地し、チームごとに順に映す（2026/10/28〜）／" +
-             "GoalFlyIn：ゴールエリアがプレイヤーを乗せて飛んでくる（2026/10/27）／" +
-             "CameraTour：カメラがマップを回って見せる（2026/10/7〜10/26）")]
-    [SerializeField] private SpaceJunkIntroStyle introStyle = SpaceJunkIntroStyle.LandingTour;
+    [Tooltip("**ロビーから1ラウンド目に入るとき**の演出の種類（2026/10/29・大槻さん）。" +
+             "GoalFlyIn：ゴールエリアがプレイヤーを乗せて奥から飛んできて、カメラが追う／" +
+             "LandingTour：ステージを回る間にゴールエリアと一緒に着地する／CameraTour：カメラがマップを回って見せる")]
+    [SerializeField] private SpaceJunkIntroStyle firstRoundIntroStyle = SpaceJunkIntroStyle.GoalFlyIn;
+
+    [Tooltip("**2ラウンド目から（ラウンドの間）**の演出の種類（2026/10/29・大槻さん）。種類は上と同じ")]
+    [SerializeField] private SpaceJunkIntroStyle nextRoundIntroStyle = SpaceJunkIntroStyle.LandingTour;
 
     [Tooltip("全員の読み込みを待つ秒数（演出の前）。遅いPCでも最初から見られるように。この間は ① の始めの位置で止まる")]
     [Min(0f)]
@@ -216,9 +219,10 @@ public partial class SpaceJunkRound : NetworkBehaviour
     [SerializeField] private float landingCameraDistanceScale = 1.5f;
 
     [Tooltip("②③ チームを1つ映す秒数（青 → 赤 …の順に、チームの数だけ映す）。チームごとの別のカメラに切り替えて映す。" +
-             "全部映し終えたら、全体の画面（ふだんのカメラ）に切り替わってカウントダウン")]
+             "全部映し終えたら、全体の画面（ふだんのカメラ）に切り替わってカウントダウン。" +
+             "**0 でチームを映さず、着地したらすぐ全体の画面に切り替わる**（2026/10/29 から。大槻さん「コンパクトにしてほしい」。前は 3）")]
     [Min(0f)]
-    [SerializeField] private float teamShotSeconds = 3f;
+    [SerializeField] private float teamShotSeconds = 0f;
 
     [Tooltip("②③ チームの中心からカメラまでの距離（m）。味方が離れているほど、自動で少し足す")]
     [Min(1f)]
@@ -231,8 +235,11 @@ public partial class SpaceJunkRound : NetworkBehaviour
     [Tooltip("②③ チームを映すときの斜めの角度（度）。0 でチームの真正面（ステージの中心の側）から、大きいほど横に回り込む")]
     [SerializeField] private float teamShotAngle = 25f;
 
-    /// <summary>演出の種類。</summary>
-    public SpaceJunkIntroStyle IntroStyle => introStyle;
+    /// <summary>
+    /// **このラウンドの演出の種類。** 1ラウンド目は First Round Intro Style、2ラウンド目からは Next Round Intro Style。
+    /// ホストが開始時に決めて全員に配る（<see cref="roundIntroStyle"/>）ので、どのPCでも同じ演出になる。
+    /// </summary>
+    public SpaceJunkIntroStyle IntroStyle => roundIntroStyle.Value;
 
     // ↓ ゴールが飛んでくる演出の設定を、演出の部品 SpaceJunkGoalFlyIntro が読むための窓口（中身は上の同じ名前の値）
 
@@ -346,8 +353,8 @@ public partial class SpaceJunkRound : NetworkBehaviour
     public float IntroCountdownSeconds => introCountdownSeconds;
 
     /// <summary>
-    /// 演出の長さ（① 〜START まで。読み込み待ちは入れない）。
-    /// ・プレイヤーが降りてくる演出 … ① 回って着地 ＋ チームを映す秒数 × チーム数 ＋ カウントダウン
+    /// 演出の長さ（① 〜START まで。読み込み待ちは入れない）。このラウンドの演出の種類（<see cref="IntroStyle"/>）で決まる。
+    /// ・ゴールエリアと一緒に着地する演出 … ① 回って着地 ＋ チームを映す秒数 × チーム数（初期値は 0）＋ カウントダウン
     /// ・ゴールが飛んでくる演出 … ① 飛んでくる ＋ ② 設置 ＋ カウントダウン
     /// ・カメラが回る演出 … カウントダウンは ④ の途中から数えるので、④⑤⑥ のカメラの動きはこの中に入ったり、START をまたいだりする
     /// </summary>
@@ -355,7 +362,7 @@ public partial class SpaceJunkRound : NetworkBehaviour
     {
         get
         {
-            switch (introStyle)
+            switch (IntroStyle)
             {
                 case SpaceJunkIntroStyle.LandingTour:
                     return landingSeconds + teamShotSeconds * TeamShotCount + introCountdownSeconds;
@@ -376,6 +383,14 @@ public partial class SpaceJunkRound : NetworkBehaviour
 
     /// <summary>動き出してよい時刻（ServerTime）。0 なら演出なし。</summary>
     public double PlayStartServerTime => playStartServerTime.Value;
+
+    /// <summary>
+    /// **このラウンドの演出の種類。ホストが開始時に決めて全員に配る**（2026/10/29）。
+    /// 参加者がそれぞれ「何ラウンド目か」から決めると、ラウンドの番号が届く前にマップが始まったPCだけ違う演出になりうるため。
+    /// 演出の長さ（<see cref="IntroTotalSeconds"/>）もこれで決まるので、全員で同じ値を使う必要がある。
+    /// </summary>
+    private readonly NetworkVariable<SpaceJunkIntroStyle> roundIntroStyle =
+        new NetworkVariable<SpaceJunkIntroStyle>(SpaceJunkIntroStyle.GoalFlyIn);
 
     /// <summary>始まりの演出が始まる時刻（ServerTime）。</summary>
     public double IntroStartServerTime =>
@@ -540,15 +555,16 @@ public partial class SpaceJunkRound : NetworkBehaviour
         wasIntro = IsIntro;
         SetLocalPlayerControlEnabled(!wasIntro);
 
-        // 始まりの演出を、全員のPCで出す。演出の種類で部品を選ぶ（使っていない種類も、切り替えて試せるように残してある）
-        if (introStyle == SpaceJunkIntroStyle.LandingTour)
+        // 始まりの演出を、全員のPCで出す。このラウンドの演出の種類（ホストが決めて配った値）で部品を選ぶ
+        // （使っていない種類も、切り替えて試せるように残してある）
+        if (IntroStyle == SpaceJunkIntroStyle.LandingTour)
         {
             if (GetComponent<SpaceJunkLandingIntro>() == null)
             {
                 gameObject.AddComponent<SpaceJunkLandingIntro>();
             }
         }
-        else if (introStyle == SpaceJunkIntroStyle.GoalFlyIn)
+        else if (IntroStyle == SpaceJunkIntroStyle.GoalFlyIn)
         {
             if (GetComponent<SpaceJunkGoalFlyIntro>() == null)
             {
@@ -593,6 +609,11 @@ public partial class SpaceJunkRound : NetworkBehaviour
         float seconds = SpaceJunkSession.Current != null
             ? SpaceJunkSession.Current.RoundSeconds
             : fallbackSeconds;
+
+        // **このラウンドの演出の種類を決めて配る**（ロビーから入った1ラウンド目と、ラウンドの間で変える。2026/10/29・大槻さん）。
+        // 演出の長さはこの種類で決まるので、動き出す時刻を決める前に入れる
+        bool firstRound = SpaceJunkSession.Current == null || SpaceJunkSession.Current.CurrentRound <= 1;
+        roundIntroStyle.Value = firstRound ? firstRoundIntroStyle : nextRoundIntroStyle;
 
         // **始まりの演出のぶん、動き出す時刻を後ろにずらす。** 残り時間とイベントは、動き出してから数える
         double now = NetworkManager.ServerTime.Time;
