@@ -251,4 +251,33 @@ public class SpaceJunkBombPoints : MonoBehaviour
             Gizmos.DrawWireSphere(child.position, 0.5f);
         }
     }
+
+    public void ForceRespawnAll()
+    {
+        // ホスト（サーバー）以外、またはゲーム中でなければ実行しない
+        if (!CanSpawnOnThisPC()) return;
+
+        foreach (Point point in points)
+        {
+            // すでに何か出ている場合は、安全に消去する
+            if (point.bomb != null && !point.bomb.IsVanished)
+            {
+                // オンライン対応：NetworkObjectが付いていればDespawn、無ければDestroy
+                NetworkObject netObj = point.bomb.GetComponent<NetworkObject>();
+                if (netObj != null && netObj.IsSpawned)
+                {
+                    netObj.Despawn(true); // 引数trueでGameObjectも削除
+                }
+                else
+                {
+                    Destroy(point.bomb.gameObject);
+                }
+            }
+
+            // 状態を初期化して、即座に再生成する
+            point.bomb = null;
+            point.waitTimer = -1f;
+            SpawnAt(point);
+        }
+    }
 }
