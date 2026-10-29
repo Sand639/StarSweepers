@@ -10,7 +10,7 @@ using UnityEngine.UI;
 /// | --- | --- | --- |
 /// | ⓪ 読み込み待ち | カメラは ① の回り始めの位置。ゴールエリアとプレイヤーは奥の飛び始めの位置で止まっている。マップの名前と「ラウンド ○」が出る | 1.5 秒 |
 /// | ① 回って着地 | カメラが**ステージの中心を狙って、横に -45 度・下に 10 度回る**（2026/10/29 から。60 度から 50 度へ下がりながら、
-///   前の回り始めの位置まで回って止まる。前は 50 度から横に 45 度・上に 10 度）。
+///   **全体カメラと同じ南側の真ん中（X が同じ）まで回って止まる**。前は 50 度から横に 45 度・上に 10 度）。
 ///   その間に、**ゴールエリアがプレイヤーを乗せて奥から飛んできて、元の位置に設置（着地）する**（ゴールが飛んでくる演出と同じ動きを、この秒数に縮める） | 3 秒 |
 /// | ②③ チームを映す | Team Shot Seconds が 0 より大きいときだけ。チームごとの別のカメラに切り替えて、青 → 赤 …の順に少し斜めから映す。
 ///   **初期値は 0 で、映さない**（2026/10/29・大槻さん「着地したら画面中央にカメラを切り替えてカウントダウンのコンパクトに」。前は 3 秒ずつ） | 0 秒 |
@@ -269,13 +269,14 @@ public class SpaceJunkLandingIntro : MonoBehaviour
 
     /// <summary>
     /// ⓪① ステージの中心を狙って回るカメラ（進み具合 0〜1。始めと終わりをゆっくりにする）。
-    /// ふだんのカメラと同じ南側を真ん中にして、横に Landing Orbit Degrees（左右に半分ずつ）回り、
-    /// 見下ろす角度は Landing Start Pitch（全体カメラより少し低い）から Landing Orbit Rise Degrees だけ上がる。
+    /// **ふだんのカメラと同じ南側の真ん中（X が同じ）で止まる**ように、そこから Landing Orbit Degrees だけ戻った所から横に回る
+    /// （2026/10/29・大槻さん「全体カメラの X 座標を通り越しちゃってるから、X 座標が 0 になるように」。前は南側を真ん中に左右へ半分ずつ）。
+    /// 見下ろす角度は Landing Start Pitch から Landing Orbit Rise Degrees だけ変わる。
     /// </summary>
     private void GetOrbitPose(float progress, out Vector3 position, out Vector3 target)
     {
         float eased = Mathf.SmoothStep(0f, 1f, Mathf.Clamp01(progress));
-        float yaw = Mathf.Lerp(-0.5f, 0.5f, eased) * round.LandingOrbitDegrees;
+        float yaw = (eased - 1f) * round.LandingOrbitDegrees;
         float pitch = Mathf.Clamp(round.LandingStartPitch + round.LandingOrbitRiseDegrees * eased, 1f, 89f) * Mathf.Deg2Rad;
 
         Vector3 outward = Quaternion.Euler(0f, yaw, 0f) * Vector3.back;

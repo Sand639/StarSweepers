@@ -204,8 +204,8 @@ public partial class SpaceJunkRound : NetworkBehaviour
     [Min(0f)]
     [SerializeField] private float landingSeconds = 3f;
 
-    [Tooltip("① カメラが横に回る角度（度）。ふだんのカメラと同じ南側を真ん中にして、左右に半分ずつ回る。マイナスで逆向き。" +
-             "2026/10/29 から -45（大槻さん「移動量と角度変化をマイナスにして、今までのスタート位置に来るように」。前は 45）")]
+    [Tooltip("① カメラが横に回る角度（度）。ふだんのカメラと同じ南側の真ん中（X が同じ）で止まるように、この角度だけ戻った所から回り始める。" +
+             "マイナスで逆向き。2026/10/29 から -45（大槻さん「移動量と角度変化をマイナスにして」「X 座標が 0 になるように」。前は 45 で、南側を真ん中に左右へ半分ずつ）")]
     [SerializeField] private float landingOrbitDegrees = -45f;
 
     [Tooltip("① 回り始めの、カメラが見下ろす角度（度）。2026/10/29 から 60（全体カメラと同じくらい。前は 50）")]
