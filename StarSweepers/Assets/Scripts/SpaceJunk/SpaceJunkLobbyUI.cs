@@ -34,10 +34,6 @@ public class SpaceJunkLobbyUI : MonoBehaviour
              "名前がこれで始まるシーンを候補に並べる")]
     [SerializeField] private string mapScenePrefix = "SpaceJunkMap";
 
-    [Header("ロビーのスポーン位置")]
-    [Tooltip("参加番号の順に使うスポーン位置。空き番号が再利用されるため、参加者が抜けた位置も次の人が使います。")]
-    [SerializeField] private Transform[] lobbySpawnPoints;
-
     /// <summary>
     /// **いま使われている NetworkManager に付いている裏方。**
     ///
@@ -57,35 +53,6 @@ public class SpaceJunkLobbyUI : MonoBehaviour
 
     /// <summary>マップの一覧（画像や表示名を引くのに使う）。無ければ null。</summary>
     public SpaceJunkMapList MapList => mapList;
-
-    /// <summary>参加番号に対応するロビー位置を返す。設定外・未設定なら原点を返す。</summary>
-    public bool TryGetLobbySpawnPoint(int playerIndex, out Vector3 position, out Quaternion rotation)
-    {
-        position = Vector3.zero;
-        rotation = Quaternion.identity;
-
-        if (lobbySpawnPoints == null || lobbySpawnPoints.Length == 0)
-        {
-            return false;
-        }
-
-        int index = Mathf.Clamp(playerIndex, 0, lobbySpawnPoints.Length - 1);
-        Transform point = lobbySpawnPoints[index];
-        if (point == null)
-        {
-            // 指定枠が空なら最後の枠も試し、無効なら原点を使う。
-            point = lobbySpawnPoints[lobbySpawnPoints.Length - 1];
-        }
-
-        if (point == null)
-        {
-            return false;
-        }
-
-        position = point.position;
-        rotation = point.rotation;
-        return true;
-    }
 
     /// <summary>つなぐ画面。試合が始まったら隠すために持っておく。</summary>
     private LanConnectionUi connectionUi;

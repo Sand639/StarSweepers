@@ -24,7 +24,8 @@ using UnityEngine.InputSystem.LowLevel;
 ///
 /// ### 出てくる場所
 ///
-/// **自分のチームのゴールの近く**に出る。見つからなければ、接続番号ごとに円周上へ散らす。
+/// ロビーでは番号付きスポーンポイントに出る。ラウンド中は**自分のチームのゴールの近く**に出て、
+/// 見つからなければ接続番号ごとに円周上へ散らす。
 ///
 /// 使い方：宇宙ごみ用のプレイヤーのプレハブに、釣りの部品と一緒に付ける。
 /// **釣りのプレハブには付けないこと**（釣りの動きが変わってしまう）。
@@ -92,6 +93,9 @@ public class SpaceJunkPlayerSetup : MonoBehaviour
     /// <summary>マップに着いて、場所とカメラを合わせ終わったか。</summary>
     private bool placedInRound;
 
+    /// <summary>最初の参加番号確定後にロビー配置を始めたか。</summary>
+    private bool initialLobbyPlacementQueued;
+
     /// <summary>名前のタグのプレハブの名前（Assets/Resources の中）。</summary>
     private const string NameplatePrefabName = "PlayerNameplate";
 
@@ -121,6 +125,13 @@ public class SpaceJunkPlayerSetup : MonoBehaviour
         if (netPlayer == null || !netPlayer.IsOwner)
         {
             return;
+        }
+
+        // 最初のシーン読み込み前後に生成されたP1も含め、番号が届いたら一度だけ置き直す。
+        if (!initialLobbyPlacementQueued && IsInLobbyScene() && netPlayer.PlayerIndex >= 0)
+        {
+            initialLobbyPlacementQueued = true;
+            BeginPlacement();
         }
 
         // 画面の案内とレーダーは1つしか無いので、そのPCの1人目のぶんだけ（1台で複数人のとき）
@@ -570,25 +581,20 @@ public class SpaceJunkPlayerSetup : MonoBehaviour
             hookController.ResetHook();
         }
 
-        // ロビーでは参加番号に対応するインスペクター登録位置を使う。
-        // ラウンド中は従来どおり、自分のゴール付近へ配置する。
-        SpaceJunkSession session = SpaceJunkSession.Current;
-        if (session != null && session.State == SpaceJunkMatchState.Lobby && netPlayer != null)
+        // ロビーでは、シーン内のポイント自身が持つ番号から場所を探す。
+        if (IsInLobbyScene() && netPlayer != null)
         {
-            Vector3 lobbyPosition = Vector3.zero;
-            Quaternion lobbyRotation = Quaternion.identity;
-
-            // PlayerIndex はホストが割り当てた空き番号優先の参加番号。
-            if (SpaceJunkLobbyUI.Current != null &&
-                SpaceJunkLobbyUI.Current.TryGetLobbySpawnPoint(netPlayer.PlayerIndex, out lobbyPosition, out lobbyRotation))
+            UnityEngine.SceneManagement.Scene activeScene = UnityEngine.SceneManagement.SceneManager.GetActiveScene();
+            foreach (SpaceJunkLobbyPoint point in SpaceJunkLobbyPoint.All)
             {
-                SetSpawnTransform(lobbyPosition, lobbyRotation);
-            }
-            else
-            {
-                SetSpawnTransform(FallbackSpawnPosition(Vector2.zero), Quaternion.identity);
+                if (point != null && point.gameObject.scene == activeScene && point.SpawnIndex == netPlayer.PlayerIndex)
+                {
+                    SetSpawnTransform(point.transform.position, point.transform.rotation);
+                    return;
+                }
             }
 
+            SetSpawnTransform(FallbackSpawnPosition(Vector2.zero), Quaternion.identity);
             return;
         }
 
