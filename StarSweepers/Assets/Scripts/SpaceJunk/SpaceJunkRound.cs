@@ -204,15 +204,22 @@ public partial class SpaceJunkRound : NetworkBehaviour
     [Min(0f)]
     [SerializeField] private float landingSeconds = 3f;
 
-    [Tooltip("① カメラが横に回る角度（度）。ふだんのカメラと同じ南側を真ん中にして、左右に半分ずつ回る")]
-    [SerializeField] private float landingOrbitDegrees = 45f;
+    [Tooltip("① カメラが横に回る角度（度）。ふだんのカメラと同じ南側を真ん中にして、左右に半分ずつ回る。マイナスで逆向き。" +
+             "2026/10/29 から -45（大槻さん「移動量と角度変化をマイナスにして、今までのスタート位置に来るように」。前は 45）")]
+    [SerializeField] private float landingOrbitDegrees = -45f;
 
-    [Tooltip("① 回り始めの、カメラが見下ろす角度（度）。全体カメラ（ステージのふだんのカメラ。約 60 度）より少し低くして始める")]
+    [Tooltip("① 回り始めの、カメラが見下ろす角度（度）。2026/10/29 から 60（全体カメラと同じくらい。前は 50）")]
     [Range(5f, 80f)]
-    [SerializeField] private float landingStartPitch = 50f;
+    [SerializeField] private float landingStartPitch = 60f;
 
-    [Tooltip("① 回る間に、カメラが上へ回る角度（度）。回り始めの角度にこれを足した角度で終わる")]
-    [SerializeField] private float landingOrbitRiseDegrees = 10f;
+    [Tooltip("① 回る間に、カメラが上へ回る角度（度）。回り始めの角度にこれを足した角度で終わる。マイナスで下へ回る。" +
+             "2026/10/29 から -10（60 度から 50 度へ下がって、前の回り始めの位置で止まる。前は 10）")]
+    [SerializeField] private float landingOrbitRiseDegrees = -10f;
+
+    [Tooltip("④ カメラが止まってカウントダウンが始まってから、全体カメラ（ふだんのカメラ）の位置へゆっくり合わせる秒数（2026/10/29）。" +
+             "0 でパッと切り替える。カウントダウンの秒数より短くすること（START の前に合わせ終わるように）")]
+    [Min(0f)]
+    [SerializeField] private float landingReturnSeconds = 2f;
 
     [Tooltip("① カメラとステージの中心の距離が、ステージの大きさ（中央からいちばん遠いゴール＋4m）の何倍か。全体カメラは約 1.7 倍")]
     [Min(0.5f)]
@@ -286,6 +293,9 @@ public partial class SpaceJunkRound : NetworkBehaviour
 
     /// <summary>① カメラとステージの中心の距離（ステージの大きさの何倍か）。</summary>
     public float LandingCameraDistanceScale => landingCameraDistanceScale;
+
+    /// <summary>④ カウントダウンが始まってから、全体カメラの位置へゆっくり合わせる秒数。</summary>
+    public float LandingReturnSeconds => landingReturnSeconds;
 
     /// <summary>②③ チームを1つ映す秒数。</summary>
     public float TeamShotSeconds => teamShotSeconds;
