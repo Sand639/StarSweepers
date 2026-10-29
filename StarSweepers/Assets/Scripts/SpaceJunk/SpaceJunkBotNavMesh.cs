@@ -96,6 +96,7 @@ public static class SpaceJunkBotNavMesh
         NavMeshBuilder.CollectSources(search, ~0, NavMeshCollectGeometry.PhysicsColliders, 0,
             new List<NavMeshBuildMarkup>(), sources);
         sources.RemoveAll(IsNotGround);
+        sources.RemoveAll(IsUnreadableMesh);
 
         if (!TryGetBounds(sources, out Bounds bounds))
         {
@@ -182,6 +183,27 @@ public static class SpaceJunkBotNavMesh
 
         return collider.GetComponentInParent<HookableObject>() != null
             || collider.GetComponentInParent<CharacterController>() != null;
+    }
+
+    /// <summary>
+    /// **読み取りが許されていない形（Read/Write が OFF のモデル）の当たり判定か。** そうなら地図から外し、注意を出す（2026/10/28）。
+    ///
+    /// そのまま入れると、Unity が「RuntimeNavMeshBuilder: Source mesh … does not allow read access」の**エラー**を出す。
+    /// 地図はラウンドごとに作り直すので、エラーもラウンドごとに出て、Console の Error Pause が ON だと**ゲームが一時停止**した
+    /// （STAGE_03 のドーナツ `Assets/Art/Models/Donut.obj`。大槻さんの報告）。しかもビルドではその形は地図に入らない。
+    /// 直すときは、そのモデルを選んで、インスペクターの Model タブの **Read/Write** を ON にして Apply する。
+    /// </summary>
+    private static bool IsUnreadableMesh(NavMeshBuildSource source)
+    {
+        if (!(source.sourceObject is Mesh mesh) || mesh.isReadable)
+        {
+            return false;
+        }
+
+        string owner = source.component != null ? source.component.name : "?";
+        Debug.LogWarning($"[BOT] 「{owner}」の形（{mesh.name}）は読み取りが許されていないので、歩ける床の地図に入れません。" +
+                         "ボットがその上を歩けるようにするには、モデルの Read/Write を ON にしてください。", source.component);
+        return true;
     }
 
     /// <summary><paramref name="point"/> のいちばん近くの、歩ける床の点。<paramref name="maxDistance"/> m 以内に無ければ false。</summary>
