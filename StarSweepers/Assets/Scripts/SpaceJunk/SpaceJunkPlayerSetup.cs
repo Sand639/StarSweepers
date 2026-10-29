@@ -570,12 +570,29 @@ public class SpaceJunkPlayerSetup : MonoBehaviour
             hookController.ResetHook();
         }
 
+        // ロビーでは参加番号に対応するインスペクター登録位置を使う。
+        // ラウンド中は従来どおり、自分のゴール付近へ配置する。
+        SpaceJunkSession session = SpaceJunkSession.Current;
+        if (session != null && session.State == SpaceJunkMatchState.Lobby && netPlayer != null)
+        {
+            Vector3 lobbyPosition = Vector3.zero;
+            Quaternion lobbyRotation = Quaternion.identity;
+            SpaceJunkLobbyUI.Current?.TryGetLobbySpawnPoint(netPlayer.PlayerIndex, out lobbyPosition, out lobbyRotation);
+            SetSpawnTransform(lobbyPosition, lobbyRotation);
+            return;
+        }
+
         Vector3 position = FindSpawnPosition();
         Quaternion rotation = Quaternion.LookRotation(
             new Vector3(-position.x, 0f, -position.z).sqrMagnitude > 0.01f
                 ? new Vector3(-position.x, 0f, -position.z)
                 : Vector3.forward);
 
+        SetSpawnTransform(position, rotation);
+    }
+
+    private void SetSpawnTransform(Vector3 position, Quaternion rotation)
+    {
         // CharacterController が付いたまま動かすと位置が戻されるので、いったん切る
         if (characterController != null)
         {
