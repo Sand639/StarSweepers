@@ -96,6 +96,9 @@ public class SpaceJunkPlayerSetup : MonoBehaviour
     /// <summary>最初の参加番号確定後にロビー配置を始めたか。</summary>
     private bool initialLobbyPlacementQueued;
 
+    /// <summary>ロビーの初回配置が同期するまで見た目を隠しているか。</summary>
+    private bool lobbyVisualsHidden;
+
     /// <summary>名前のタグのプレハブの名前（Assets/Resources の中）。</summary>
     private const string NameplatePrefabName = "PlayerNameplate";
 
@@ -112,6 +115,12 @@ public class SpaceJunkPlayerSetup : MonoBehaviour
         mover = GetComponent<FishingPlayerController>();
         hookController = GetComponent<HookController>();
         input = PlayerInputSource.Get(this);
+
+        if (IsInLobbyScene())
+        {
+            lobbyVisualsHidden = true;
+            SetLobbyRenderersVisible(false);
+        }
     }
 
     private void Update()
@@ -121,6 +130,13 @@ public class SpaceJunkPlayerSetup : MonoBehaviour
 
         // 頭の上の名前のタグも、**全員のぶん**に付ける
         EnsureNameplate();
+
+        if (lobbyVisualsHidden)
+        {
+            // Awake 後に作られた名前タグなども、配置完了までは描かない。
+            SetLobbyRenderersVisible(false);
+            TryRevealAfterLobbyPositionSync();
+        }
 
         if (netPlayer == null || !netPlayer.IsOwner)
         {
@@ -590,11 +606,13 @@ public class SpaceJunkPlayerSetup : MonoBehaviour
                 if (point != null && point.gameObject.scene == activeScene && point.SpawnIndex == netPlayer.PlayerIndex)
                 {
                     SetSpawnTransform(point.transform.position, point.transform.rotation);
+                    RevealLobbyRenderers();
                     return;
                 }
             }
 
             SetSpawnTransform(FallbackSpawnPosition(Vector2.zero), Quaternion.identity);
+            RevealLobbyRenderers();
             return;
         }
 
@@ -605,6 +623,54 @@ public class SpaceJunkPlayerSetup : MonoBehaviour
                 : Vector3.forward);
 
         SetSpawnTransform(position, rotation);
+    }
+
+    private void SetLobbyRenderersVisible(bool visible)
+    {
+        Renderer[] renderers = GetComponentsInChildren<Renderer>(true);
+        foreach (Renderer childRenderer in renderers)
+        {
+            if (childRenderer != null)
+            {
+                childRenderer.enabled = visible;
+            }
+        }
+    }
+
+    private void RevealLobbyRenderers()
+    {
+        if (!lobbyVisualsHidden)
+        {
+            return;
+        }
+
+        SetLobbyRenderersVisible(true);
+        lobbyVisualsHidden = false;
+    }
+
+    /// <summary>他クライアントでは、同期された位置が正しいロビー位置に届いてから描画する。</summary>
+    private void TryRevealAfterLobbyPositionSync()
+    {
+        if (netPlayer == null || !netPlayer.IsSpawned || netPlayer.PlayerIndex < 0)
+        {
+            return;
+        }
+
+        Vector3 expectedPosition = FallbackSpawnPosition(Vector2.zero);
+        UnityEngine.SceneManagement.Scene activeScene = UnityEngine.SceneManagement.SceneManager.GetActiveScene();
+        foreach (SpaceJunkLobbyPoint point in SpaceJunkLobbyPoint.All)
+        {
+            if (point != null && point.gameObject.scene == activeScene && point.SpawnIndex == netPlayer.PlayerIndex)
+            {
+                expectedPosition = point.transform.position;
+                break;
+            }
+        }
+
+        if (Vector3.SqrMagnitude(transform.position - expectedPosition) <= 0.01f)
+        {
+            RevealLobbyRenderers();
+        }
     }
 
     private void SetSpawnTransform(Vector3 position, Quaternion rotation)
