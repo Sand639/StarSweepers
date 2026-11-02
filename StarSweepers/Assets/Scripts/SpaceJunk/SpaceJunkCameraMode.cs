@@ -45,8 +45,10 @@ public abstract class SpaceJunkCameraMode : MonoBehaviour
     /// <summary>名前が空のときに出す名前。</summary>
     protected abstract string DefaultName { get; }
 
-    /// <summary>このカメラ。</summary>
-    protected Camera View { get; private set; }
+    /// <summary>このカメラ。再生していないとき（Awake の前）に使われても取れるよう、まだ無ければその場で探す。</summary>
+    protected Camera View => view != null ? view : view = GetComponent<Camera>();
+
+    private Camera view;
 
     /// <summary>
     /// 次に位置を求めるときに、**なめらかにせずその場所へ飛ぶ**か。
@@ -63,7 +65,7 @@ public abstract class SpaceJunkCameraMode : MonoBehaviour
     protected virtual void Awake()
     {
         // 切り替え部品が同じカメラに付いているかは、ここで1回だけ調べる（無ければ自分で動かす側になる）
-        View = GetComponent<Camera>();
+        view = GetComponent<Camera>();
         owner = GetComponent<SpaceJunkCameraModeSwitch>();
     }
 

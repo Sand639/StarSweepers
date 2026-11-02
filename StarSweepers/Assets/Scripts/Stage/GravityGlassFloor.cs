@@ -1,8 +1,14 @@
 using System.Collections.Generic;
 using UnityEngine;
 
+
+
 /// <summary>
-/// **重い重力のときに踏むと割れる、ガラスの床。**
+/// **重力・踏んだ回数・乗っている累計時間で割れるガラスの床。**
+/// CounterBreak はプレイヤーごとの乗り直しで別々の起点にヒビを作り、合計回数で割れる。
+/// StayTime は乗っている人数ぶん時間を足し、各プレイヤーの足元からヒビを伸ばす。
+/// 降りても累計時間とヒビは残り、Restore でまとめてリセットする。
+/// 以下は StepBreak（従来の重力モード）の説明。
 ///
 /// | 段階 | 何が起きるか |
 /// | --- | --- |
@@ -26,27 +32,49 @@ using UnityEngine;
 [RequireComponent(typeof(BoxCollider))]
 public class GravityGlassFloor : MonoBehaviour
 {
+
     /// <summary>床の状態。</summary>
     public enum FloorState
     {
         /// <summary>割れていない</summary>
         Intact,
-
         /// <summary>ヒビが入った（もうすぐ割れる）</summary>
         Cracked,
-
         /// <summary>割れた</summary>
         Broken,
     }
 
-    [Header("割れる条件")]
-    [Tooltip("**この重力以上のときに踏むと、ヒビが入る。** 正の数で入れる。地球は9.81")]
-    [Min(0f)]
-    [SerializeField] private float breakGravity = 12f;
+    public enum GlassType
+    {
+        StepBreak,
+        CounterBreak,
+        StayTime,
+    }
 
+
+    [Header("ガラスのタイプ")]
+    [SerializeField] private GlassType glasstype;
+
+    [Header("割れる条件")]
     [Tooltip("**ヒビが入ってから割れるまでの秒数**")]
     [Min(0f)]
     [SerializeField] private float secondsUntilBreak = 1.5f;
+
+    [Header("割れる条件")]
+    [Tooltip("乗り直した回数。プレイヤーごとに数え、合計がこの回数に達すると割れる")]
+    [Min(1)]
+    [SerializeField] private int breakCount = 3;
+
+    [Header("割れる条件")]
+    [Min(0f)]
+    [SerializeField] private float stayTime = 3f;
+
+
+
+
+    [Tooltip("**この重力以上のときに踏むと、ヒビが入る。** 正の数で入れる。地球は9.81")]
+    [Min(0f)]
+    [SerializeField] private float breakGravity = 12f;
 
     [Tooltip("ONなら**人（CharacterController）だけ**を数える。OFFにすると、置いた箱などでも割れる")]
     [SerializeField] private bool onlyCharacters = true;
@@ -94,7 +122,7 @@ public class GravityGlassFloor : MonoBehaviour
     /// <summary>いまの状態。</summary>
     public FloorState State { get; private set; } = FloorState.Intact;
 
-    /// <summary>割れるまでの残り秒数（ヒビが入っている間だけ意味がある）。</summary>
+    /// <summary>割れるまでの残り秒数。StayTime は残りの延べ滞在秒数。CounterBreak では使わない。</summary>
     public float BreakRemaining { get; private set; }
 
     /// <summary>
@@ -130,6 +158,31 @@ public class GravityGlassFloor : MonoBehaviour
     /// <summary>割れてから元に戻るまでの残り秒数。</summary>
     private float respawnTimer;
 
+    private int stepCount;
+    private float accumulatedStayTime;
+    private readonly Dictionary<int, Vector3> steppers = new Dictionary<int, Vector3>();
+    private readonly HashSet<int> previousSteppers = new HashSet<int>();
+    private readonly Dictionary<int, CrackPattern> standingCracks = new Dictionary<int, CrackPattern>();
+    private readonly List<CrackPattern> crackPatterns = new List<CrackPattern>();
+    private readonly List<int> departedSteppers = new List<int>();
+
+    // 各起点の線を保存し、線の根元を固定したまま先端を滑らかに伸ばす。
+    private class CrackPattern
+    {
+        public readonly List<CrackSegment> Segments = new List<CrackSegment>();
+        public float Progress;
+    }
+
+    private struct CrackSegment
+    {
+        public Transform Transform;
+        public Vector3 Start;
+        public Vector3 End;
+        public float Length;
+        public float StartProgress;
+        public float EndProgress;
+    }
+
     private void Awake()
     {
         box = GetComponent<BoxCollider>();
@@ -162,7 +215,23 @@ public class GravityGlassFloor : MonoBehaviour
             return;
         }
 
-        // 状態は「ふつう → ヒビ → 割れた →（戻る秒数が決めてあれば）ふつう」の順に進む
+        if (State == FloorState.Broken)
+        {
+            UpdateBroken();
+            return;
+        }
+
+        switch (glasstype)
+        {
+            case GlassType.CounterBreak:
+                UpdateCounterBreak();
+                return;
+            case GlassType.StayTime:
+                UpdateStayTime(Time.deltaTime);
+                return;
+        }
+
+        // StepBreak は従来どおり、重力でヒビが入り、その後は時間で割れる。
         switch (State)
         {
             case FloorState.Intact:
@@ -173,9 +242,80 @@ public class GravityGlassFloor : MonoBehaviour
                 UpdateCracked();
                 break;
 
-            case FloorState.Broken:
-                UpdateBroken();
-                break;
+        }
+    }
+
+    private void UpdateCounterBreak()
+    {
+        FindSteppers();
+        foreach (KeyValuePair<int, Vector3> stepper in steppers)
+        {
+            if (previousSteppers.Contains(stepper.Key))
+            {
+                continue;
+            }
+
+            stepCount++;
+            State = FloorState.Cracked;
+            CrackPattern pattern = BuildCracks(stepper.Value, true);
+            if (stepCount >= Mathf.Max(1, breakCount))
+            {
+                Break();
+                return;
+            }
+        }
+
+        previousSteppers.Clear();
+        previousSteppers.UnionWith(steppers.Keys);
+        foreach (CrackPattern pattern in crackPatterns)
+        {
+            pattern.Progress = Mathf.MoveTowards(pattern.Progress, 1f, Time.deltaTime * 3f);
+            RevealPattern(pattern);
+        }
+        if (State == FloorState.Cracked)
+        {
+            BlinkEdge((float)stepCount / Mathf.Max(1, breakCount));
+        }
+    }
+
+    private void UpdateStayTime(float deltaTime)
+    {
+        FindSteppers();
+
+        // 降りた起点は残すが、成長は止める。再び乗ると新しい足元に起点を作る。
+        departedSteppers.Clear();
+        foreach (int id in standingCracks.Keys)
+        {
+            if (!steppers.ContainsKey(id)) departedSteppers.Add(id);
+        }
+        foreach (int id in departedSteppers) standingCracks.Remove(id);
+
+        float duration = Mathf.Max(0f, stayTime);
+        float addedTime = Mathf.Min(deltaTime * steppers.Count, Mathf.Max(0f, duration - accumulatedStayTime));
+        accumulatedStayTime += addedTime;
+        BreakRemaining = Mathf.Max(0f, duration - accumulatedStayTime);
+
+        foreach (KeyValuePair<int, Vector3> stepper in steppers)
+        {
+            State = FloorState.Cracked;
+            if (!standingCracks.TryGetValue(stepper.Key, out CrackPattern pattern))
+            {
+                pattern = BuildCracks(stepper.Value, true);
+                standingCracks.Add(stepper.Key, pattern);
+            }
+
+            // 人数が増えると、すべての在席者のヒビも同じ速度で速く伸びる。
+            pattern.Progress = duration > 0f ? Mathf.Clamp01(pattern.Progress + addedTime / duration) : 1f;
+            RevealPattern(pattern);
+        }
+
+        if (State == FloorState.Cracked)
+        {
+            BlinkEdge(duration > 0f ? accumulatedStayTime / duration : 1f);
+        }
+        if (steppers.Count > 0 && accumulatedStayTime >= duration)
+        {
+            Break();
         }
     }
 
@@ -207,7 +347,19 @@ public class GravityGlassFloor : MonoBehaviour
     /// </summary>
     private bool TryFindStepper(out Vector3 footPosition)
     {
+        FindSteppers();
+        foreach (Vector3 position in steppers.Values)
+        {
+            footPosition = position;
+            return true;
+        }
         footPosition = transform.position;
+        return false;
+    }
+
+    private void FindSteppers()
+    {
+        steppers.Clear();
 
         Vector3 size = Vector3.Scale(box.size, transform.lossyScale);
         Vector3 up = transform.up;
@@ -232,16 +384,25 @@ public class GravityGlassFloor : MonoBehaviour
                 continue;
             }
 
-            if (onlyCharacters && !(hit is CharacterController))
+            CharacterController character = hit as CharacterController ?? hit.GetComponentInParent<CharacterController>();
+            if (onlyCharacters && character == null)
             {
                 continue;
             }
 
-            footPosition = hit.bounds.center;
-            return true;
+            // 同じプレイヤーの複数の Collider を二重に数えない。
+            Component owner = character != null ? (Component)character : hit.attachedRigidbody != null ? (Component)hit.attachedRigidbody : hit;
+            Vector3 foot = hit.bounds.center - up * hit.bounds.extents.y;
+            if (character != null)
+            {
+                foot = character.transform.TransformPoint(character.center) - character.transform.up *
+                    (character.height * Mathf.Abs(character.transform.lossyScale.y) * 0.5f);
+            }
+            float height = Vector3.Dot(foot - top, up);
+            // 横から触れた人や、他の人の上に乗っている人は床の上の人数に含めない。
+            if (height < -0.1f || height > detectHeight) continue;
+            steppers[owner.GetInstanceID()] = foot;
         }
-
-        return false;
     }
 
     // ------------------------------------------------------------
@@ -302,26 +463,29 @@ public class GravityGlassFloor : MonoBehaviour
     /// 線は最初は隠しておき、割れる時間に近づくほど**踏んだ場所に近いほうから順に見せていく**
     /// （ヒビが広がっていくように見える）。
     /// </summary>
-    private void BuildCracks(Vector3 from)
+    private CrackPattern BuildCracks(Vector3 from, bool append = false)
     {
-        ClearCracks();
+        if (!append) ClearCracks();
+        CrackPattern pattern = new CrackPattern();
+        crackPatterns.Add(pattern);
 
         if (crackMaterial == null)
         {
             Debug.LogWarning($"{name}: ヒビのマテリアルが入っていません。ヒビは見えませんが、割れる動きはします。", this);
-            return;
+            return pattern;
         }
 
         // Cube の Scale がゆがんでいても線が斜めにゆがまないよう、
         // 入れ物の大きさを打ち消して「1倍」に戻しておく
         Vector3 scale = transform.lossyScale;
 
-        crackRoot = new GameObject("Cracks").transform;
-        crackRoot.SetParent(transform, false);
-        crackRoot.localScale = new Vector3(
-            SafeInverse(scale.x),
-            SafeInverse(scale.y),
-            SafeInverse(scale.z));
+        if (crackRoot == null)
+        {
+            crackRoot = new GameObject("Cracks").transform;
+            crackRoot.SetParent(transform, false);
+            crackRoot.localScale = new Vector3(
+                SafeInverse(scale.x), SafeInverse(scale.y), SafeInverse(scale.z));
+        }
 
         // ここから下は、crackRoot の中での座標（大きさを打ち消してあるので、単位はそのままメートル）。
         // 線は上面の上に平らに並べるので、2次元の (x, y) を床の (x, z) として扱う
@@ -336,8 +500,8 @@ public class GravityGlassFloor : MonoBehaviour
         // （中心から、ふちまでの 7割の範囲に収める）
         Vector3 local = transform.InverseTransformPoint(from);
         Vector2 origin = new Vector2(
-            Mathf.Clamp(local.x * scale.x, -halfX * 0.7f, halfX * 0.7f),
-            Mathf.Clamp(local.z * scale.z, -halfZ * 0.7f, halfZ * 0.7f));
+            Mathf.Clamp((local.x - box.center.x) * scale.x, -halfX * 0.96f, halfX * 0.96f),
+            Mathf.Clamp((local.z - box.center.z) * scale.z, -halfZ * 0.96f, halfZ * 0.96f));
 
         // 1本の線が伸びる長さの目安（メートル）。長いほうの辺の半分の1.5倍なので、
         // どこから踏んでも、だいたいの線がふちまで届く
@@ -351,7 +515,7 @@ public class GravityGlassFloor : MonoBehaviour
             // 線を等間隔の向きに並べ、1本ごとに ±15度だけずらす（きれいに並びすぎないように）
             float angle = (startAngle + 360f * line / crackLines + Random.Range(-15f, 15f)) * Mathf.Deg2Rad;
 
-            GrowCrackLine(origin, angle, reach, halfX, halfZ, topY);
+            GrowCrackLine(origin, angle, reach, halfX, halfZ, topY, pattern);
         }
 
         // 踏んだ場所に近い順に並べる（名前の先頭が「何本目の区切りか」）。見せるときにこの順で出す
@@ -359,7 +523,9 @@ public class GravityGlassFloor : MonoBehaviour
         //    いまは1本あたり最大4区切り（0〜3）なので問題ない
         crackSegments.Sort((a, b) => a.name.CompareTo(b.name));
 
-        RevealCracks(0f);
+        if (append) RevealPattern(pattern);
+        else RevealCracks(0f);
+        return pattern;
     }
 
     /// <summary>
@@ -368,7 +534,7 @@ public class GravityGlassFloor : MonoBehaviour
     ///
     /// 座標は crackRoot の中での (x, z)。<paramref name="topY"/> は線を並べる高さ。
     /// </summary>
-    private void GrowCrackLine(Vector2 origin, float angle, float reach, float halfX, float halfZ, float topY)
+    private void GrowCrackLine(Vector2 origin, float angle, float reach, float halfX, float halfZ, float topY, CrackPattern pattern)
     {
         Vector2 point = origin;
 
@@ -389,7 +555,7 @@ public class GravityGlassFloor : MonoBehaviour
             next.y = Mathf.Clamp(next.y, -halfZ, halfZ);
 
             // s は「踏んだ場所から何個目の区切りか」。見せる順番に使う
-            CreateSegment(point, next, topY, s);
+            CreateSegment(point, next, topY, s, segments, pattern);
 
             point = next;
 
@@ -404,7 +570,7 @@ public class GravityGlassFloor : MonoBehaviour
     /// ヒビの線の1区切りを作る。**細長い Cube を、<paramref name="from"/> から <paramref name="to"/> へ渡す**形。
     /// <paramref name="depth"/> は踏んだ場所から何個目の区切りか（見せる順番に使う）。
     /// </summary>
-    private void CreateSegment(Vector2 from, Vector2 to, float y, int depth)
+    private void CreateSegment(Vector2 from, Vector2 to, float y, int depth, int segments, CrackPattern pattern)
     {
         Vector2 delta = to - from;
         float length = delta.magnitude;
@@ -425,7 +591,10 @@ public class GravityGlassFloor : MonoBehaviour
         // 2点のまん中に置き、Z（奥行き）を線の向きに合わせて、Z方向に長さぶん伸ばす。
         // 厚みは 0.008（8ミリ）。長さに線の太さを足しておくと、区切りのつなぎ目にすき間ができない
         segment.transform.SetParent(crackRoot, false);
-        segment.transform.localPosition = new Vector3((from.x + to.x) * 0.5f, y, (from.y + to.y) * 0.5f);
+        Vector3 centerOffset = new Vector3(box.center.x * transform.lossyScale.x, 0f, box.center.z * transform.lossyScale.z);
+        Vector3 start = new Vector3(from.x, y, from.y) + centerOffset;
+        Vector3 end = new Vector3(to.x, y, to.y) + centerOffset;
+        segment.transform.localPosition = (start + end) * 0.5f;
         segment.transform.localRotation = Quaternion.LookRotation(new Vector3(delta.x, 0f, delta.y));
         segment.transform.localScale = new Vector3(crackWidth, 0.008f, length + crackWidth);
 
@@ -434,6 +603,22 @@ public class GravityGlassFloor : MonoBehaviour
         segmentRenderer.shadowCastingMode = UnityEngine.Rendering.ShadowCastingMode.Off;
 
         crackSegments.Add(segment);
+        pattern.Segments.Add(new CrackSegment
+        {
+            Transform = segment.transform, Start = start, End = end, Length = length,
+            StartProgress = (float)depth / segments, EndProgress = (float)(depth + 1) / segments,
+        });
+    }
+
+    private void RevealPattern(CrackPattern pattern)
+    {
+        foreach (CrackSegment segment in pattern.Segments)
+        {
+            float amount = Mathf.InverseLerp(segment.StartProgress, segment.EndProgress, pattern.Progress);
+            segment.Transform.gameObject.SetActive(amount > 0f);
+            segment.Transform.localPosition = Vector3.Lerp(segment.Start, segment.End, amount * 0.5f);
+            segment.Transform.localScale = new Vector3(crackWidth, 0.008f, (segment.Length + crackWidth) * amount);
+        }
     }
 
     /// <summary>ヒビを、進み具合に合わせて見せていく。最初から4割は見えている。</summary>
@@ -484,10 +669,14 @@ public class GravityGlassFloor : MonoBehaviour
     private void ClearCracks()
     {
         crackSegments.Clear();
+        crackPatterns.Clear();
+        standingCracks.Clear();
 
         if (crackRoot != null)
         {
-            Destroy(crackRoot.gameObject);
+            crackRoot.gameObject.SetActive(false);
+            if (Application.isPlaying) Destroy(crackRoot.gameObject);
+            else DestroyImmediate(crackRoot.gameObject);
             crackRoot = null;
         }
     }
@@ -505,6 +694,7 @@ public class GravityGlassFloor : MonoBehaviour
         }
 
         State = FloorState.Broken;
+        BreakRemaining = 0f;
         respawnTimer = respawnSeconds;
 
         ClearCracks();
@@ -550,6 +740,11 @@ public class GravityGlassFloor : MonoBehaviour
 
         State = FloorState.Intact;
         BreakRemaining = 0f;
+        stepCount = 0;
+        accumulatedStayTime = 0f;
+        previousSteppers.Clear();
+        steppers.Clear();
+        departedSteppers.Clear();
 
         box.enabled = true;
 
@@ -641,7 +836,8 @@ public class GravityGlassFloor : MonoBehaviour
         if (collider != null)
         {
             collider.enabled = false;
-            Destroy(collider);
+            if (Application.isPlaying) Destroy(collider);
+            else DestroyImmediate(collider);
         }
     }
 

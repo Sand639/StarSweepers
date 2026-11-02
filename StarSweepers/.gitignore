@@ -107,3 +107,7 @@ InitTestScene*.unity*
 
 # Auto-generated cache in Assets folder
 /[Aa]ssets/[Ss]ceneDependencyCache*
+
+# Unity が落ちたあとに自動で作る、シーンのバックアップ（2026/11/2 追加。PR #21 と #22 の両方に入って衝突したため）
+/[Aa]ssets/_Recovery/
+/[Aa]ssets/_Recovery.meta

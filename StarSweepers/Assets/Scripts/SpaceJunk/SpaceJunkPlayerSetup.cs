@@ -2,6 +2,8 @@ using UnityEngine;
 using UnityEngine.InputSystem;
 using UnityEngine.InputSystem.LowLevel;
 
+
+
 /// <summary>
 /// **宇宙ごみ用に、プレイヤーへ上乗せする部品。**
 ///
@@ -32,6 +34,7 @@ using UnityEngine.InputSystem.LowLevel;
 /// </summary>
 public class SpaceJunkPlayerSetup : MonoBehaviour
 {
+
     [Header("見た目")]
     [Tooltip("チームの色に塗る見た目。**釣りのプレハブと同じものを入れる**")]
     [SerializeField] private Renderer[] teamRenderers;
@@ -80,6 +83,7 @@ public class SpaceJunkPlayerSetup : MonoBehaviour
 
     [Tooltip("レーダーの真ん中に出す自分の印の画像")]
     [SerializeField] private Sprite radarSelf;
+
 
     /// <summary>
     /// このPCで操作している人の「戻る」キーの名前。画面の案内に使う。
