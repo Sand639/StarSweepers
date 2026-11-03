@@ -17,7 +17,7 @@ using UnityEngine;
 /// 6. カプセルの見た目をキャラクターダミーに替える（<see cref="SweeperPlayerSetup.PutModel"/>。2026/10/29）
 ///
 /// ⚠️ **作り直すと、このプレハブでインスペクターから調整した値は消える。** 今の体（`SpaceJunkPlayer.prefab`）は変えない。
-/// どの体で遊ぶかは、ポーズ画面の「設定」→「プレイヤー」で選ぶ（<see cref="SweeperOnlineSwitch"/>）。
+/// 宇宙ごみのオンラインでは、人はいつもこの体で出る（<see cref="SweeperOnlineSwitch"/>。2026/11/3）。
 /// </summary>
 public static class SweeperOnlineSetup
 {
@@ -54,7 +54,7 @@ public static class SweeperOnlineSetup
         AssetDatabase.SaveAssets();
 
         Debug.Log($"[SweeperPlayer] 宇宙ごみのオンラインの新しい体を作りました：{PrefabPath}\n" +
-                  "ポーズ画面の「設定」→「プレイヤー：新しい体」にしてから部屋を作ると、この体で遊べます。");
+                  "宇宙ごみのオンラインでは、人のプレイヤーはいつもこの体で出ます。");
         return saved;
     }
 

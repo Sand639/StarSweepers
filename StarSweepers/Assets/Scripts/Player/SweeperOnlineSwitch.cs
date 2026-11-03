@@ -2,21 +2,15 @@ using Unity.Netcode;
 using UnityEngine;
 
 /// <summary>
-/// **宇宙ごみのオンラインで、プレイヤーの体を「今の体」と「新しい体（プレイヤーの本実装）」から選ぶ係。**（2026/10/28）
+/// **宇宙ごみのオンラインで、人のプレイヤーを「新しい体（プレイヤーの本実装）」で出す係。**（2026/10/28。2026/11/3 から設定なしでいつも新しい体）
 ///
-/// ポーズ画面の「設定」→「プレイヤー：今の体／新しい体」（<see cref="GameSettings.PlayerBody"/>）を見て、
-/// **通信がまだ始まっていない間**、NetworkManager の Player Prefab を入れ替えておく。
-/// プレイヤーの体はホストが出すので、**効くのは部屋を作る人（ホスト）の設定だけ**。参加する人の設定は関係ない。
-///
-/// | 設定 | 出る体 |
-/// | --- | --- |
-/// | 今の体（初期値） | NetworkManager に入っているもの（`SpaceJunkPlayer.prefab`）。**何も入れ替えない** |
-/// | 新しい体 | 通信の一覧（Network Prefabs）にある、<see cref="SweeperNetSync"/> の付いたプレハブ（`SpaceJunkSweeperPlayer.prefab`） |
+/// **通信がまだ始まっていない間**、NetworkManager の Player Prefab（`SpaceJunkPlayer.prefab`）を、
+/// 通信の一覧（Network Prefabs）にある <see cref="SweeperNetSync"/> の付いたプレハブ（`SpaceJunkSweeperPlayer.prefab`）に入れ替えておく。
+/// 前はポーズ画面の設定で「今の体／新しい体」を選べたが、小野田さんの依頼で選べなくした（2026/11/3）。
 ///
 /// プレハブのファイルは書き換えない（入れ替えるのは、遊んでいる間の NetworkManager の中身だけ）。
 /// **ボットは今の体のまま出す**（<see cref="BotPrefabOr"/>。ボットの頭はフックの部品で動くため）。
-///
-/// 検証用のビルドを `.bat` で起動するときは、起動の引数に **`-sweeper`** を足すと、設定に関係なく新しい体になる（PCの設定は変えない）。
+/// 新しい体が通信の一覧に無いときだけ、警告を出して今の体で遊ぶ。
 ///
 /// シーンに置く物は無い。再生を始めたときに自分で1つだけ作られる。
 /// 起動した最初のフレームで部屋を作る場合（`LanAutoStart` の `-host` など）にも間に合うよう、
@@ -29,12 +23,6 @@ public class SweeperOnlineSwitch : MonoBehaviour
 
     /// <summary>「新しい体が見つからない」をもう知らせたか（毎フレーム出さないため）。</summary>
     private static bool warnedMissing;
-
-    /// <summary>起動の引数に `-sweeper` があったか（あれば設定に関係なく新しい体）。</summary>
-    private static bool forcedByCommandLine;
-
-    /// <summary>新しい体で遊ぶか（設定、または起動の引数）。</summary>
-    private static bool WantsSweeper => forcedByCommandLine || GameSettings.PlayerBody == PlayerBodyType.Sweeper;
 
     /// <summary>
     /// ボットを出すときのプレハブ。新しい体を出していても、**ボットだけは今の体**にする。
@@ -50,7 +38,6 @@ public class SweeperOnlineSwitch : MonoBehaviour
     {
         currentBodyPrefab = null;
         warnedMissing = false;
-        forcedByCommandLine = System.Array.IndexOf(System.Environment.GetCommandLineArgs(), "-sweeper") >= 0;
 
         GameObject runner = new GameObject(nameof(SweeperOnlineSwitch));
         runner.hideFlags = HideFlags.HideInHierarchy;
@@ -86,7 +73,7 @@ public class SweeperOnlineSwitch : MonoBehaviour
         Apply(manager);
     }
 
-    /// <summary>設定に合わせて、NetworkManager の Player Prefab を入れ替える（同じなら何もしない）。</summary>
+    /// <summary>NetworkManager の Player Prefab を新しい体に入れ替える（もう入れ替えてあれば何もしない）。</summary>
     private static void Apply(NetworkManager manager)
     {
         GameObject playerPrefab = manager.NetworkConfig.PlayerPrefab;
@@ -108,19 +95,16 @@ public class SweeperOnlineSwitch : MonoBehaviour
         }
 
         GameObject wanted = currentBodyPrefab;
-        if (WantsSweeper)
+        GameObject sweeperPrefab = FindSweeperPrefab(manager);
+        if (sweeperPrefab != null)
         {
-            GameObject sweeperPrefab = FindSweeperPrefab(manager);
-            if (sweeperPrefab != null)
-            {
-                wanted = sweeperPrefab;
-            }
-            else if (!warnedMissing)
-            {
-                warnedMissing = true;
-                Debug.LogWarning("[SweeperPlayer] 新しい体のプレハブが通信の一覧（Network Prefabs）に見つからないので、今の体で遊びます。" +
-                                 "メニューの「宇宙ごみのオンラインの新しい体のプレハブを作り直す」で作ってください。");
-            }
+            wanted = sweeperPrefab;
+        }
+        else if (!warnedMissing)
+        {
+            warnedMissing = true;
+            Debug.LogWarning("[SweeperPlayer] 新しい体のプレハブが通信の一覧（Network Prefabs）に見つからないので、今の体で遊びます。" +
+                             "メニューの「宇宙ごみのオンラインの新しい体のプレハブを作り直す」で作ってください。");
         }
 
         if (manager.NetworkConfig.PlayerPrefab != wanted)
