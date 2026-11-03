@@ -13,6 +13,10 @@ using UnityEngine;
 /// | 最後まで押さない | 手前に着いたところで、**向いている方向（前）へ投げる** |
 ///
 /// 引く時間を固定しているのは、ボタンを押すタイミングを毎回同じにするため。
+///
+/// **引いている途中で向きを変えると、物資はしなった光線に沿って、プレイヤーのまわりを前の側へ回り込む**（2026/11/4）。
+/// 回り込む先は <see cref="SweeperShooter.TryGetBendDirection"/>（手元から光線が出ている向き）。向きを変えなければ今までどおりまっすぐ来る。
+/// 着く時間は変わらない（クリティカルのタイミングも同じ）。前に来てから投げるので、「前へ」「後ろへ」がまっすぐ飛ぶ。
 /// クリティカルの受付が始まった瞬間に、物資の足元に光の輪が広がる（これが合図。ゲージなどの画面の表示は出さない）。
 /// 1回押したら、それで決まる（連打で当てられないように）。
 ///
@@ -38,6 +42,10 @@ public class SweeperReel : MonoBehaviour
     [Tooltip("引いている間の物資の回転を弱める強さ（0 で弱めない）。転がりすぎるときに上げる")]
     [Min(0f)]
     [SerializeField] private float spinDamping = 6f;
+
+    [Tooltip("向きを変えたとき、物資がしなった光線に沿ってプレイヤーのまわりを回り込む速さの上限（度/秒）。0 で回り込まない（まっすぐ引く）")]
+    [Min(0f)]
+    [SerializeField] private float maxSwingSpeed = 540f;
 
     [Header("後ろへ投げる（途中で押したとき）")]
     [Tooltip("プレイヤーの中心から、後ろのどこに落とすか（m）")]
@@ -88,6 +96,7 @@ public class SweeperReel : MonoBehaviour
     [SerializeField] private Material flashMaterial;
 
     private Collider playerCollider;
+    private SweeperShooter shooter;
     private HookableObject item;
     private Rigidbody body;
     private float startTime;
@@ -160,6 +169,7 @@ public class SweeperReel : MonoBehaviour
     private void Awake()
     {
         playerCollider = GetComponent<Collider>();
+        shooter = GetComponent<SweeperShooter>();
         netPlayer = GetComponent<FishingNetPlayer>();
     }
 
@@ -300,19 +310,33 @@ public class SweeperReel : MonoBehaviour
             return;
         }
 
-        // 手前の止める位置を、毎回いまの位置関係から決める（プレイヤーが向きを変えても、物資は引かれる方へ来る）
+        // プレイヤーから見た物資の「向き」と「距離」を、残りの時間で行き先へ近づける（真上から見た位置で考える）
         Vector3 player = transform.position;
         Vector3 fromPlayer = body.position - player;
         fromPlayer.y = 0f;
-        Vector3 toward = fromPlayer.sqrMagnitude > 0.0001f ? fromPlayer.normalized : transform.forward;
-        Vector3 goal = player + toward * stopDistance;
+        float distance = fromPlayer.magnitude;
+        Vector3 toward = distance > 0.01f ? fromPlayer / distance : Flat(transform.forward);
 
-        Vector3 rest = goal - body.position;
-        rest.y = 0f;
-
-        // 残りの距離を残りの時間で割る＝距離に関係なく、決まった時間で着く速さ
+        // 残りの時間のうち、この1ステップの割合＝距離に関係なく、決まった時間で着く
         float remaining = Mathf.Max(Time.fixedDeltaTime, startTime + reelSeconds - Time.time);
-        Vector3 velocity = rest / remaining;
+        float share = Mathf.Min(1f, Time.fixedDeltaTime / remaining);
+
+        // 向き：光線がしなっていれば、手元から光線が出ている向きの側へ回り込む（2026/11/4）。
+        // 向きを変えていなければ、しなりの向き＝物資への向きなので、今までどおりまっすぐ引く
+        Vector3 nextDirection = toward;
+        if (maxSwingSpeed > 0f && shooter != null && shooter.TryGetBendDirection(out Vector3 bendDirection))
+        {
+            float swing = Vector3.SignedAngle(toward, bendDirection, Vector3.up) * share;
+            float limit = maxSwingSpeed * Time.fixedDeltaTime;
+            nextDirection = Quaternion.AngleAxis(Mathf.Clamp(swing, -limit, limit), Vector3.up) * toward;
+        }
+
+        // 距離：手前の止める位置（Stop Distance）まで
+        float nextDistance = distance + (stopDistance - distance) * share;
+
+        Vector3 rest = player + nextDirection * nextDistance - body.position;
+        rest.y = 0f;
+        Vector3 velocity = rest / Time.fixedDeltaTime;
 
         if (body.isKinematic)
         {

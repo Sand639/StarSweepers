@@ -18,6 +18,9 @@ using UnityEngine.Rendering;
 /// （先端に物資がついたときの演出を想定）。すぐ変えたいときは <see cref="SetColor"/>。
 ///
 /// このコンポーネントを付けたオブジェクトの**前方向（青い矢印・Z）へ**飛ぶ。
+///
+/// **曲げることもできる**（2026/11/4）。<see cref="Follow(Vector3, Vector3, Vector3, float)"/> に根元から出る向きを渡すと、
+/// 釣り糸がしなるように曲がって先端へつながる。渡さなければ今までどおりまっすぐ。
 /// </summary>
 public class LiquidBeam : MonoBehaviour
 {
@@ -236,6 +239,12 @@ public class LiquidBeam : MonoBehaviour
     /// <summary>Follow() で、先端が前のフレームより先へ伸びたか（しぶきを前へ飛ばすかどうか）。</summary>
     private bool followGrowing;
 
+    /// <summary>
+    /// 流れを曲げる量（付けたオブジェクト基準・メートル）。曲線（2次ベジェ）の真ん中の目印を、まっすぐのときの中点からどれだけずらすか。
+    /// 0 ならまっすぐ（今までどおり）。<see cref="Follow(Vector3, Vector3, Vector3, float)"/> で決まる。
+    /// </summary>
+    private Vector3 bendOffset;
+
     // 見た目の部品。どれも Awake で子オブジェクトとして作る
     private LiquidLine body;        // 流れ本体
     private LiquidLine highlight;   // 流れの真ん中の明るい筋
@@ -289,6 +298,7 @@ public class LiquidBeam : MonoBehaviour
 
         state = State.Charging;
         chargeTime = 0f;
+        bendOffset = Vector3.zero;
     }
 
     /// <summary>流れを撃つ（ボタンを離した瞬間に呼ぶ）。溜めた時間で距離が決まる。</summary>
@@ -302,6 +312,7 @@ public class LiquidBeam : MonoBehaviour
         targetLength = CurrentLength;
         headDistance = 0f;
         tailDistance = 0f;
+        bendOffset = Vector3.zero;
         state = State.Firing;
         preview.SetVisible(false);
         nozzleBlob.SetVisible(false);
@@ -334,6 +345,17 @@ public class LiquidBeam : MonoBehaviour
     /// </summary>
     public void Follow(Vector3 start, Vector3 end)
     {
+        Follow(start, end, Vector3.zero, 0f);
+    }
+
+    /// <summary>
+    /// **両端を外から決めて、流れを曲げて出し続ける**（釣り糸がしなるような見た目。プレイヤーの本実装の光線が使う。2026/11/4）。
+    /// 根元からは <paramref name="startDirection"/> の向きに出て、先端 <paramref name="end"/> へ曲がりながらつながる。
+    /// <paramref name="bend"/> は曲げる強さ（0 でまっすぐ、1 で根元の向きがちょうど startDirection になる）。
+    /// startDirection が根元→先端の向きと同じなら、bend に関係なく<b>まっすぐ</b>（<see cref="Follow(Vector3, Vector3)"/> と同じ）。
+    /// </summary>
+    public void Follow(Vector3 start, Vector3 end, Vector3 startDirection, float bend)
+    {
         Vector3 toEnd = end - start;
         float length = toEnd.magnitude;
 
@@ -346,6 +368,15 @@ public class LiquidBeam : MonoBehaviour
             // 真上・真下を向くとき（物資を頭の上へ引き抜くときなど）は、上の向きの基準を変える
             Vector3 up = Mathf.Abs(Vector3.Dot(direction, Vector3.up)) > 0.99f ? Vector3.forward : Vector3.up;
             transform.rotation = Quaternion.LookRotation(direction, up);
+        }
+
+        // 真ん中の目印を「中点」から「根元から startDirection へ長さの半分進んだ所」へずらす（bend＝1 のとき）。
+        // 2次ベジェの真ん中の目印がちょうど中点なら線はまっすぐになるので、ずらさなければ今までと同じ見た目
+        bendOffset = Vector3.zero;
+        if (bend > 0f && length > 0.001f && startDirection.sqrMagnitude > 0.0001f)
+        {
+            Vector3 localDirection = transform.InverseTransformDirection(startDirection.normalized);
+            bendOffset = (localDirection - Vector3.forward) * (length * 0.5f * bend);
         }
 
         if (state != State.Following)
@@ -591,7 +622,7 @@ public class LiquidBeam : MonoBehaviour
             for (int i = 0; i < StreamPointCount; i++)
             {
                 float z = Mathf.Lerp(tail, head, i / (float)(StreamPointCount - 1));
-                streamPoints[i] = StreamCenter(z);
+                streamPoints[i] = Bend(StreamCenter(z));
             }
 
             UpdateWidthCurve(tail, head);
@@ -612,7 +643,7 @@ public class LiquidBeam : MonoBehaviour
         if (LightOn)
         {
             headLight.enabled = true;
-            headLight.transform.localPosition = new Vector3(0f, 0f, head);
+            headLight.transform.localPosition = Bend(new Vector3(0f, 0f, head));
             headLight.color = ColorAt(1f);
             headLight.intensity = lightIntensity * fade;
         }
@@ -635,6 +666,37 @@ public class LiquidBeam : MonoBehaviour
         float y = Mathf.Sin(a * 0.7f + 1.9f);
 
         return new Vector3(x * wobble * envelope, y * wobble * envelope, z);
+    }
+
+    /// <summary>
+    /// まっすぐな流れの上の点（付けたオブジェクト基準。z が根元からの距離、x・y が中心からのずれ）を、曲げた流れの上に移す。
+    /// 曲げていなければそのまま返す。z を「流れの長さの何割か」に直して曲線（2次ベジェ）の上の点を求め、
+    /// x・y はその場所での曲線の向きに合わせて横・上へずらす（らせんやゆれも曲線に沿って付いていく）。
+    /// </summary>
+    private Vector3 Bend(Vector3 point)
+    {
+        if (bendOffset == Vector3.zero)
+        {
+            return point;
+        }
+
+        float length = Mathf.Max(headDistance, 0.001f);
+        float along = Mathf.Clamp(point.z, 0f, length);
+        float t = along / length;
+
+        Vector3 end = new Vector3(0f, 0f, length);
+        Vector3 middle = end * 0.5f + bendOffset;
+
+        Vector3 center = 2f * (1f - t) * t * middle + t * t * end;
+        Vector3 tangent = 2f * (1f - t) * middle + 2f * t * (end - middle);
+        tangent = tangent.sqrMagnitude > 0.000001f ? tangent.normalized : Vector3.forward;
+
+        Vector3 side = Vector3.Cross(Vector3.up, tangent);
+        side = side.sqrMagnitude > 0.000001f ? side.normalized : Vector3.right;
+        Vector3 up = Vector3.Cross(tangent, side);
+
+        // 流れの外（先端より先・根元より手前）の点は、端の向きのまま延ばす
+        return center + side * point.x + up * point.y + tangent * (point.z - along);
     }
 
     /// <summary>その場所の太さの倍率（1 が基準）。2つの波を重ねて、ムラが規則的に見えないようにする。</summary>
@@ -829,7 +891,7 @@ public class LiquidBeam : MonoBehaviour
 
         for (int i = 0; i < count; i++)
         {
-            Vector3 position = StreamCenter(headDistance) + Random.insideUnitSphere * streamWidth * 0.5f;
+            Vector3 position = Bend(StreamCenter(headDistance)) + Random.insideUnitSphere * streamWidth * 0.5f;
             Vector3 velocity = forward
                 ? new Vector3(0f, 0f, Random.Range(0.5f, 1.3f) * dropletSpeed) + Random.insideUnitSphere * dropletSpeed * 0.7f
                 : Random.onUnitSphere * dropletSpeed * Random.Range(0.3f, 0.8f);
@@ -853,7 +915,7 @@ public class LiquidBeam : MonoBehaviour
         for (int i = 0; i < count; i++)
         {
             float z = Random.Range(tailDistance, headDistance);
-            Vector3 position = StreamCenter(z) + Random.insideUnitSphere * streamWidth * 0.4f;
+            Vector3 position = Bend(StreamCenter(z)) + Random.insideUnitSphere * streamWidth * 0.4f;
             Vector3 velocity = new Vector3(0f, 0f, flowSpeed * Random.Range(0.05f, 0.2f)) + Random.insideUnitSphere * dropletSpeed * 0.25f;
 
             EmitDroplet(position, velocity, z / Mathf.Max(0.001f, headDistance));
@@ -1025,7 +1087,7 @@ public class LiquidBeam : MonoBehaviour
                 float r = owner.radius * radiusScale * (1f + 0.15f * Mathf.Sin(z * 3f + owner.flowTime * 4f));
 
                 Vector3 center = owner.StreamCenter(z);
-                controlPoints[i] = new Vector3(center.x + Mathf.Cos(angle) * r, center.y + Mathf.Sin(angle) * r, z);
+                controlPoints[i] = owner.Bend(new Vector3(center.x + Mathf.Cos(angle) * r, center.y + Mathf.Sin(angle) * r, z));
             }
 
             // 目印の点のあいだを、電撃のビームと同じ道具でなめらかな曲線につなぐ
