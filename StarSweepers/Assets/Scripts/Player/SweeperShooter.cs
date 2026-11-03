@@ -158,6 +158,12 @@ public class SweeperShooter : MonoBehaviour
     public HookableObject ReelItem => phase == ShotPhase.Reeling && reel != null ? reel.Item : null;
 
     /// <summary>
+    /// **ほかの人の体で**、本人から届いた「巻き取っている物資」。巻き取っていなければ null（本人の体ではいつも null）。
+    /// クリティカルの合図を、巻き取りが終わったら消すのに使う（<see cref="SweeperReel"/>）。
+    /// </summary>
+    public HookableObject ShownReelItem { get; private set; }
+
+    /// <summary>
     /// **巻き取り中に、手元から光線が出ている向き**（真上から見た向き。しなりの向き）。
     /// 向きを変えると、体の向きに少し遅れて付いていき、行き過ぎてから戻る。向きを変えなければ物資への向きのまま。
     /// <see cref="SweeperReel"/> は物資をこの向きの側へ回り込ませる。巻き取っていなければ false。
@@ -394,6 +400,8 @@ public class SweeperShooter : MonoBehaviour
     /// </summary>
     public void ShowRemote(ShotPhase newPhase, Vector3 direction, float reach, Vector3 tip, HookableObject item)
     {
+        ShownReelItem = newPhase == ShotPhase.Reeling ? item : null;
+
         if (newPhase != remotePhase)
         {
             OnRemotePhaseChanged(remotePhase, newPhase);
