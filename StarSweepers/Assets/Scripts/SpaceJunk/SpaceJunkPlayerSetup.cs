@@ -25,7 +25,8 @@ using UnityEngine.InputSystem.LowLevel;
 ///
 /// ### 出てくる場所
 ///
-/// **自分のチームのゴールエリアの上の決まった場所**に出る（ゴールから見て横に、チームの人数ぶん均等に並ぶ。2026/10/27）。
+/// **ロビーでは、番号付きのスポーンポイント（SpaceJunkLobbyPoint）**のうち、自分の参加番号と同じ所に出る（見つからなければ決まった場所）。
+/// **ラウンド中は、自分のチームのゴールエリアの上の決まった場所**に出る（ゴールから見て横に、チームの人数ぶん均等に並ぶ。2026/10/27）。
 /// Spawn On Goal Area を OFF にするか、ゴールエリアに床が無いマップでは、**ゴールの手前に横一列**で出る（2026/10/27 の朝の形）。
 /// ゴールが見つからなければ、接続番号ごとに円周上へ散らす。
 ///
@@ -122,6 +123,12 @@ public class SpaceJunkPlayerSetup : MonoBehaviour
     /// <summary>マップに着いて、場所とカメラを合わせ終わったか。</summary>
     private bool placedInRound;
 
+    /// <summary>最初の参加番号確定後にロビー配置を始めたか。</summary>
+    private bool initialLobbyPlacementQueued;
+
+    /// <summary>ロビーの初回配置が同期するまで見た目を隠しているか。</summary>
+    private bool lobbyVisualsHidden;
+
     /// <summary>名前のタグのプレハブの名前（Assets/Resources の中）。</summary>
     private const string NameplatePrefabName = "PlayerNameplate";
 
@@ -139,6 +146,12 @@ public class SpaceJunkPlayerSetup : MonoBehaviour
         hookController = GetComponent<HookController>();
         hookLine = GetComponentInChildren<HookLine>(true);
         input = PlayerInputSource.Get(this);
+
+        if (IsInLobbyScene())
+        {
+            lobbyVisualsHidden = true;
+            SetLobbyRenderersVisible(false);
+        }
     }
 
     /// <summary>
@@ -153,9 +166,23 @@ public class SpaceJunkPlayerSetup : MonoBehaviour
         // 頭の上の名前のタグも、**全員のぶん**に付ける
         EnsureNameplate();
 
+        if (lobbyVisualsHidden)
+        {
+            // Awake 後に作られた名前タグなども、配置完了までは描かない。
+            SetLobbyRenderersVisible(false);
+            TryRevealAfterLobbyPositionSync();
+        }
+
         if (netPlayer == null || !netPlayer.IsOwner)
         {
             return;
+        }
+
+        // 最初のシーン読み込み前後に生成されたP1も含め、番号が届いたら一度だけ置き直す。
+        if (!initialLobbyPlacementQueued && IsInLobbyScene() && netPlayer.PlayerIndex >= 0)
+        {
+            initialLobbyPlacementQueued = true;
+            BeginPlacement();
         }
 
         // 画面の案内とレーダーは1つしか無いので、そのPCの1人目のぶんだけ（1台で複数人のとき）
@@ -603,9 +630,81 @@ public class SpaceJunkPlayerSetup : MonoBehaviour
             hookController.ResetHook();
         }
 
+        // ロビーでは、シーン内のポイント自身が持つ番号から場所を探す。
+        if (IsInLobbyScene() && netPlayer != null)
+        {
+            UnityEngine.SceneManagement.Scene activeScene = UnityEngine.SceneManagement.SceneManager.GetActiveScene();
+            foreach (SpaceJunkLobbyPoint point in SpaceJunkLobbyPoint.All)
+            {
+                if (point != null && point.gameObject.scene == activeScene && point.SpawnIndex == netPlayer.PlayerIndex)
+                {
+                    SetSpawnTransform(point.transform.position, point.transform.rotation);
+                    RevealLobbyRenderers();
+                    return;
+                }
+            }
+
+            SetSpawnTransform(FallbackSpawnPosition(Vector2.zero), Quaternion.identity);
+            RevealLobbyRenderers();
+            return;
+        }
+
         Vector3 position = FindSpawnPosition();
         Quaternion rotation = SpawnFacing(position);
 
+        SetSpawnTransform(position, rotation);
+    }
+
+    private void SetLobbyRenderersVisible(bool visible)
+    {
+        Renderer[] renderers = GetComponentsInChildren<Renderer>(true);
+        foreach (Renderer childRenderer in renderers)
+        {
+            if (childRenderer != null)
+            {
+                childRenderer.enabled = visible;
+            }
+        }
+    }
+
+    private void RevealLobbyRenderers()
+    {
+        if (!lobbyVisualsHidden)
+        {
+            return;
+        }
+
+        SetLobbyRenderersVisible(true);
+        lobbyVisualsHidden = false;
+    }
+
+    /// <summary>他クライアントでは、同期された位置が正しいロビー位置に届いてから描画する。</summary>
+    private void TryRevealAfterLobbyPositionSync()
+    {
+        if (netPlayer == null || !netPlayer.IsSpawned || netPlayer.PlayerIndex < 0)
+        {
+            return;
+        }
+
+        Vector3 expectedPosition = FallbackSpawnPosition(Vector2.zero);
+        UnityEngine.SceneManagement.Scene activeScene = UnityEngine.SceneManagement.SceneManager.GetActiveScene();
+        foreach (SpaceJunkLobbyPoint point in SpaceJunkLobbyPoint.All)
+        {
+            if (point != null && point.gameObject.scene == activeScene && point.SpawnIndex == netPlayer.PlayerIndex)
+            {
+                expectedPosition = point.transform.position;
+                break;
+            }
+        }
+
+        if (Vector3.SqrMagnitude(transform.position - expectedPosition) <= 0.01f)
+        {
+            RevealLobbyRenderers();
+        }
+    }
+
+    private void SetSpawnTransform(Vector3 position, Quaternion rotation)
+    {
         // CharacterController が付いたまま動かすと位置が戻されるので、いったん切る
         if (characterController != null)
         {

@@ -23,6 +23,7 @@
 
 | 日付 | 書いたAI | 何をしようとして | どう失敗したか | どうすればよかったか |
 | --- | --- | --- | --- | --- |
+| 2026/11/4 | Claude Code | 鈴木さんの PR #23（新しいロビー）を develop に取り込んだ。自動でまとまったスクリプトを、念のため Unity を開かずにコンパイルした（Unity は大槻さんが開いていた） | **ぶつかっていない `SpaceJunkBombPoints.cs` がコンパイルエラーになった。** develop 側のリファクタリング（10/20）で欄の名前が `bomb` → `spawnedItem` に変わっていたのに、PR はその前に分かれていて、新しい関数 `ForceRespawnAll` で古い名前を使っていた。Git は行がぶつからなければ黙ってまとめるので、GitHub の画面では分からない | **長く分かれていたブランチを取り込んだら、ぶつからなかったファイルも含めて必ずコンパイルする。** 手早い方法は「うまくいったやり方」の 2026/10/21（PowerShell で一時の csproj を作って `dotnet build`）。別フォルダ（worktree）で取り込んだときは、`HintPath>Library` を元のフォルダの絶対パスに置き換え、csproj に載っていない新しい .cs を Compile に足す。直すときは、**新しい名前に合わせる**（develop 側を戻さない） |
 | 2026/11/4 | Claude Code | 再生中にコードで作るエフェクト（`AddComponent` で付ける MonoBehaviour）に、`private readonly MaterialPropertyBlock block = new MaterialPropertyBlock();` と**欄の初期値で**作らせた（クリティカルの仮のエフェクト） | コンパイルは通ったが、再生すると `CreateImpl is not allowed to be called from a MonoBehaviour constructor (or instance field initializer)` で止まり、続けて `GetPropertyBlock` に null が渡って落ちた。**MaterialPropertyBlock は MonoBehaviour の欄の初期値やコンストラクタでは作れない** | `Awake` で作る（`AddComponent` の中で `Awake` が先に呼ばれるので、直後に `Spawn` から使っても間に合う）か、既存の `SweeperRing` のように `block ??= new MaterialPropertyBlock()` と使う直前に作る。**コンパイルが通っても、画面なしの Unity で一度再生して `Exception` をログから探すと見つかる** |
 | 2026/11/4 | Claude Code | 新しい体の動き（光線のしなり）を、通信なしの EditMode テスト（`EnterPlayMode` → 箱とプレイヤーを置いて操作）で確かめようとした | **画面なしの Unity（`-batchmode -runTests`）では、テストの中の `yield return null` がゲームのフレームを進めなかった。** 30 回待っても `Time.frameCount` が同じままで、光線が1mmも伸びず「巻き取りに入らない」で失敗した（時間の倍率・部品の有効・エラーは全部正常で、原因を探すのに3回かかった）。実際の時間で待つループ（`Time.realtimeSinceStartup` まで `yield return null`）ではフレームが進む | **1フレーム待ちたいときは「`Time.frameCount` が変わるまで `yield return null` を繰り返す」関数を使う**（`SweeperBendTests.NextFrame` が実例）。おかしいと思ったら、まず `Time.frameCount` をログに出す |
 | 2026/11/2 | Claude Code | 長島さんの PR #22（コンベアーステージ）を develop に取り込もうとした | GitHub で「衝突あり」になっていた。原因は `Assets/_Recovery/0.unity`（**Unity が落ちたあとに自動で作るシーンのバックアップ**）で、ソウホイチョンさんの PR #21 と長島さんの PR #22 の両方に、同じ名前で別の中身が入っていた。どちらもどこからも使われていなかった | 大槻さんの指示で両方消し、`StarSweepers/.gitignore` に `/[Aa]ssets/_Recovery/` を足してコミットされないようにした。**`_Recovery` を見かけたら、まず使われていないか（.meta の guid を `git grep`）を確かめて、消してよいか確認する**。衝突の確かめは `git merge-tree --write-tree --name-only develop 相手のブランチ` を使うと、作業フォルダを触らずにできる |
@@ -172,7 +173,6 @@
 
 - **2026/11/2　長島さんのステージのシーン名 `STAGE_06^^` を付け直してもらう（長島さんの作業待ち）。** PR #22 で入った「ベルトコンベアー2」のシーン（`Assets/Scenes/Prototype/SpaceJunk/Stage/STAGE_06^^.unity`）の名前に `^^` が入っていて、`Assets/` の中は半角の英数字だけという決まりに合わない。**OS のファイル操作では付け直さない**（ステージの一覧 `SpaceJunkMapList.asset` とビルドの設定がパスで持っている）。Unity の Project ウィンドウで名前を変え（例：`STAGE_08`）、ステージの一覧の `sceneName`・`scenePath` が新しい名前になっているかを確かめてもらう。済んだらこの伝言を消す
 - **2026/11/4　Panicbird さんのステージのシーン名 `STAGE_07(New)` を付け直してもらう（Panicbird さんの作業待ち）。** PR #24 で入った「新ガラスの床」のシーン（`Assets/Scenes/Prototype/SpaceJunk/Stage/STAGE_07(New).unity`）の名前に `(` `)` が入っていて、`Assets/` の中は半角の英数字だけという決まりに合わない。直し方は上の `STAGE_06^^` と同じ（Unity の Project ウィンドウで名前を変え、ステージの一覧 `SpaceJunkMapList.asset` の `sceneName`・`scenePath` を確かめる）。済んだらこの伝言を消す
-- **2026/11/4　PR #23（TIARA1230 さんの「新ロビー作成」）は、大槻さんの判断で取り込みを見送った。** ロビーのシーン `SpaceJunkLobby.unity` が develop とぶつかる（develop 側では 10/22 以降に、名前変更の端末・リアクション・ロビーのチーム分け #20 がこのシーンに足された）。`SpaceJunkPlayerSetup.cs` も出現位置の説明のコメントで1か所ぶつかる。取り込むときは、作った本人に Unity で develop を取り込んで置き直してもらうのが確実。取り込んだらこの伝言を消す
 
 - **2026/10/7　ドキュメント点検（第3回）をした（ブランチ `auto/doc-audit-1007`）。** タイトル・ロビー・パスワード・Steam・始まりの演出などで変わった中身に、ドキュメントを合わせた。
   点検で見つけた**人の判断が要ること**：①画像4枚（レーダー3枚・`ScopeLens.png`）の入手元とライセンス（`質問リスト.md`）②Steam のフレンドの機能は2アカウントでの確認がまだ ③`SpaceJunkMap03`・`04` は作りかけのまま。
@@ -289,3 +289,4 @@
 | 2026/11/4 | Claude Code | 「失敗したこと」に、画面なしの Unity のテストで `yield return null` がフレームを進めなかった件を追加 |
 | 2026/11/4 | Claude Code | 「失敗したこと」に、MaterialPropertyBlock を欄の初期値で作って再生中に落ちた件を追加 |
 | 2026/11/4 | Claude Code | 「次のAIへの伝言」に、シーン名 `STAGE_07(New)` の付け直し待ちと、PR #23 を見送った件を追加 |
+| 2026/11/4 | Claude Code | 「失敗したこと」に、PR #23 の取り込みで、ぶつからなかったファイルがリファクタリングの名前の変更でコンパイルエラーになった件を追加。「次のAIへの伝言」の PR #23 見送りの件を、取り込んだので消した |
