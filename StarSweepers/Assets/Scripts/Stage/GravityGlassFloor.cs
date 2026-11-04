@@ -65,6 +65,10 @@ public class GravityGlassFloor : MonoBehaviour
     [Min(1)]
     [SerializeField] private int breakCount = 3;
 
+    [Tooltip("爆発で割れるまでの回数。0なら爆発の影響を受けない")]
+    [Min(0)]
+    [SerializeField] private int blastHitsToBreak;
+
     [Header("割れる条件")]
     [Min(0f)]
     [SerializeField] private float stayTime = 3f;
@@ -102,6 +106,10 @@ public class GravityGlassFloor : MonoBehaviour
     [Tooltip("破片の数（縦×横）。3なら 3×3＝9枚")]
     [Range(1, 6)]
     [SerializeField] private int piecesPerSide = 3;
+
+    [Tooltip("破断直前にヒビをふちまで伸ばす秒数。0なら従来の破片を使う")]
+    [Min(0f)]
+    [SerializeField] private float fractureExtensionSeconds;
 
     [Tooltip("破片が消えるまでの秒数")]
     [Min(0.1f)]
@@ -159,6 +167,10 @@ public class GravityGlassFloor : MonoBehaviour
     private float respawnTimer;
 
     private int stepCount;
+    private int blastHits;
+    private float fractureTime;
+    private CrackPattern finalCracks;
+    private readonly List<(Vector2 Point, Vector2 Direction)> crackTips = new();
     private float accumulatedStayTime;
     private readonly Dictionary<int, Vector3> steppers = new Dictionary<int, Vector3>();
     private readonly HashSet<int> previousSteppers = new HashSet<int>();
@@ -212,6 +224,18 @@ public class GravityGlassFloor : MonoBehaviour
     {
         if (GamePause.IsPaused)
         {
+            return;
+        }
+
+        if (finalCracks != null)
+        {
+            fractureTime += Time.deltaTime;
+            finalCracks.Progress = Mathf.Clamp01(fractureTime / fractureExtensionSeconds);
+            RevealPattern(finalCracks);
+            if (finalCracks.Progress >= 1f)
+            {
+                FinishBreak();
+            }
             return;
         }
 
@@ -409,6 +433,24 @@ public class GravityGlassFloor : MonoBehaviour
     // ヒビ
     // ------------------------------------------------------------
 
+    public void ApplyBlast(Vector3 blastCenter)
+    {
+        if (blastHitsToBreak <= 0 || State == FloorState.Broken || finalCracks != null)
+        {
+            return;
+        }
+
+        CrackPattern pattern = BuildCracks(box.ClosestPoint(blastCenter), append: true, startAtEdge: true);
+        pattern.Progress = 1f;
+        RevealPattern(pattern);
+
+        blastHits++;
+        if (blastHits >= blastHitsToBreak)
+        {
+            Break();
+        }
+    }
+
     /// <summary>
     /// **ヒビを入れる。** 外から割れかけにしたいときにも呼べる。
     /// <paramref name="from"/> は、ヒビが広がり始める場所（だいたいでよい）。
@@ -463,9 +505,8 @@ public class GravityGlassFloor : MonoBehaviour
     /// 線は最初は隠しておき、割れる時間に近づくほど**踏んだ場所に近いほうから順に見せていく**
     /// （ヒビが広がっていくように見える）。
     /// </summary>
-    private CrackPattern BuildCracks(Vector3 from, bool append = false)
+    private CrackPattern BuildCracks(Vector3 from, bool append = false, bool startAtEdge = false)
     {
-        if (!append) ClearCracks();
         CrackPattern pattern = new CrackPattern();
         crackPatterns.Add(pattern);
 
@@ -497,15 +538,15 @@ public class GravityGlassFloor : MonoBehaviour
         float topY = box.center.y * scale.y + size.y * 0.5f + 0.004f;
 
         // 踏んだ場所を、上面の上の位置に直す（ふちに寄りすぎないように少し内側へ）
-        // （中心から、ふちまでの 7割の範囲に収める）
+        // 爆発の場合は、ガラスのふちも起点にできる。
         Vector3 local = transform.InverseTransformPoint(from);
+        float originLimit = startAtEdge ? 1f : 0.96f;
         Vector2 origin = new Vector2(
-            Mathf.Clamp((local.x - box.center.x) * scale.x, -halfX * 0.96f, halfX * 0.96f),
-            Mathf.Clamp((local.z - box.center.z) * scale.z, -halfZ * 0.96f, halfZ * 0.96f));
+            Mathf.Clamp((local.x - box.center.x) * scale.x, -halfX * originLimit, halfX * originLimit),
+            Mathf.Clamp((local.z - box.center.z) * scale.z, -halfZ * originLimit, halfZ * originLimit));
 
-        // 1本の線が伸びる長さの目安（メートル）。長いほうの辺の半分の1.5倍なので、
-        // どこから踏んでも、だいたいの線がふちまで届く
-        float reach = Mathf.Max(halfX, halfZ) * 1.5f;
+        // 破断前に伸ばす設定では、最初のヒビを短くして先端が伸びる余地を残す。
+        float reach = Mathf.Max(halfX, halfZ) * (fractureExtensionSeconds > 0f ? 0.85f : 1.5f);
 
         // 1本目の向き（度）。毎回変えて、同じ形のヒビにならないようにする
         float startAngle = Random.Range(0f, 360f);
@@ -521,7 +562,14 @@ public class GravityGlassFloor : MonoBehaviour
         // 踏んだ場所に近い順に並べる（名前の先頭が「何本目の区切りか」）。見せるときにこの順で出す
         // ※ 名前を文字として比べているので、区切りが10個以上になると「10」が「2」より前に来てしまう。
         //    いまは1本あたり最大4区切り（0〜3）なので問題ない
-        crackSegments.Sort((a, b) => a.name.CompareTo(b.name));
+        if (!append)
+        {
+            foreach (CrackSegment segment in pattern.Segments)
+            {
+                crackSegments.Add(segment.Transform.gameObject);
+            }
+            crackSegments.Sort((a, b) => a.name.CompareTo(b.name));
+        }
 
         if (append) RevealPattern(pattern);
         else RevealCracks(0f);
@@ -537,6 +585,7 @@ public class GravityGlassFloor : MonoBehaviour
     private void GrowCrackLine(Vector2 origin, float angle, float reach, float halfX, float halfZ, float topY, CrackPattern pattern)
     {
         Vector2 point = origin;
+        Vector2 direction = new Vector2(Mathf.Cos(angle), Mathf.Sin(angle));
 
         // Random.Range(int, int) は2つ目の数を含まないので、区切りは3個か4個
         int segments = Random.Range(3, 5);
@@ -557,12 +606,20 @@ public class GravityGlassFloor : MonoBehaviour
             // s は「踏んだ場所から何個目の区切りか」。見せる順番に使う
             CreateSegment(point, next, topY, s, segments, pattern);
 
+            if ((next - point).sqrMagnitude > 0.0001f)
+            {
+                direction = (next - point).normalized;
+            }
             point = next;
 
             if (outside)
             {
                 break;
             }
+        }
+        if (fractureExtensionSeconds > 0f)
+        {
+            crackTips.Add((point, direction));
         }
     }
 
@@ -576,7 +633,7 @@ public class GravityGlassFloor : MonoBehaviour
         float length = delta.magnitude;
 
         // 1センチ未満は見えないうえ、向きが決まらないので作らない（ふちのすぐ近くで止められたときなどに起きる）
-        if (length < 0.01f)
+        if (length < (fractureExtensionSeconds > 0f ? 0.0001f : 0.01f))
         {
             return;
         }
@@ -602,7 +659,6 @@ public class GravityGlassFloor : MonoBehaviour
         segmentRenderer.sharedMaterial = crackMaterial;
         segmentRenderer.shadowCastingMode = UnityEngine.Rendering.ShadowCastingMode.Off;
 
-        crackSegments.Add(segment);
         pattern.Segments.Add(new CrackSegment
         {
             Transform = segment.transform, Start = start, End = end, Length = length,
@@ -670,6 +726,9 @@ public class GravityGlassFloor : MonoBehaviour
     {
         crackSegments.Clear();
         crackPatterns.Clear();
+        crackTips.Clear();
+        finalCracks = null;
+        fractureTime = 0f;
         standingCracks.Clear();
 
         if (crackRoot != null)
@@ -688,17 +747,59 @@ public class GravityGlassFloor : MonoBehaviour
     /// <summary>**割る。** 外からすぐ割りたいときにも呼べる。</summary>
     public void Break()
     {
-        if (State == FloorState.Broken)
+        if (State == FloorState.Broken || finalCracks != null)
         {
             return;
         }
 
+        if (fractureExtensionSeconds <= 0f)
+        {
+            FinishBreak();
+            return;
+        }
+
+        if (crackPatterns.Count == 0)
+        {
+            BuildCracks(transform.TransformPoint(box.center), append: true);
+        }
+
+        foreach (CrackPattern pattern in crackPatterns)
+        {
+            pattern.Progress = 1f;
+            RevealPattern(pattern);
+        }
+
+        Vector3 scale = transform.lossyScale;
+        Vector3 size = Vector3.Scale(box.size, scale);
+        float halfX = size.x * 0.5f;
+        float halfZ = size.z * 0.5f;
+        float topY = box.center.y * scale.y + size.y * 0.5f + 0.004f;
+        finalCracks = new CrackPattern();
+        crackPatterns.Add(finalCracks);
+
+        foreach (var tip in crackTips)
+        {
+            Vector2 end = GlassFractureGeometry.ExtendToEdge(tip.Point, tip.Direction, halfX, halfZ);
+            CreateSegment(tip.Point, end, topY, 0, 1, finalCracks);
+        }
+        RevealPattern(finalCracks);
+    }
+
+    private void FinishBreak()
+    {
         State = FloorState.Broken;
         BreakRemaining = 0f;
         respawnTimer = respawnSeconds;
 
+        if (finalCracks == null)
+        {
+            SpawnPieces();
+        }
+        else
+        {
+            SpawnFracturePieces();
+        }
         ClearCracks();
-        SpawnPieces();
 
         // **当たり判定を消す。** 乗っていた人はそのまま落ちる
         box.enabled = false;
@@ -741,6 +842,7 @@ public class GravityGlassFloor : MonoBehaviour
         State = FloorState.Intact;
         BreakRemaining = 0f;
         stepCount = 0;
+        blastHits = 0;
         accumulatedStayTime = 0f;
         previousSteppers.Clear();
         steppers.Clear();
@@ -754,6 +856,45 @@ public class GravityGlassFloor : MonoBehaviour
 
             // 点滅で変えた色を消して、マテリアルそのままの見た目に戻す
             meshRenderer.SetPropertyBlock(null);
+        }
+    }
+
+    private void SpawnFracturePieces()
+    {
+        Vector3 scale = transform.lossyScale;
+        Vector3 size = Vector3.Scale(box.size, scale);
+        Vector3 center = Vector3.Scale(box.center, scale);
+        var cuts = new List<(Vector2 Start, Vector2 End)>();
+        foreach (CrackPattern pattern in crackPatterns)
+        {
+            foreach (CrackSegment segment in pattern.Segments)
+            {
+                cuts.Add((new Vector2(segment.Start.x - center.x, segment.Start.z - center.z),
+                    new Vector2(segment.End.x - center.x, segment.End.z - center.z)));
+            }
+        }
+
+        foreach (List<Vector2> polygon in GlassFractureGeometry.GetFaces(cuts, size.x * 0.5f, size.z * 0.5f))
+        {
+            var triangles = GlassFractureGeometry.Triangulate(polygon);
+            if (triangles.Count == 0)
+            {
+                continue;
+            }
+
+            Vector2 pivot = Vector2.zero;
+            foreach (Vector2 point in polygon)
+            {
+                pivot += point;
+            }
+            pivot /= polygon.Count;
+
+            Mesh mesh = GlassFractureGeometry.Extrude(polygon, triangles, pivot, size.y);
+            var piece = new GameObject(name + "_Piece");
+            piece.AddComponent<MeshFilter>().sharedMesh = mesh;
+            piece.AddComponent<MeshRenderer>();
+            SetUpPiece(piece, new Vector3(pivot.x, 0f, pivot.y), meshRenderer.sharedMaterial);
+            Destroy(mesh, pieceLifeSeconds);
         }
     }
 
@@ -801,10 +942,15 @@ public class GravityGlassFloor : MonoBehaviour
 
         RemoveCollider(piece);
 
+        piece.transform.localScale = pieceSize;
+        SetUpPiece(piece, offset, material);
+    }
+
+    private void SetUpPiece(GameObject piece, Vector3 offset, Material material)
+    {
         piece.transform.SetPositionAndRotation(
             transform.TransformPoint(box.center) + transform.rotation * offset,
             transform.rotation);
-        piece.transform.localScale = pieceSize;
 
         MeshRenderer pieceRenderer = piece.GetComponent<MeshRenderer>();
         pieceRenderer.sharedMaterial = material;
@@ -867,5 +1013,264 @@ public class GravityGlassFloor : MonoBehaviour
         Gizmos.color = new Color(0.3f, 0.8f, 1f, 0.6f);
         Gizmos.DrawWireCube(Vector3.zero, new Vector3(size.x * 0.96f, detectHeight, size.z * 0.96f));
         Gizmos.matrix = Matrix4x4.identity;
+    }
+}
+
+internal static class GlassFractureGeometry
+{
+    private const float Epsilon = 0.0001f;
+
+    private static float Cross(Vector2 a, Vector2 b) => a.x * b.y - a.y * b.x;
+
+    public static Vector2 ExtendToEdge(Vector2 point, Vector2 direction, float halfX, float halfZ)
+    {
+        float xTime = Mathf.Abs(direction.x) > Epsilon
+            ? ((direction.x > 0f ? halfX : -halfX) - point.x) / direction.x
+            : float.PositiveInfinity;
+        float zTime = Mathf.Abs(direction.y) > Epsilon
+            ? ((direction.y > 0f ? halfZ : -halfZ) - point.y) / direction.y
+            : float.PositiveInfinity;
+        return point + direction * Mathf.Max(0f, Mathf.Min(xTime, zTime));
+    }
+
+    public static List<List<Vector2>> GetFaces(
+        List<(Vector2 Start, Vector2 End)> cuts, float halfX, float halfZ)
+    {
+        var corners = new[]
+        {
+            new Vector2(-halfX, -halfZ), new Vector2(halfX, -halfZ),
+            new Vector2(halfX, halfZ), new Vector2(-halfX, halfZ)
+        };
+        for (int i = 0; i < corners.Length; i++)
+        {
+            cuts.Add((corners[i], corners[(i + 1) % corners.Length]));
+        }
+
+        var points = new List<Vector2>();
+        var neighbors = new List<List<int>>();
+        foreach (var cut in cuts)
+        {
+            Vector2 direction = cut.End - cut.Start;
+            var stops = new List<float> { 0f, 1f };
+            foreach (var other in cuts)
+            {
+                AddIntersections(stops, cut.Start, direction, other.Start, other.End);
+            }
+            stops.Sort();
+
+            int previous = AddVertex(points, neighbors, cut.Start);
+            foreach (float stop in stops)
+            {
+                int next = AddVertex(points, neighbors, cut.Start + direction * stop);
+                if (next != previous && !neighbors[previous].Contains(next))
+                {
+                    neighbors[previous].Add(next);
+                    neighbors[next].Add(previous);
+                }
+                previous = next;
+            }
+        }
+
+        // Walking clockwise from each incoming edge traces the face on its left.
+        for (int i = 0; i < points.Count; i++)
+        {
+            Vector2 pivot = points[i];
+            neighbors[i].Sort((a, b) => Angle(points[a] - pivot).CompareTo(Angle(points[b] - pivot)));
+        }
+
+        var visited = new HashSet<(int, int)>();
+        var faces = new List<List<Vector2>>();
+        for (int start = 0; start < points.Count; start++)
+        {
+            foreach (int neighbor in neighbors[start])
+            {
+                var face = new List<Vector2>();
+                int from = start;
+                int to = neighbor;
+                while (visited.Add((from, to)))
+                {
+                    face.Add(points[from]);
+                    List<int> nextEdges = neighbors[to];
+                    int incoming = nextEdges.IndexOf(from);
+                    from = to;
+                    to = nextEdges[(incoming + nextEdges.Count - 1) % nextEdges.Count];
+                }
+
+                float area = 0f;
+                for (int i = 0; i < face.Count; i++)
+                {
+                    area += Cross(face[i], face[(i + 1) % face.Count]);
+                }
+                if (area > Epsilon)
+                {
+                    faces.Add(face);
+                }
+            }
+        }
+        return faces;
+    }
+
+    private static float Angle(Vector2 direction) => Mathf.Atan2(direction.y, direction.x);
+
+    private static int AddVertex(List<Vector2> points, List<List<int>> neighbors, Vector2 point)
+    {
+        for (int i = 0; i < points.Count; i++)
+        {
+            if ((points[i] - point).sqrMagnitude <= Epsilon * Epsilon)
+            {
+                return i;
+            }
+        }
+        points.Add(point);
+        neighbors.Add(new List<int>());
+        return points.Count - 1;
+    }
+
+    private static void AddIntersections(
+        List<float> stops, Vector2 start, Vector2 direction, Vector2 otherStart, Vector2 otherEnd)
+    {
+        Vector2 otherDirection = otherEnd - otherStart;
+        Vector2 offset = otherStart - start;
+        float determinant = Cross(direction, otherDirection);
+        if (Mathf.Abs(determinant) > Epsilon * direction.magnitude * otherDirection.magnitude)
+        {
+            float t = Cross(offset, otherDirection) / determinant;
+            float u = Cross(offset, direction) / determinant;
+            if (t >= -Epsilon && t <= 1f + Epsilon && u >= -Epsilon && u <= 1f + Epsilon)
+            {
+                stops.Add(Mathf.Clamp01(t));
+            }
+            return;
+        }
+
+        // Collinear cuts can overlap along a pane edge. Split both at the shared endpoints.
+        float length = direction.magnitude;
+        if (length <= Epsilon || Mathf.Abs(Cross(offset, direction)) > Epsilon * length)
+        {
+            return;
+        }
+        float first = Vector2.Dot(offset, direction) / direction.sqrMagnitude;
+        float last = Vector2.Dot(otherEnd - start, direction) / direction.sqrMagnitude;
+        stops.Add(Mathf.Clamp01(first));
+        stops.Add(Mathf.Clamp01(last));
+    }
+
+    public static List<int> Triangulate(List<Vector2> polygon)
+    {
+        var remaining = new List<int>();
+        var triangles = new List<int>();
+        for (int i = 0; i < polygon.Count; i++)
+        {
+            remaining.Add(i);
+        }
+
+        while (remaining.Count >= 3)
+        {
+            bool clipped = false;
+            for (int i = 0; i < remaining.Count; i++)
+            {
+                int a = remaining[(i + remaining.Count - 1) % remaining.Count];
+                int b = remaining[i];
+                int c = remaining[(i + 1) % remaining.Count];
+                Vector2 ab = polygon[b] - polygon[a];
+                Vector2 bc = polygon[c] - polygon[b];
+                float turn = Cross(ab, bc);
+                if (Mathf.Abs(turn) <= Epsilon * Epsilon && Vector2.Dot(ab, bc) >= 0f)
+                {
+                    remaining.RemoveAt(i);
+                    clipped = true;
+                    break;
+                }
+                if (turn <= 0f || ContainsOtherVertex(polygon, remaining, a, b, c))
+                {
+                    continue;
+                }
+
+                triangles.Add(a);
+                triangles.Add(b);
+                triangles.Add(c);
+                remaining.RemoveAt(i);
+                clipped = true;
+                break;
+            }
+            if (!clipped)
+            {
+                triangles.Clear();
+                break;
+            }
+        }
+        return triangles;
+    }
+
+    private static bool ContainsOtherVertex(List<Vector2> polygon, List<int> remaining, int a, int b, int c)
+    {
+        foreach (int index in remaining)
+        {
+            if (index == a || index == b || index == c)
+            {
+                continue;
+            }
+            Vector2 point = polygon[index];
+            if (Cross(polygon[b] - polygon[a], point - polygon[a]) >= 0f
+                && Cross(polygon[c] - polygon[b], point - polygon[b]) >= 0f
+                && Cross(polygon[a] - polygon[c], point - polygon[c]) >= 0f)
+            {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    public static Mesh Extrude(List<Vector2> polygon, List<int> faces, Vector2 pivot, float thickness)
+    {
+        var vertices = new List<Vector3>();
+        var triangles = new List<int>();
+        int count = polygon.Count;
+        float top = thickness * 0.5f;
+
+        foreach (Vector2 point in polygon)
+        {
+            vertices.Add(Position(point, pivot, top));
+        }
+        foreach (Vector2 point in polygon)
+        {
+            vertices.Add(Position(point, pivot, -top));
+        }
+        for (int i = 0; i < faces.Count; i += 3)
+        {
+            triangles.Add(faces[i]);
+            triangles.Add(faces[i + 2]);
+            triangles.Add(faces[i + 1]);
+            triangles.Add(faces[i] + count);
+            triangles.Add(faces[i + 1] + count);
+            triangles.Add(faces[i + 2] + count);
+        }
+
+        for (int i = 0; i < count; i++)
+        {
+            int next = (i + 1) % count;
+            int start = vertices.Count;
+            vertices.Add(vertices[i]);
+            vertices.Add(vertices[next]);
+            vertices.Add(vertices[next + count]);
+            vertices.Add(vertices[i + count]);
+            triangles.Add(start);
+            triangles.Add(start + 1);
+            triangles.Add(start + 2);
+            triangles.Add(start);
+            triangles.Add(start + 2);
+            triangles.Add(start + 3);
+        }
+
+        var mesh = new Mesh { name = "Glass shard" };
+        mesh.SetVertices(vertices);
+        mesh.SetTriangles(triangles, 0);
+        mesh.RecalculateNormals();
+        return mesh;
+    }
+
+    private static Vector3 Position(Vector2 point, Vector2 pivot, float height)
+    {
+        return new Vector3(point.x - pivot.x, height, point.y - pivot.y);
     }
 }

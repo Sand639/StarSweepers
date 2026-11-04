@@ -171,6 +171,8 @@
 > 終わった話は消してよい。
 
 - **2026/11/2　長島さんのステージのシーン名 `STAGE_06^^` を付け直してもらう（長島さんの作業待ち）。** PR #22 で入った「ベルトコンベアー2」のシーン（`Assets/Scenes/Prototype/SpaceJunk/Stage/STAGE_06^^.unity`）の名前に `^^` が入っていて、`Assets/` の中は半角の英数字だけという決まりに合わない。**OS のファイル操作では付け直さない**（ステージの一覧 `SpaceJunkMapList.asset` とビルドの設定がパスで持っている）。Unity の Project ウィンドウで名前を変え（例：`STAGE_08`）、ステージの一覧の `sceneName`・`scenePath` が新しい名前になっているかを確かめてもらう。済んだらこの伝言を消す
+- **2026/11/4　Panicbird さんのステージのシーン名 `STAGE_07(New)` を付け直してもらう（Panicbird さんの作業待ち）。** PR #24 で入った「新ガラスの床」のシーン（`Assets/Scenes/Prototype/SpaceJunk/Stage/STAGE_07(New).unity`）の名前に `(` `)` が入っていて、`Assets/` の中は半角の英数字だけという決まりに合わない。直し方は上の `STAGE_06^^` と同じ（Unity の Project ウィンドウで名前を変え、ステージの一覧 `SpaceJunkMapList.asset` の `sceneName`・`scenePath` を確かめる）。済んだらこの伝言を消す
+- **2026/11/4　PR #23（TIARA1230 さんの「新ロビー作成」）は、大槻さんの判断で取り込みを見送った。** ロビーのシーン `SpaceJunkLobby.unity` が develop とぶつかる（develop 側では 10/22 以降に、名前変更の端末・リアクション・ロビーのチーム分け #20 がこのシーンに足された）。`SpaceJunkPlayerSetup.cs` も出現位置の説明のコメントで1か所ぶつかる。取り込むときは、作った本人に Unity で develop を取り込んで置き直してもらうのが確実。取り込んだらこの伝言を消す
 
 - **2026/10/7　ドキュメント点検（第3回）をした（ブランチ `auto/doc-audit-1007`）。** タイトル・ロビー・パスワード・Steam・始まりの演出などで変わった中身に、ドキュメントを合わせた。
   点検で見つけた**人の判断が要ること**：①画像4枚（レーダー3枚・`ScopeLens.png`）の入手元とライセンス（`質問リスト.md`）②Steam のフレンドの機能は2アカウントでの確認がまだ ③`SpaceJunkMap03`・`04` は作りかけのまま。
@@ -286,3 +288,4 @@
 | 2026/11/2 | Claude Code | 「失敗したこと」に PR #22 の `_Recovery` の衝突を、「次のAIへの伝言」にシーン名 `STAGE_06^^` の付け直し待ちを追加 |
 | 2026/11/4 | Claude Code | 「失敗したこと」に、画面なしの Unity のテストで `yield return null` がフレームを進めなかった件を追加 |
 | 2026/11/4 | Claude Code | 「失敗したこと」に、MaterialPropertyBlock を欄の初期値で作って再生中に落ちた件を追加 |
+| 2026/11/4 | Claude Code | 「次のAIへの伝言」に、シーン名 `STAGE_07(New)` の付け直し待ちと、PR #23 を見送った件を追加 |

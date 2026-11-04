@@ -90,3 +90,10 @@ MonoBehaviour:
     sceneName: STAGE_06^^
     scenePath: Assets/Scenes/Prototype/SpaceJunk/Stage/STAGE_06^^.unity
     goalMask: 10
+  - scene: {fileID: 102900000, guid: 6ad51495980945547acf0e149c15b3c5, type: 3}
+    showInLobby: 1
+    displayName: "\u65B0\u30AC\u30E9\u30B9\u306E\u5E8A"
+    thumbnail: {fileID: 0}
+    sceneName: STAGE_07(New)
+    scenePath: Assets/Scenes/Prototype/SpaceJunk/Stage/STAGE_07(New).unity
+    goalMask: 10
