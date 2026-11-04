@@ -1,3 +1,4 @@
+using System.Collections;
 using UnityEngine;
 
 /// <summary>
@@ -13,8 +14,23 @@ using UnityEngine;
 /// | 最後まで押さない | 手前に着いたところで、**向いている方向（前）へ投げる** |
 ///
 /// 引く時間を固定しているのは、ボタンを押すタイミングを毎回同じにするため。
-/// クリティカルの受付が始まった瞬間に、物資の足元に光の輪が広がる（これが合図。ゲージなどの画面の表示は出さない）。
+///
+/// **引いている途中で向きを変えると、物資はしなった光線に沿って、プレイヤーのまわりを前の側へ回り込む**（2026/11/4）。
+/// 回り込む先は <see cref="SweeperShooter.TryGetBendDirection"/>（手元から光線が出ている向き）。向きを変えなければ今までどおりまっすぐ来る。
+/// 着く時間は変わらない（クリティカルのタイミングも同じ）。前に来てから投げるので、「前へ」「後ろへ」がまっすぐ飛ぶ。
+/// クリティカルの合図は物資のまわりにだけ出す（ゲージなどの画面の表示は出さない）。
 /// 1回押したら、それで決まる（連打で当てられないように）。
+///
+/// ### クリティカルのエフェクト（仮。2026/11/4）
+///
+/// プレハブ（Critical Cue Prefab / Critical Hit Prefab）が空のときは、仮のエフェクトを出す。どれを出すかはインスペクターで選べる（組み合わせてもよい）。
+///
+/// | いつ | 仮のエフェクト |
+/// | --- | --- |
+/// | 合図（受付の Cue Lead 秒前から） | 縮んでくる輪（案1）・物資のフチが金色に光る（案4）・前からの広がる輪（受付が始まった瞬間） |
+/// | 決まったとき | 星のかけらが飛び散る（案1）・物資が白く光って一瞬止まる（案4）・**推進の衝撃波**（物資の、引っ張られている側と逆の側から輪が噴き出す）・前からの大きな輪 |
+///
+/// 合図を受付より前から出すのは、受付が0.2秒しかなく、光ったのを見てから押すのでは間に合わないため。
 ///
 /// ## オンライン（宇宙ごみのオンラインの体。2026/10/28）
 ///
@@ -38,6 +54,10 @@ public class SweeperReel : MonoBehaviour
     [Tooltip("引いている間の物資の回転を弱める強さ（0 で弱めない）。転がりすぎるときに上げる")]
     [Min(0f)]
     [SerializeField] private float spinDamping = 6f;
+
+    [Tooltip("向きを変えたとき、物資がしなった光線に沿ってプレイヤーのまわりを回り込む速さの上限（度/秒）。0 で回り込まない（まっすぐ引く）")]
+    [Min(0f)]
+    [SerializeField] private float maxSwingSpeed = 540f;
 
     [Header("後ろへ投げる（途中で押したとき）")]
     [Tooltip("プレイヤーの中心から、後ろのどこに落とすか（m）")]
@@ -87,7 +107,42 @@ public class SweeperReel : MonoBehaviour
     [Tooltip("仮の光の輪に使うマテリアル（Art/Materials/SweeperRing.mat）。空なら再生したときに作る")]
     [SerializeField] private Material flashMaterial;
 
+    [Header("クリティカルの仮のエフェクトの選び方（プレハブが空のとき）")]
+    [Tooltip("合図を、受付が始まる何秒前から出すか（縮んでくる輪・金色のフチ）。0 なら受付が始まった瞬間。Critical Start より長くはならない")]
+    [Min(0f)]
+    [SerializeField] private float cueLead = 0.5f;
+
+    [Tooltip("合図：縮んでくる輪（案1）。物資のふちの輪に重なった瞬間が受付の始まり")]
+    [SerializeField] private bool cueShrinkRing = true;
+
+    [Tooltip("合図：物資のフチが金色に光る（案4）。だんだん強くなり、受付の間はくっきり光る")]
+    [SerializeField] private bool cueGoldOutline = true;
+
+    [Tooltip("合図：受付が始まった瞬間に、足元に光の輪が広がる（前からの仮）")]
+    [SerializeField] private bool cueSpreadRing;
+
+    [Tooltip("金色のフチの厚み（m）")]
+    [Min(0.005f)]
+    [SerializeField] private float outlineWidth = 0.05f;
+
+    [Tooltip("決まったとき：星のかけらが飛び散る（案1）")]
+    [SerializeField] private bool hitShards = true;
+
+    [Tooltip("決まったとき：物資が白く光る（案4）")]
+    [SerializeField] private bool hitWhiteFlash = true;
+
+    [Tooltip("決まったとき：物資をその場で止めてから飛ばす秒数（案4）。0 で止めない")]
+    [Min(0f)]
+    [SerializeField] private float hitStopSeconds = 0.06f;
+
+    [Tooltip("決まったとき：推進の衝撃波。物資の、引っ張られている側と逆の側から輪が噴き出し、飛んでいく間も少し後ろへ出し続ける")]
+    [SerializeField] private bool hitThrustWave = true;
+
+    [Tooltip("決まったとき：足元に大きな光の輪が広がる（前からの仮）")]
+    [SerializeField] private bool hitSpreadRing;
+
     private Collider playerCollider;
+    private SweeperShooter shooter;
     private HookableObject item;
     private Rigidbody body;
     private float startTime;
@@ -130,6 +185,9 @@ public class SweeperReel : MonoBehaviour
     /// <summary>いまクリティカルの受付中か。</summary>
     public bool InCriticalWindow => IsActive && !waitingForClaim && Elapsed >= criticalStart && Elapsed <= criticalStart + criticalLength;
 
+    /// <summary>合図を受付の何秒前から出すか（当たってからの秒数より前にはならない）。</summary>
+    private float CueLead => Mathf.Min(cueLead, criticalStart);
+
     /// <summary>
     /// その物資を引っ掛けてよいか。オンラインで**ほかの人が引っ掛けている物は false**（すり抜ける）。
     /// オフラインの検証シーンでは、いつも true。
@@ -160,6 +218,7 @@ public class SweeperReel : MonoBehaviour
     private void Awake()
     {
         playerCollider = GetComponent<Collider>();
+        shooter = GetComponent<SweeperShooter>();
         netPlayer = GetComponent<FishingNetPlayer>();
     }
 
@@ -238,7 +297,7 @@ public class SweeperReel : MonoBehaviour
             return;
         }
 
-        if (!cueShown && Elapsed >= criticalStart)
+        if (!cueShown && Elapsed >= criticalStart - CueLead)
         {
             cueShown = true;
             PlayEffect(Effect.CriticalCue);
@@ -300,19 +359,33 @@ public class SweeperReel : MonoBehaviour
             return;
         }
 
-        // 手前の止める位置を、毎回いまの位置関係から決める（プレイヤーが向きを変えても、物資は引かれる方へ来る）
+        // プレイヤーから見た物資の「向き」と「距離」を、残りの時間で行き先へ近づける（真上から見た位置で考える）
         Vector3 player = transform.position;
         Vector3 fromPlayer = body.position - player;
         fromPlayer.y = 0f;
-        Vector3 toward = fromPlayer.sqrMagnitude > 0.0001f ? fromPlayer.normalized : transform.forward;
-        Vector3 goal = player + toward * stopDistance;
+        float distance = fromPlayer.magnitude;
+        Vector3 toward = distance > 0.01f ? fromPlayer / distance : Flat(transform.forward);
 
-        Vector3 rest = goal - body.position;
-        rest.y = 0f;
-
-        // 残りの距離を残りの時間で割る＝距離に関係なく、決まった時間で着く速さ
+        // 残りの時間のうち、この1ステップの割合＝距離に関係なく、決まった時間で着く
         float remaining = Mathf.Max(Time.fixedDeltaTime, startTime + reelSeconds - Time.time);
-        Vector3 velocity = rest / remaining;
+        float share = Mathf.Min(1f, Time.fixedDeltaTime / remaining);
+
+        // 向き：光線がしなっていれば、手元から光線が出ている向きの側へ回り込む（2026/11/4）。
+        // 向きを変えていなければ、しなりの向き＝物資への向きなので、今までどおりまっすぐ引く
+        Vector3 nextDirection = toward;
+        if (maxSwingSpeed > 0f && shooter != null && shooter.TryGetBendDirection(out Vector3 bendDirection))
+        {
+            float swing = Vector3.SignedAngle(toward, bendDirection, Vector3.up) * share;
+            float limit = maxSwingSpeed * Time.fixedDeltaTime;
+            nextDirection = Quaternion.AngleAxis(Mathf.Clamp(swing, -limit, limit), Vector3.up) * toward;
+        }
+
+        // 距離：手前の止める位置（Stop Distance）まで
+        float nextDistance = distance + (stopDistance - distance) * share;
+
+        Vector3 rest = player + nextDirection * nextDistance - body.position;
+        rest.y = 0f;
+        Vector3 velocity = rest / Time.fixedDeltaTime;
 
         if (body.isKinematic)
         {
@@ -356,11 +429,44 @@ public class SweeperReel : MonoBehaviour
         across.y = 0f;
         Vector3 velocity = across / flightTime + Vector3.up * upSpeed;
 
-        Launch(velocity);
-
         if (critical)
         {
             PlayEffect(Effect.CriticalHit);
+        }
+
+        if (critical && hitStopSeconds > 0f)
+        {
+            // 案4：白く光ったまま一瞬止めてから飛ばす（手ごたえ）。止めるのはこの物資だけ
+            StartCoroutine(LaunchAfterStop(body, supply, velocity, hitStopSeconds));
+        }
+        else
+        {
+            Launch(body, supply, velocity);
+        }
+    }
+
+    /// <summary>物資をその場に <paramref name="seconds"/> 秒止めてから投げる。止めている間に巻き取りは終わっている（Finish 済み）。</summary>
+    private IEnumerator LaunchAfterStop(Rigidbody target, FishingNetSupply netSupply, Vector3 velocity, float seconds)
+    {
+        float until = Time.time + seconds;
+        while (Time.time < until)
+        {
+            if (target == null || !target.gameObject.activeInHierarchy)
+            {
+                yield break;
+            }
+
+            if (!target.isKinematic)
+            {
+                target.linearVelocity = Vector3.zero;
+                target.angularVelocity = Vector3.zero;
+            }
+            yield return new WaitForFixedUpdate();
+        }
+
+        if (target != null && target.gameObject.activeInHierarchy)
+        {
+            Launch(target, netSupply, velocity);
         }
     }
 
@@ -372,25 +478,25 @@ public class SweeperReel : MonoBehaviour
             return;
         }
 
-        Launch(Flat(transform.forward) * forwardSpeed + Vector3.up * forwardLift);
+        Launch(body, supply, Flat(transform.forward) * forwardSpeed + Vector3.up * forwardLift);
     }
 
-    private void Launch(Vector3 velocity)
+    private void Launch(Rigidbody target, FishingNetSupply netSupply, Vector3 velocity)
     {
-        if (supply != null)
+        if (netSupply != null)
         {
             // オンライン：飛ばすのはホスト。計算した速さをそのまま渡し、離した位置から飛ばしてもらう
-            supply.RequestThrow(Vector3.zero, 0f, 0f, MyIndex, true, velocity, body.angularVelocity, true, body.position);
+            netSupply.RequestThrow(Vector3.zero, 0f, 0f, MyIndex, true, velocity, target.angularVelocity, true, target.position);
         }
 
-        if (body.isKinematic)
+        if (target.isKinematic)
         {
             return;
         }
 
         // 自分の画面でも同じ速さで飛ばしておく（ホストに持ち主が戻るまでの間、止まって見えないように）
-        body.linearVelocity = velocity;
-        body.WakeUp();
+        target.linearVelocity = velocity;
+        target.WakeUp();
     }
 
     /// <summary>
@@ -433,8 +539,9 @@ public class SweeperReel : MonoBehaviour
     }
 
     /// <summary>
-    /// **その物資にエフェクトを出す。** 合図（<see cref="Effect.CriticalCue"/>）は物資に付いていき、決まったときの光はその場に出る。
-    /// オンラインのほかの人の体では、本人から知らせが来たときに <see cref="SweeperNetSync"/> が呼ぶ。
+    /// **その物資にエフェクトを出す。** 合図（<see cref="Effect.CriticalCue"/>）は受付の <c>Cue Lead</c> 秒前に呼ばれ、物資に付いていく。
+    /// 決まったときの光はその場に出る。
+    /// オンラインのほかの人の体では、本人から知らせが来たときに <see cref="SweeperNetSync"/> が呼ぶ（時間の値は、その体のインスペクターの値を使う）。
     /// </summary>
     public void ShowEffect(Effect kind, HookableObject target)
     {
@@ -445,34 +552,136 @@ public class SweeperReel : MonoBehaviour
 
         if (kind == Effect.CriticalCue)
         {
-            SpawnEffect(target, criticalCuePrefab, 1.2f, 3.2f, criticalLength + 0.15f, true);
+            ShowCue(target);
         }
         else
         {
-            SpawnEffect(target, criticalHitPrefab, 1.5f, 6f, 0.5f, false);
+            ShowHit(target);
         }
     }
 
-    /// <summary>エフェクトのプレハブがあればそれを、無ければ仮の光の輪を、物資の足元に出す。<paramref name="followItem"/> なら光の輪が物資に付いていく。</summary>
-    private void SpawnEffect(HookableObject target, GameObject prefab, float startSize, float endSize, float duration, bool followItem)
+    /// <summary>合図を出す。巻き取りが終わったら（押した・やめた）、残っている合図はすぐ消える。</summary>
+    private void ShowCue(HookableObject target)
     {
-        Vector3 position = target.transform.position;
-        Bounds bounds = default;
-        Collider itemCollider = target.GetComponent<Collider>();
-        if (itemCollider != null)
-        {
-            bounds = itemCollider.bounds;
-            position.y = bounds.min.y + 0.03f;
-        }
+        float lead = CueLead;
+        System.Func<bool> reeling = () => IsReeling(target);
 
-        if (prefab != null)
+        // プレハブと前からの広がる輪は、これまでどおり受付が始まった瞬間に出す
+        if (criticalCuePrefab != null)
         {
-            Instantiate(prefab, position, Quaternion.identity);
+            After(lead, () =>
+            {
+                if (IsReeling(target))
+                {
+                    Instantiate(criticalCuePrefab, GroundPoint(target, out _), Quaternion.identity);
+                }
+            });
             return;
         }
 
-        float scale = itemCollider != null ? Mathf.Max(bounds.size.x, bounds.size.z) : 1f;
-        SweeperFlash.Spawn(position, followItem ? target.transform : null, flashColor, startSize * scale, endSize * scale, duration, flashMaterial);
+        if (cueSpreadRing)
+        {
+            After(lead, () =>
+            {
+                if (IsReeling(target))
+                {
+                    Vector3 ground = GroundPoint(target, out float size);
+                    SweeperFlash.Spawn(ground, target.transform, flashColor, 1.2f * size, 3.2f * size, criticalLength + 0.15f, flashMaterial);
+                }
+            });
+        }
+
+        if (cueShrinkRing)
+        {
+            Vector3 ground = GroundPoint(target, out float size);
+            SweeperShrinkRing.Spawn(ground, target.transform, flashColor, size * 1.15f, lead, criticalLength, reeling, flashMaterial);
+        }
+
+        if (cueGoldOutline)
+        {
+            SweeperItemGlow.SpawnOutline(target.gameObject, flashColor, outlineWidth, lead, criticalLength, 0.12f, reeling);
+        }
+    }
+
+    /// <summary>クリティカルが決まったときのエフェクトを出す。</summary>
+    private void ShowHit(HookableObject target)
+    {
+        Vector3 ground = GroundPoint(target, out float size);
+
+        if (criticalHitPrefab != null)
+        {
+            Instantiate(criticalHitPrefab, ground, Quaternion.identity);
+            return;
+        }
+
+        if (hitSpreadRing)
+        {
+            SweeperFlash.Spawn(ground, null, flashColor, 1.5f * size, 6f * size, 0.5f, flashMaterial);
+        }
+
+        if (hitShards)
+        {
+            SweeperShards.Spawn(ground + Vector3.up * 0.3f, size * 0.6f, flashColor, flashMaterial);
+        }
+
+        if (hitWhiteFlash)
+        {
+            SweeperItemGlow.SpawnFlash(target.gameObject, Color.white, hitStopSeconds + 0.15f);
+        }
+
+        if (hitThrustWave)
+        {
+            // プレイヤーから物資へ向かう向き＝物資が引っ張られている側の逆。止めてから飛ぶので、噴き出すのも飛び始めに合わせる
+            Vector3 away = Flat(target.transform.position - transform.position);
+            After(hitStopSeconds, () =>
+            {
+                if (target != null && target.gameObject.activeInHierarchy)
+                {
+                    SweeperThrustWave.Spawn(target.transform, away, size, flashColor, flashMaterial);
+                }
+            });
+        }
+    }
+
+    /// <summary>その物資を、この体がいま巻き取っているか（ほかの人の体では、本人から届いた様子で見る）。</summary>
+    private bool IsReeling(HookableObject target)
+    {
+        return target != null && (item == target || (shooter != null && shooter.ShownReelItem == target));
+    }
+
+    /// <summary>物資の足元（床の少し上）の位置と、真上から見た物資の大きさ（m）。</summary>
+    private static Vector3 GroundPoint(HookableObject target, out float size)
+    {
+        Vector3 position = target.transform.position;
+        size = 1f;
+
+        Collider itemCollider = target.GetComponent<Collider>();
+        if (itemCollider != null)
+        {
+            Bounds bounds = itemCollider.bounds;
+            position.y = bounds.min.y + 0.03f;
+            size = Mathf.Max(bounds.size.x, bounds.size.z);
+        }
+
+        return position;
+    }
+
+    /// <summary><paramref name="seconds"/> 秒後に <paramref name="action"/> を呼ぶ（0 ならすぐ）。</summary>
+    private void After(float seconds, System.Action action)
+    {
+        if (seconds <= 0f)
+        {
+            action();
+            return;
+        }
+
+        StartCoroutine(AfterRoutine(seconds, action));
+    }
+
+    private static IEnumerator AfterRoutine(float seconds, System.Action action)
+    {
+        yield return new WaitForSeconds(seconds);
+        action();
     }
 
     private static Vector3 Flat(Vector3 direction)
