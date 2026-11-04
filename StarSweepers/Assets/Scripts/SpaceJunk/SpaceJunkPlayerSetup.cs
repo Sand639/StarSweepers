@@ -604,10 +604,7 @@ public class SpaceJunkPlayerSetup : MonoBehaviour
         }
 
         Vector3 position = FindSpawnPosition();
-
-        // ステージの中心（原点）のほうを向く。ほぼ中心にいるときは向きが決まらないので、前向き
-        Vector3 toCenter = new Vector3(-position.x, 0f, -position.z);
-        Quaternion rotation = Quaternion.LookRotation(toCenter.sqrMagnitude > 0.01f ? toCenter : Vector3.forward);
+        Quaternion rotation = SpawnFacing(position);
 
         // CharacterController が付いたまま動かすと位置が戻されるので、いったん切る
         if (characterController != null)
@@ -620,6 +617,16 @@ public class SpaceJunkPlayerSetup : MonoBehaviour
         {
             transform.SetPositionAndRotation(position, rotation);
         }
+    }
+
+    /// <summary>
+    /// <paramref name="position"/> に出てきたときの向き。ステージの中心（原点）のほうを向く。ほぼ中心にいるときは向きが決まらないので、前向き。
+    /// 始まりの演出でゴールエリアに乗せるときも、この向きをゴールエリアと一緒に回す（<see cref="SpaceJunkGoalCarrier"/>）。
+    /// </summary>
+    public static Quaternion SpawnFacing(Vector3 position)
+    {
+        Vector3 toCenter = new Vector3(-position.x, 0f, -position.z);
+        return Quaternion.LookRotation(toCenter.sqrMagnitude > 0.01f ? toCenter : Vector3.forward);
     }
 
     /// <summary>
