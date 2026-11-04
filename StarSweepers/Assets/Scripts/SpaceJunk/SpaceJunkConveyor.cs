@@ -254,11 +254,23 @@ public class SpaceJunkConveyor : MonoBehaviour
         surfaceBody.MovePosition(position);
     }
 
+    /// <summary>
+    /// 見た目どおりの幅と長さ（m）。Belt Size に、Transform の Scale（親の分も含む）を掛けたもの。
+    /// ロビーのように Scale で縮めて置いたベルトでも、運ぶ範囲と矢印が見た目と合うようにする（2026/11/4）。
+    /// </summary>
+    private Vector2 WorldWidthAndLength()
+    {
+        Vector3 scale = transform.lossyScale;
+        return new Vector2(beltSize.x * Mathf.Abs(scale.x), beltSize.z * Mathf.Abs(scale.z));
+    }
+
     /// <summary>ベルトの上の箱に入っている当たり判定を集める。数を返す。</summary>
     private int OverlapAbove()
     {
-        Vector3 halfExtents = new Vector3(beltSize.x * 0.5f, carryHeight * 0.5f, beltSize.z * 0.5f);
-        Vector3 center = transform.TransformPoint(new Vector3(0f, carryHeight * 0.5f, 0f));
+        // 高さ（Carry Height）は Scale に関係なくメートルのまま
+        Vector2 size = WorldWidthAndLength();
+        Vector3 halfExtents = new Vector3(size.x * 0.5f, carryHeight * 0.5f, size.y * 0.5f);
+        Vector3 center = transform.position + transform.up * (carryHeight * 0.5f);
 
         return Physics.OverlapBoxNonAlloc(center, halfExtents, overlapBuffer, transform.rotation,
             ~0, QueryTriggerInteraction.Ignore);
@@ -341,12 +353,15 @@ public class SpaceJunkConveyor : MonoBehaviour
     {
         // 最初に流れる向きを、ベルトの上に矢印（線）で出す
         Gizmos.color = new Color(1f, 0.85f, 0.2f, 0.9f);
+        Vector2 size = WorldWidthAndLength();
         Vector3 forward = transform.forward * (speed >= 0f ? 1f : -1f);
-        Vector3 from = transform.position + Vector3.up * 0.1f - forward * beltSize.z * 0.4f;
-        Vector3 to = transform.position + Vector3.up * 0.1f + forward * beltSize.z * 0.4f;
+        Vector3 from = transform.position + Vector3.up * 0.1f - forward * size.y * 0.4f;
+        Vector3 to = transform.position + Vector3.up * 0.1f + forward * size.y * 0.4f;
         Gizmos.DrawLine(from, to);
-        Vector3 side = Vector3.Cross(Vector3.up, forward) * (beltSize.x * 0.3f);
-        Gizmos.DrawLine(to, to - forward * 1.5f + side);
-        Gizmos.DrawLine(to, to - forward * 1.5f - side);
+        // 矢じりは最大 1.5m。短いベルトでは長さに合わせて小さくする
+        float head = Mathf.Min(1.5f, size.y * 0.3f);
+        Vector3 side = Vector3.Cross(Vector3.up, forward) * (size.x * 0.3f);
+        Gizmos.DrawLine(to, to - forward * head + side);
+        Gizmos.DrawLine(to, to - forward * head - side);
     }
 }
