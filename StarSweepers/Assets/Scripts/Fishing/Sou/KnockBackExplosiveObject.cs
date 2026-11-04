@@ -33,6 +33,21 @@ public class KnockBackExplosiveObject : ExplosiveObject
     [Min(0f)]
     [SerializeField] private float objectKnockbackLift = 6f;
 
+    protected override void ApplyEnvironmentEffects(Collider[] hits)
+    {
+        HashSet<GravityGlassFloor> handled = new HashSet<GravityGlassFloor>();
+        Vector3 blastCenter = transform.position;
+
+        foreach (Collider hit in hits)
+        {
+            GravityGlassFloor glass = hit.GetComponentInParent<GravityGlassFloor>();
+            if (glass != null && handled.Add(glass))
+            {
+                glass.ApplyBlast(blastCenter);
+            }
+        }
+    }
+
     /// <summary>当たったプレイヤーを、爆弾から離れる向き（水平）＋上向きに吹き飛ばす。スタンはさせない。</summary>
     protected override void ApplyPlayerEffect(Collider hit, HashSet<GameObject> handled)
     {

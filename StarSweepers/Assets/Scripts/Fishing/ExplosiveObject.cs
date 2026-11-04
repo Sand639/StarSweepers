@@ -210,6 +210,8 @@ public class ExplosiveObject : MonoBehaviour
         // 1つの物に複数の当たり判定が付いていても、1回だけ処理する
         HashSet<GameObject> handled = new HashSet<GameObject>();
 
+        ApplyEnvironmentEffects(hits);
+
         foreach (Collider hit in hits)
         {
             ApplyPlayerEffect(hit, handled);
@@ -220,6 +222,10 @@ public class ExplosiveObject : MonoBehaviour
                 ApplyHookableEffect(other);
             }
         }
+    }
+
+    protected virtual void ApplyEnvironmentEffects(Collider[] hits)
+    {
     }
 
     /// <summary>
