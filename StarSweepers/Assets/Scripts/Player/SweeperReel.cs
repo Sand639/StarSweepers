@@ -18,6 +18,10 @@ using UnityEngine;
 /// **引いている途中で向きを変えると、物資はしなった光線に沿って、プレイヤーのまわりを前の側へ回り込む**（2026/11/4）。
 /// 回り込む先は <see cref="SweeperShooter.TryGetBendDirection"/>（手元から光線が出ている向き）。向きを変えなければ今までどおりまっすぐ来る。
 /// 着く時間は変わらない（クリティカルのタイミングも同じ）。前に来てから投げるので、「前へ」「後ろへ」がまっすぐ飛ぶ。
+///
+/// **回り込んでいる途中で押すと、回っている勢いを残して斜め後ろへ飛ぶ**（2026/11/4）。
+/// 飛ぶ向きは「体の真後ろ」と「物資がいま動いている向き（接線）」を Throw Follow Motion の割合で混ぜる。
+/// 0 で今までどおり真後ろ、1 で動いている向きそのまま。まっすぐ引いているときはどちらでも真後ろになる。
 /// クリティカルの合図は物資のまわりにだけ出す（ゲージなどの画面の表示は出さない）。
 /// 1回押したら、それで決まる（連打で当てられないように）。
 ///
@@ -67,6 +71,10 @@ public class SweeperReel : MonoBehaviour
     [Tooltip("放物線のいちばん高い所（プレイヤーの足元から m）。頭（約2m）より高くする")]
     [Min(0.5f)]
     [SerializeField] private float backArcHeight = 3.2f;
+
+    [Tooltip("投げる向きを、物資がいま動いている向き（回り込みの勢い）にどれだけ寄せるか。0 でいつも体の真後ろ、1 で動いている向きそのまま（ハンマー投げのように横へも飛ぶ）。まっすぐ引いているときはどちらでも真後ろ")]
+    [Range(0f, 1f)]
+    [SerializeField] private float throwFollowMotion = 0.5f;
 
     [Header("前へ投げる（最後まで押さなかったとき）")]
     [Tooltip("前へ飛ばす速さ（m/秒）")]
@@ -147,6 +155,12 @@ public class SweeperReel : MonoBehaviour
     private Rigidbody body;
     private float startTime;
     private bool cueShown;
+
+    /// <summary>巻き取りで物資を動かしている横の速さ（FixedUpdate で決めた値。ぶつかった跳ね返りは入らない）。投げる向きに使う。</summary>
+    private Vector3 reelVelocity;
+
+    /// <summary>これより遅いときは「動いている向き」が当てにならないので、体の真後ろへ投げる（m/秒）。</summary>
+    private const float MinFollowSpeed = 0.5f;
 
     /// <summary>自分の参加番号を持つ通信上のプレイヤー（オフラインの検証シーンでは null）。</summary>
     private FishingNetPlayer netPlayer;
@@ -236,6 +250,7 @@ public class SweeperReel : MonoBehaviour
         cueShown = false;
         waitingForClaim = false;
         supply = null;
+        reelVelocity = Vector3.zero;
 
         // オンラインなら、ホストに引っ掛けを頼む。認められるまでは引かない
         FishingNetSupply netSupply = target.GetComponent<FishingNetSupply>();
@@ -386,6 +401,7 @@ public class SweeperReel : MonoBehaviour
         Vector3 rest = player + nextDirection * nextDistance - body.position;
         rest.y = 0f;
         Vector3 velocity = rest / Time.fixedDeltaTime;
+        reelVelocity = velocity;
 
         if (body.isKinematic)
         {
@@ -402,7 +418,11 @@ public class SweeperReel : MonoBehaviour
         }
     }
 
-    /// <summary>押した瞬間の位置から、プレイヤーの頭を越える放物線で後ろへ投げる。</summary>
+    /// <summary>
+    /// 押した瞬間の位置から、プレイヤーの頭を越える放物線で後ろへ投げる。
+    /// 飛ぶ向きは「体の真後ろ」と「物資がいま動いている向き」を <see cref="throwFollowMotion"/> の割合で混ぜたもの（2026/11/4）。
+    /// 着く場所は、その向きにまっすぐ飛んで、プレイヤーの中心から Back Distance（クリティカルは Critical Back Distance）離れた所。
+    /// </summary>
     private void ThrowBack(bool critical)
     {
         if (body == null)
@@ -414,8 +434,8 @@ public class SweeperReel : MonoBehaviour
         float arcHeight = critical ? criticalArcHeight : backArcHeight;
 
         Vector3 from = body.position;
-        Vector3 back = -Flat(transform.forward);
-        Vector3 landing = transform.position + back * distance;
+        Vector3 direction = ThrowBackDirection();
+        Vector3 landing = BackLanding(from, direction, distance);
         landing.y = from.y;
 
         float gravity = Mathf.Max(0.1f, -Physics.gravity.y);
@@ -443,6 +463,48 @@ public class SweeperReel : MonoBehaviour
         {
             Launch(body, supply, velocity);
         }
+    }
+
+    /// <summary>
+    /// 後ろへ投げる向き（真上から見た向き）。体の真後ろから、物資が動いている向きのほうへ、
+    /// その間の角度の <see cref="throwFollowMotion"/> 倍だけ回す。
+    /// まっすぐ引いているときは動いている向き＝プレイヤーへ向かう向き＝真後ろなので、今までと同じになる。
+    /// </summary>
+    private Vector3 ThrowBackDirection()
+    {
+        Vector3 back = -Flat(transform.forward);
+
+        Vector3 motion = reelVelocity;
+        motion.y = 0f;
+        if (throwFollowMotion <= 0f || motion.sqrMagnitude < MinFollowSpeed * MinFollowSpeed)
+        {
+            return back;
+        }
+
+        // 角度で混ぜる（真逆どうしでも向きが決まるように、真上から見た回転の角度で考える）
+        float angle = Vector3.SignedAngle(back, motion, Vector3.up) * throwFollowMotion;
+        return Quaternion.AngleAxis(angle, Vector3.up) * back;
+    }
+
+    /// <summary>
+    /// <paramref name="from"/> から <paramref name="direction"/> へまっすぐ飛んで、プレイヤーの中心から <paramref name="distance"/> 離れる所。
+    /// その線がその距離の円に届かない（物資がもう円の外にいて、外へ向かって動いている）ときは、物資の位置から <paramref name="distance"/> 先にする。
+    /// </summary>
+    private Vector3 BackLanding(Vector3 from, Vector3 direction, float distance)
+    {
+        Vector3 offset = from - transform.position;
+        offset.y = 0f;
+
+        // |offset + direction * t| = distance を t について解く（direction は長さ1）
+        float along = Vector3.Dot(direction, offset);
+        float inside = along * along - offset.sqrMagnitude + distance * distance;
+        float travel = inside >= 0f ? -along + Mathf.Sqrt(inside) : -1f;
+        if (travel < 0.5f)
+        {
+            travel = distance;
+        }
+
+        return from + direction * travel;
     }
 
     /// <summary>物資をその場に <paramref name="seconds"/> 秒止めてから投げる。止めている間に巻き取りは終わっている（Finish 済み）。</summary>
