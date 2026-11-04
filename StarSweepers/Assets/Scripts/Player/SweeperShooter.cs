@@ -115,6 +115,9 @@ public class SweeperShooter : MonoBehaviour
     private InputAction attackAction;
     private LiquidBeam beam;
 
+    /// <summary>つかんだ物資の縁取り（光線のプレハブの子の LiquidWrap。プレハブを使わないときは null で、縁取りなし）。</summary>
+    private LiquidWrap wrap;
+
     private ShotPhase phase = ShotPhase.Idle;
     private float charge;
     private float targetDistance;
@@ -214,6 +217,7 @@ public class SweeperShooter : MonoBehaviour
         attackAction = playerMap.FindAction("Attack", true);
 
         beam = CreateBeam();
+        wrap = beam != null ? beam.GetComponentInChildren<LiquidWrap>(true) : null;
     }
 
     private void OnDestroy()
@@ -434,6 +438,7 @@ public class SweeperShooter : MonoBehaviour
             case ShotPhase.Idle:
                 beam?.Stop();
                 beam?.SetColor(IdleColor);
+                wrap?.Release();
                 aimArea?.Hide();
                 animationPlayer?.PlayIdle();
                 break;
@@ -449,7 +454,23 @@ public class SweeperShooter : MonoBehaviour
 
             case ShotPhase.Reeling:
                 beam?.ChangeColorFromTip(teamColor);
+                PlayWrap(ShownReelItem);
                 break;
+        }
+
+        // 巻き取りが終わったら縁取りをはなす（Idle 以外へ移ったとき。Idle は上で処理済み）
+        if (before == ShotPhase.Reeling && after != ShotPhase.Idle)
+        {
+            wrap?.Release();
+        }
+    }
+
+    /// <summary>つかんだ物資を液体で縁取り始める。物資が無ければ何もしない。</summary>
+    private void PlayWrap(HookableObject item)
+    {
+        if (wrap != null && item != null)
+        {
+            wrap.Play(item.transform, item.AnchorPoint, teamColor);
         }
     }
 
@@ -532,6 +553,7 @@ public class SweeperShooter : MonoBehaviour
                 phase = ShotPhase.Reeling;
                 reel.Begin(hookable);
                 beam?.ChangeColorFromTip(teamColor);
+                PlayWrap(hookable);
                 return;
             }
 
@@ -619,6 +641,7 @@ public class SweeperShooter : MonoBehaviour
             beam.SetColor(IdleColor);
         }
 
+        wrap?.Release();
         aimArea?.Hide();
         animationPlayer?.PlayIdle();
     }
