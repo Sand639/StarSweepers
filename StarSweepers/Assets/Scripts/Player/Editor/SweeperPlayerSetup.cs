@@ -143,6 +143,25 @@ public static class SweeperPlayerSetup
         return prefab;
     }
 
+    /// <summary>
+    /// **作り直さずに、今の検証シーンへ重い物を2つ足す**（2026/11/5。もうあれば何もしない）。
+    /// 作り直すと、手で直したライトの設定などが消えるため。`-executeMethod SweeperPlayerSetup.AddHeavySuppliesToTestScene` で使う。
+    /// </summary>
+    public static void AddHeavySuppliesToTestScene()
+    {
+        var scene = EditorSceneManager.OpenScene(ScenePath, OpenSceneMode.Single);
+        if (GameObject.Find("HeavySupply_1") != null)
+        {
+            Debug.Log("[SweeperPlayer] 検証シーンには、もう重い物があります。");
+            return;
+        }
+
+        CreateHeavySupply("HeavySupply_1", new Vector3(-7f, 0.6f, 4f), 1.5f);
+        CreateHeavySupply("HeavySupply_2", new Vector3(7f, 0.6f, 4f), 3f);
+        EditorSceneManager.SaveScene(scene);
+        Debug.Log($"[SweeperPlayer] 検証シーンに重い物を2つ足しました：{ScenePath}");
+    }
+
     /// <summary>検証シーンの重い物。ふつうの物資を置いて、再生したときに重くする部品（<see cref="SweeperHeavyTestItem"/>）を付ける。</summary>
     private static void CreateHeavySupply(string name, Vector3 position, float weight)
     {
