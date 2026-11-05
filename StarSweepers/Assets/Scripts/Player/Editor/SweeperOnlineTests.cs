@@ -77,8 +77,9 @@ public class SweeperOnlineTests
             Assert.That(Object.FindObjectsByType<SweeperOnlineSwitch>(FindObjectsInactive.Include, FindObjectsSortMode.None).Length,
                 Is.GreaterThan(0), "切り替えの係が作られていない");
             Assert.That(manager.NetworkConfig.PlayerPrefab, Is.EqualTo(sweeperBody), "新しい体に入れ替わっていない");
-            Assert.That(SweeperOnlineSwitch.BotPrefabOr(manager.NetworkConfig.PlayerPrefab), Is.EqualTo(currentBody),
-                "ボットは今の体のままにする");
+            Assert.That(SweeperOnlineSwitch.BotPrefabOr(manager.NetworkConfig.PlayerPrefab), Is.EqualTo(sweeperBody),
+                "ボットも新しい体で出す（2026/11/5）");
+            Assert.That(SweeperOnlineSwitch.CurrentBodyPrefab, Is.EqualTo(currentBody), "今の体を覚えていない");
         }
         finally
         {
