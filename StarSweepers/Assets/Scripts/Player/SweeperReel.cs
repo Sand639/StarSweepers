@@ -25,6 +25,12 @@ using UnityEngine;
 /// クリティカルの合図は物資のまわりにだけ出す（ゲージなどの画面の表示は出さない）。
 /// 1回押したら、それで決まる（連打で当てられないように）。
 ///
+/// ### 重い物（<see cref="HeavyHookable"/>。宇宙ごみの特殊デブリ。2026/11/5）
+///
+/// 重い物は**投げられず、床の上を引きずるだけ**。光線が当たると、重さに合わせてゆっくり手前へ引きずり、
+/// 1回で動かせる距離（Heavy Drag Distance ÷ 重さ）を引いたら、**その場に置いて離す**。途中で押しても、その場で離す。
+/// クリティカルの合図は出ない。何回も撃って、少しずつゴールまで運ぶ遊び方になる。
+///
 /// ### クリティカルのエフェクト（仮。2026/11/4）
 ///
 /// プレハブ（Critical Cue Prefab / Critical Hit Prefab）が空のときは、仮のエフェクトを出す。どれを出すかはインスペクターで選べる（組み合わせてもよい）。
@@ -85,6 +91,23 @@ public class SweeperReel : MonoBehaviour
     [Min(0f)]
     [SerializeField] private float forwardLift = 1.5f;
 
+    [Header("重い物（引きずるだけ。2026/11/5）")]
+    [Tooltip("重さ 1 のとき、1回で引きずれる距離（m）。重さで割る（重さ 2 なら半分）")]
+    [Min(0f)]
+    [SerializeField] private float heavyDragDistance = 4f;
+
+    [Tooltip("どんなに重くても、1回でこれだけは引きずれる距離（m）")]
+    [Min(0f)]
+    [SerializeField] private float heavyDragMinDistance = 0.8f;
+
+    [Tooltip("重さ 1 のとき、引きずる速さ（m/秒）。重さで割る（重いほどゆっくり）")]
+    [Min(0.1f)]
+    [SerializeField] private float heavyDragSpeed = 3f;
+
+    [Tooltip("重い物を止める位置（プレイヤーの中心からの距離 m）。重い物は大きいので、ふつうの物より手前で止める")]
+    [Min(0.3f)]
+    [SerializeField] private float heavyStopDistance = 2f;
+
     [Header("クリティカルプル")]
     [Tooltip("当たってから、クリティカルの受付が始まるまでの秒数（Reel Seconds より短くする）")]
     [Min(0f)]
@@ -114,6 +137,12 @@ public class SweeperReel : MonoBehaviour
 
     [Tooltip("仮の光の輪に使うマテリアル（Art/Materials/SweeperRing.mat）。空なら再生したときに作る")]
     [SerializeField] private Material flashMaterial;
+
+    [Tooltip("物資の金色のフチに使うマテリアル（Art/Materials/SweeperItemOutline.mat）。空なら再生したときに作るが、ビルドでは出ないことがある")]
+    [SerializeField] private Material outlineMaterial;
+
+    [Tooltip("物資が白く光るのに使うマテリアル（Art/Materials/SweeperItemFlash.mat）。空なら再生したときに作るが、ビルドでは出ないことがある")]
+    [SerializeField] private Material whiteFlashMaterial;
 
     [Header("クリティカルの仮のエフェクトの選び方（プレハブが空のとき）")]
     [Tooltip("合図を、受付が始まる何秒前から出すか（縮んでくる輪・金色のフチ）。0 なら受付が始まった瞬間。Critical Start より長くはならない")]
@@ -162,6 +191,18 @@ public class SweeperReel : MonoBehaviour
     /// <summary>これより遅いときは「動いている向き」が当てにならないので、体の真後ろへ投げる（m/秒）。</summary>
     private const float MinFollowSpeed = 0.5f;
 
+    /// <summary>いま引いている物が重い物か（<see cref="Begin"/> で決める）。</summary>
+    private bool heavy;
+
+    /// <summary>重い物の重さ（1 が基準）。</summary>
+    private float heavyWeight = 1f;
+
+    /// <summary>重い物を、この1回であと何m引きずれるか。</summary>
+    private float heavyRemaining;
+
+    /// <summary>重い物が回り込む速さの上限を、ふつうの物（Max Swing Speed）の何倍にするか（そこからさらに重さで割る）。</summary>
+    private const float HeavySwingShare = 0.25f;
+
     /// <summary>自分の参加番号を持つ通信上のプレイヤー（オフラインの検証シーンでは null）。</summary>
     private FishingNetPlayer netPlayer;
 
@@ -196,8 +237,31 @@ public class SweeperReel : MonoBehaviour
     /// <summary>当たってから（オンラインでは、ホストに認められてから）の秒数。</summary>
     public float Elapsed => IsActive && !waitingForClaim ? Time.time - startTime : 0f;
 
-    /// <summary>いまクリティカルの受付中か。</summary>
-    public bool InCriticalWindow => IsActive && !waitingForClaim && Elapsed >= criticalStart && Elapsed <= criticalStart + criticalLength;
+    /// <summary>いまクリティカルの受付中か（重い物を引きずっている間は、いつも false）。</summary>
+    public bool InCriticalWindow => IsActive && !waitingForClaim && !heavy && Elapsed >= criticalStart && Elapsed <= criticalStart + criticalLength;
+
+    /// <summary>いま重い物を引きずっているか。</summary>
+    public bool IsHeavyDrag => IsActive && heavy;
+
+    /// <summary>オンラインでホストの返事（引っ掛けてよいか）を待っている間か。</summary>
+    public bool IsWaitingForClaim => IsActive && waitingForClaim;
+
+    // ---- ボット（SweeperBot）が、投げる先を決めるのに読む値 ----
+
+    /// <summary>当たってから手前に着くまでの秒数（押さなければ、このとき前へ投げる）。</summary>
+    public float ReelSeconds => reelSeconds;
+
+    /// <summary>後ろへ投げたとき、プレイヤーの中心からどれだけ離れた所に落ちるか（m）。</summary>
+    public float BackDistance => backDistance;
+
+    /// <summary>クリティカルのとき、プレイヤーの中心からどれだけ離れた所に落ちるか（m）。</summary>
+    public float CriticalBackDistance => criticalBackDistance;
+
+    /// <summary>当たってから、クリティカルの受付が終わるまでの秒数。</summary>
+    public float CriticalWindowEnd => criticalStart + criticalLength;
+
+    /// <summary>当たってから、クリティカルの受付が始まるまでの秒数。</summary>
+    public float CriticalWindowStart => criticalStart;
 
     /// <summary>合図を受付の何秒前から出すか（当たってからの秒数より前にはならない）。</summary>
     private float CueLead => Mathf.Min(cueLead, criticalStart);
@@ -252,6 +316,11 @@ public class SweeperReel : MonoBehaviour
         supply = null;
         reelVelocity = Vector3.zero;
 
+        // 重い物は投げずに引きずるだけ。1回で引きずれる距離は重さで割る
+        heavy = HeavyHookable.TryGetWeight(target, out heavyWeight);
+        heavyWeight = Mathf.Max(0.1f, heavyWeight);
+        heavyRemaining = heavy ? Mathf.Max(heavyDragDistance / heavyWeight, heavyDragMinDistance) : 0f;
+
         // オンラインなら、ホストに引っ掛けを頼む。認められるまでは引かない
         FishingNetSupply netSupply = target.GetComponent<FishingNetSupply>();
         if (IsOnline && netSupply != null && netSupply.IsSpawned)
@@ -276,6 +345,13 @@ public class SweeperReel : MonoBehaviour
     {
         if (!IsActive || waitingForClaim)
         {
+            return;
+        }
+
+        // 重い物は投げられない。押したら、その場に置いて離す
+        if (heavy)
+        {
+            ReleaseHeavy();
             return;
         }
 
@@ -309,6 +385,16 @@ public class SweeperReel : MonoBehaviour
 
         if (supply != null && !UpdateOnlineClaim())
         {
+            return;
+        }
+
+        // 重い物は、引きずり終わるまで待つ（終わりは FixedUpdate が決める）。クリティカルの合図も、前へ投げるのも無い
+        if (heavy)
+        {
+            if (heavyRemaining <= 0f)
+            {
+                ReleaseHeavy();
+            }
             return;
         }
 
@@ -381,6 +467,12 @@ public class SweeperReel : MonoBehaviour
         float distance = fromPlayer.magnitude;
         Vector3 toward = distance > 0.01f ? fromPlayer / distance : Flat(transform.forward);
 
+        if (heavy)
+        {
+            DragHeavy(player, toward, distance);
+            return;
+        }
+
         // 残りの時間のうち、この1ステップの割合＝距離に関係なく、決まった時間で着く
         float remaining = Mathf.Max(Time.fixedDeltaTime, startTime + reelSeconds - Time.time);
         float share = Mathf.Min(1f, Time.fixedDeltaTime / remaining);
@@ -409,13 +501,81 @@ public class SweeperReel : MonoBehaviour
             return;
         }
 
-        // 上下は物理（重力）のまま、横だけ決める＝床に置いたまま引きずる
+        SetDragVelocity(velocity);
+    }
+
+    /// <summary>上下は物理（重力）のまま、横だけ決める＝床に置いたまま引きずる。回転は弱める。</summary>
+    private void SetDragVelocity(Vector3 velocity)
+    {
         body.linearVelocity = new Vector3(velocity.x, body.linearVelocity.y, velocity.z);
 
         if (spinDamping > 0f)
         {
             body.angularVelocity *= Mathf.Exp(-spinDamping * Time.fixedDeltaTime);
         }
+    }
+
+    /// <summary>
+    /// **重い物を1ステップぶん引きずる。** 速さは Heavy Drag Speed ÷ 重さ。1回で引きずれる距離（<see cref="heavyRemaining"/>）を使い切るか、
+    /// 手前（Heavy Stop Distance）に着いたら終わり（離すのは <see cref="Update"/>）。
+    /// 壁に引っかかって動かなくても距離は減っていくので、いつまでも離さないことは無い。
+    /// 向きを変えたときの回り込みも、重さで割った速さで効く（重いほど振り回しにくい）。
+    /// </summary>
+    private void DragHeavy(Vector3 player, Vector3 toward, float distance)
+    {
+        float dt = Time.fixedDeltaTime;
+        float room = Mathf.Max(0f, distance - heavyStopDistance);
+        float step = Mathf.Min(heavyDragSpeed / heavyWeight * dt, heavyRemaining, room);
+
+        heavyRemaining -= step;
+        if (room <= 0.01f)
+        {
+            heavyRemaining = 0f;
+        }
+
+        Vector3 nextDirection = toward;
+        if (maxSwingSpeed > 0f && shooter != null && shooter.TryGetBendDirection(out Vector3 bendDirection))
+        {
+            float swing = Vector3.SignedAngle(toward, bendDirection, Vector3.up);
+            float limit = maxSwingSpeed * HeavySwingShare / heavyWeight * dt;
+            nextDirection = Quaternion.AngleAxis(Mathf.Clamp(swing, -limit, limit), Vector3.up) * toward;
+        }
+
+        Vector3 rest = player + nextDirection * (distance - step) - body.position;
+        rest.y = 0f;
+        Vector3 velocity = rest / dt;
+        reelVelocity = velocity;
+
+        if (body.isKinematic)
+        {
+            body.MovePosition(body.position + velocity * dt);
+            return;
+        }
+
+        SetDragVelocity(velocity);
+    }
+
+    /// <summary>
+    /// **重い物を、その場に置いて離す**（投げない）。オンラインでは、離した位置をホストへ渡して置いてもらう
+    /// （ホストに届いている位置は少し遅れているため。今の体の「重い物を引きずる」と同じ考え）。
+    /// </summary>
+    private void ReleaseHeavy()
+    {
+        if (body != null)
+        {
+            if (!body.isKinematic)
+            {
+                body.linearVelocity = new Vector3(0f, Mathf.Min(0f, body.linearVelocity.y), 0f);
+                body.angularVelocity = Vector3.zero;
+            }
+
+            if (supply != null && supply.IsSpawned)
+            {
+                supply.RequestThrow(Vector3.zero, 0f, 0f, MyIndex, true, Vector3.zero, Vector3.zero, true, body.position);
+            }
+        }
+
+        Finish("引きずった", false, false);
     }
 
     /// <summary>
@@ -586,6 +746,8 @@ public class SweeperReel : MonoBehaviour
         body = null;
         supply = null;
         waitingForClaim = false;
+        heavy = false;
+        heavyRemaining = 0f;
     }
 
     /// <summary>巻き取っている物資にエフェクトを出し、出したことを知らせる（オンラインではほかの人の画面にも出る）。</summary>
@@ -661,7 +823,7 @@ public class SweeperReel : MonoBehaviour
 
         if (cueGoldOutline)
         {
-            SweeperItemGlow.SpawnOutline(target.gameObject, flashColor, outlineWidth, lead, criticalLength, 0.12f, reeling);
+            SweeperItemGlow.SpawnOutline(target.gameObject, flashColor, outlineWidth, lead, criticalLength, 0.12f, reeling, outlineMaterial);
         }
     }
 
@@ -688,7 +850,7 @@ public class SweeperReel : MonoBehaviour
 
         if (hitWhiteFlash)
         {
-            SweeperItemGlow.SpawnFlash(target.gameObject, Color.white, hitStopSeconds + 0.15f);
+            SweeperItemGlow.SpawnFlash(target.gameObject, Color.white, hitStopSeconds + 0.15f, whiteFlashMaterial);
         }
 
         if (hitThrustWave)

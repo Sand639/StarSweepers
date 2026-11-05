@@ -13,6 +13,10 @@ using UnityEngine;
 ///
 /// フチは、写しを箱の形に合わせて各軸に同じ厚みだけ大きくして作る（箱の物資ならきれいにそろう。丸い物は少しむらになる）。
 /// 光の当たり方や影は付けない。物資が消えたり、<c>keepAlive</c> が false を返したら、すぐ消える。
+///
+/// **マテリアルは、呼ぶ側（<see cref="SweeperReel"/> のインスペクター）から渡す**（`Art/Materials/SweeperItemOutline.mat`・`SweeperItemFlash.mat`。2026/11/5）。
+/// プレハブからマテリアルのファイルを指しておくと、シェーダーもビルドに入る。
+/// 渡されなかったときだけ、再生中にシェーダーを名前で探して作る（エディタでは出るが、**ビルドでは出ないことがある**）。
 /// </summary>
 public class SweeperItemGlow : MonoBehaviour
 {
@@ -48,19 +52,19 @@ public class SweeperItemGlow : MonoBehaviour
     /// そこから <paramref name="hold"/> 秒くっきり光って、<paramref name="fade"/> 秒で消える。
     /// </summary>
     public static SweeperItemGlow SpawnOutline(GameObject target, Color color, float width, float rise, float hold, float fade,
-        System.Func<bool> keepAlive)
+        System.Func<bool> keepAlive, Material material = null)
     {
-        return Spawn(target, color, width, rise, hold, fade, keepAlive, false);
+        return Spawn(target, color, width, rise, hold, fade, keepAlive, false, material != null ? material : OutlineMaterial);
     }
 
     /// <summary>**物資全体を白く光らせる。** すぐに明るくなり、<paramref name="fade"/> 秒で消える。</summary>
-    public static SweeperItemGlow SpawnFlash(GameObject target, Color color, float fade)
+    public static SweeperItemGlow SpawnFlash(GameObject target, Color color, float fade, Material material = null)
     {
-        return Spawn(target, color, 0.015f, 0f, 0f, fade, null, true);
+        return Spawn(target, color, 0.015f, 0f, 0f, fade, null, true, material != null ? material : FlashMaterial);
     }
 
     private static SweeperItemGlow Spawn(GameObject target, Color color, float width, float rise, float hold, float fade,
-        System.Func<bool> keepAlive, bool isFlash)
+        System.Func<bool> keepAlive, bool isFlash, Material material)
     {
         if (target == null)
         {
@@ -75,7 +79,7 @@ public class SweeperItemGlow : MonoBehaviour
         glow.fade = Mathf.Max(0.01f, fade);
         glow.isFlash = isFlash;
         glow.keepAlive = keepAlive;
-        glow.BuildShells(isFlash ? FlashMaterial : OutlineMaterial);
+        glow.BuildShells(material);
         glow.Apply();
         return glow;
     }
@@ -85,7 +89,7 @@ public class SweeperItemGlow : MonoBehaviour
     private static Material FlashMaterial => flashMaterial != null ? flashMaterial : flashMaterial = MakeMaterial(UnityEngine.Rendering.CullMode.Back);
 
     /// <summary>
-    /// シェーダーの名前からマテリアルを作る。**ビルドではシェーダーが入らないことがある**（リスクリスト参照）。
+    /// シェーダーの名前からマテリアルを作る（マテリアルが渡されなかったときだけ）。**ビルドではシェーダーが入らないことがある**。
     /// フチ用と全体用は描く面（Cull）が違うので、別のマテリアルにする（MaterialPropertyBlock では Cull を変えられない）。
     /// </summary>
     private static Material MakeMaterial(UnityEngine.Rendering.CullMode cull)
@@ -93,7 +97,8 @@ public class SweeperItemGlow : MonoBehaviour
         Shader shader = Shader.Find(ShaderName);
         if (shader == null)
         {
-            Debug.LogWarning($"シェーダー {ShaderName} が見つかりません。物資のフチの光は出ません。");
+            Debug.LogWarning($"シェーダー {ShaderName} が見つかりません。物資のフチの光は出ません。" +
+                             "SweeperReel の Outline Material・White Flash Material にマテリアルを入れてください。");
             return null;
         }
 
