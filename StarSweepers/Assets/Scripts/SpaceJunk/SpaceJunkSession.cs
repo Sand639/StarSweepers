@@ -859,7 +859,8 @@ public class SpaceJunkSession : NetworkBehaviour
             player.NetworkObject.Despawn(true);
         }
 
-        GameObject prefab = NetworkManager.NetworkConfig.PlayerPrefab;
+        // ボットも人と同じ体で出す（2026/11/5 から新しい体。頭は体に合わせて付け替える。下の AttachBotBrain）
+        GameObject prefab = SweeperOnlineSwitch.BotPrefabOr(NetworkManager.NetworkConfig.PlayerPrefab);
         if (prefab == null)
         {
             Debug.LogError("[JUNK] NetworkManager に Player Prefab が入っていないので、ボットを出せません。");
@@ -896,8 +897,16 @@ public class SpaceJunkSession : NetworkBehaviour
             networkObject.SpawnWithOwnership(hostId, false);
             AddSlot(key);
 
-            // ホストのPCでだけ、ボットの頭を付ける（見えないコントローラーも一緒に付く）
-            SpaceJunkBot.AttachTo(spawned);
+            // ホストのPCでだけ、ボットの頭を付ける（見えないコントローラーも一緒に付く）。
+            // 新しい体（SweeperShooter が付いている）なら新しい体のボット、今の体（フック）なら今までのボット（2026/11/5）
+            if (spawned.GetComponent<SweeperShooter>() != null)
+            {
+                SweeperBot.AttachTo(spawned);
+            }
+            else
+            {
+                SpaceJunkBot.AttachTo(spawned);
+            }
 
             Debug.Log($"[JUNK] ボット：{NameOf(key)} を出しました（チーム {TeamOf(key)}）。");
         }

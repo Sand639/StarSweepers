@@ -1,0 +1,669 @@
+using UnityEngine;
+using UnityEngine.InputSystem;
+
+/// <summary>
+/// **プレイヤー（本実装）の「狙う → 光線を伸ばす → 当たったら巻き取りへ」。**（2026/10/27・小野田さんの仕様）
+///
+/// | 操作 | どうなる |
+/// | --- | --- |
+/// | RT／左クリックを押す | 狙い始める。リングの縁から、届く長さの矢印の帯（<see cref="SweeperAimArea"/>）が出る |
+/// | 押している間 | 帯が最短から最長まで伸びていく（Charge Seconds で最長）。**歩ける**。体は狙う方向を向く |
+/// | 離す | 光線がその長さまで伸びる（<see cref="extendSpeed"/>）。**ここから投げ終わるまで歩けない** |
+/// | 光線が物資に当たる | 自動で巻き取りへ（<see cref="SweeperReel"/>）。巻き取り中に押すと後ろへ投げる（重い物は投げずに引きずるだけ） |
+/// | 何にも当たらない・壁に当たる | 光線が戻ってくる。戻りきったら歩ける |
+///
+/// 光線の見た目は液体のビーム（<see cref="LiquidBeam"/>）。何もつかんでいない間は薄いチームの色、つかんだら濃くなる。
+/// **巻き取り中に向きを変えると、光線が釣り糸のようにしなる**（手元からは体の向きに少し遅れて出て、物資へ曲がってつながる。2026/11/4）。
+/// 撃った瞬間に <see cref="SweeperAnimation.PlayShoot"/>（A_SHOOT → A_AIM_01）を呼ぶ。
+/// </summary>
+public class SweeperShooter : MonoBehaviour
+{
+    /// <summary>光線の段階。オンラインでは、ほかの人の画面にこれを配って同じ見た目を出す（<see cref="SweeperNetSync"/>）。</summary>
+    public enum ShotPhase
+    {
+        Idle,       // 何もしていない
+        Charging,   // 押して狙っている（歩ける）
+        Extending,  // 光線が伸びている
+        Retracting, // 何にも当たらず、光線が戻っている
+        Reeling     // 物資を巻き取っている
+    }
+
+    [Header("参照（空なら同じ体から探す）")]
+    [SerializeField] private SweeperAim aim;
+    [SerializeField] private SweeperMover mover;
+    [SerializeField] private SweeperReel reel;
+    [SerializeField] private SweeperAimArea aimArea;
+    [SerializeField] private SweeperRing ring;
+    [SerializeField] private SweeperAnimation animationPlayer;
+
+    [Tooltip("Assets/InputSystem_Actions を入れる（Attack＝RT・左クリックを使う）")]
+    [SerializeField] private InputActionAsset inputActions;
+
+    [Tooltip("光線の見た目（Assets/Prefabs/Effect/LiquidBeam.prefab）。空でも動く")]
+    [SerializeField] private LiquidBeam beamPrefab;
+
+    [Header("伸ばせる長さ（プレイヤーの中心から m）")]
+    [Tooltip("押した瞬間の長さ")]
+    [Min(0.5f)]
+    [SerializeField] private float minReach = 3f;
+
+    [Tooltip("いちばん長く伸ばせる長さ")]
+    [Min(0.5f)]
+    [SerializeField] private float maxReach = 12f;
+
+    [Tooltip("押しっぱなしで、いちばん長くなるまでの秒数")]
+    [Min(0.01f)]
+    [SerializeField] private float chargeSeconds = 1f;
+
+    [Header("光線の速さ（m/秒）")]
+    [Tooltip("光線が伸びる速さ")]
+    [Min(0.1f)]
+    [SerializeField] private float extendSpeed = 30f;
+
+    [Tooltip("何にも当たらなかったとき、光線が戻る速さ")]
+    [Min(0.1f)]
+    [SerializeField] private float retractSpeed = 40f;
+
+    [Header("当たり判定")]
+    [Tooltip("光線の先の、当たりを見る球の半径（m）。大きいほど当てやすい")]
+    [Min(0.05f)]
+    [SerializeField] private float hitRadius = 0.45f;
+
+    [Tooltip("当たりを見る高さ（足元から m）。低い物資にも当たるように、腰より低めにしてある")]
+    [Min(0f)]
+    [SerializeField] private float castHeight = 0.6f;
+
+    [Tooltip("光線が当たる相手のレイヤー")]
+    [SerializeField] private LayerMask hitMask = ~0;
+
+    [Tooltip("ON：引っ掛けられない物（壁など）に当たったら、そこで戻り始める。OFF：すり抜けて最後まで伸びる")]
+    [SerializeField] private bool stopAtWalls = true;
+
+    [Header("光線の見た目")]
+    [Tooltip("光線が出てくる手元の高さ（足元から m）")]
+    [Min(0f)]
+    [SerializeField] private float handHeight = 1.0f;
+
+    [Tooltip("光線が出てくる手元の、体の前への出っぱり（m）")]
+    [Min(0f)]
+    [SerializeField] private float handForward = 0.35f;
+
+    [Tooltip("何もつかんでいない間の色の薄さ（0 でチームの色そのまま、1 で白）")]
+    [Range(0f, 1f)]
+    [SerializeField] private float idleWhiten = 0.45f;
+
+    [Header("巻き取り中のしなり（向きを変えたとき。2026/11/4）")]
+    [Tooltip("光線の曲がる強さ（0 でしならない＝いつもまっすぐ、1 で手元から出る向きがちょうど『しなりの向き』になる）")]
+    [Range(0f, 1.5f)]
+    [SerializeField] private float bendStrength = 1f;
+
+    [Tooltip("しなりの向きが体の向きに追いつく速さ（ばねの硬さ。大きいほどすぐ追いつき、小さいほど遅れてゆっくりしなる）")]
+    [Min(0.5f)]
+    [SerializeField] private float bendStiffness = 9f;
+
+    [Tooltip("しなりの止まりやすさ（1 で行き過ぎない、小さいほど体の向きを行き過ぎてからビヨンと戻る）")]
+    [Range(0.1f, 1.5f)]
+    [SerializeField] private float bendDamping = 0.45f;
+
+    [Tooltip("光線が曲がれる最大の角度（度）。物資への向きと手元から出る向きの差をこれまでに抑える（大きすぎると光線が輪になる）")]
+    [Range(0f, 150f)]
+    [SerializeField] private float maxBendAngle = 110f;
+
+    private PlayerInputSource input;
+    private PlayerStun stun;
+    private InputActionMap playerMap;
+    private InputAction attackAction;
+    private LiquidBeam beam;
+
+    /// <summary>つかんだ物資の縁取り（光線のプレハブの子の LiquidWrap。プレハブを使わないときは null で、縁取りなし）。</summary>
+    private LiquidWrap wrap;
+
+    private ShotPhase phase = ShotPhase.Idle;
+    private float charge;
+    private float targetDistance;
+    private float traveled;
+    private Vector3 launchOrigin;
+    private Vector3 launchDirection = Vector3.forward;
+    private Color teamColor = new Color(0.3f, 0.6f, 0.95f);
+
+    // しなり：手元から光線が出る向き（真上から見た角度・度）と、その回る速さ。巻き取り中だけ使う
+    private bool bendActive;
+    private float bendYaw;
+    private float bendYawSpeed;
+
+    /// <summary>最後に見た、プレイヤーの中心から物資への向き（真上から見た角度・度）。</summary>
+    private float bendTipYaw;
+
+    /// <summary>押して狙っている最中か。</summary>
+    public bool IsCharging => phase == ShotPhase.Charging;
+
+    /// <summary>光線が出ている（伸びている・戻っている・巻き取っている）か。この間は歩けない。</summary>
+    public bool IsBeamOut => phase == ShotPhase.Extending || phase == ShotPhase.Retracting || phase == ShotPhase.Reeling;
+
+    /// <summary>いま離したら、光線がどこまで伸びるか（プレイヤーの中心から m）。</summary>
+    public float CurrentReach => Mathf.Lerp(minReach, Mathf.Max(minReach, maxReach), charge);
+
+    /// <summary>いちばん長く伸ばしたときの長さ（プレイヤーの中心から m）。ボットが撃つ場所を決めるのに使う。</summary>
+    public float MaxReach => Mathf.Max(minReach, maxReach);
+
+    /// <summary>光線の先の、当たりを見る球の半径（m）。</summary>
+    public float HitRadius => hitRadius;
+
+    /// <summary>いまの段階の名前（検証用の表示に使う）。</summary>
+    public string PhaseName => phase.ToString();
+
+    /// <summary>いまの段階。</summary>
+    public ShotPhase Phase => phase;
+
+    /// <summary>狙っている向き（狙っている間）／光線を撃った向き（撃ったあと）。</summary>
+    public Vector3 ShotDirection => phase == ShotPhase.Charging && aim != null ? aim.Direction : launchDirection;
+
+    /// <summary>光線の先の位置（巻き取り中は物資の引っ掛けた所）。</summary>
+    public Vector3 BeamTip => phase == ShotPhase.Reeling && reel != null && reel.Item != null
+        ? reel.Item.AnchorPoint
+        : launchOrigin + launchDirection * Mathf.Max(0f, traveled);
+
+    /// <summary>巻き取っている物資。巻き取っていなければ null。</summary>
+    public HookableObject ReelItem => phase == ShotPhase.Reeling && reel != null ? reel.Item : null;
+
+    /// <summary>
+    /// **ほかの人の体で**、本人から届いた「巻き取っている物資」。巻き取っていなければ null（本人の体ではいつも null）。
+    /// クリティカルの合図を、巻き取りが終わったら消すのに使う（<see cref="SweeperReel"/>）。
+    /// </summary>
+    public HookableObject ShownReelItem { get; private set; }
+
+    /// <summary>
+    /// **巻き取り中に、手元から光線が出ている向き**（真上から見た向き。しなりの向き）。
+    /// 向きを変えると、体の向きに少し遅れて付いていき、行き過ぎてから戻る。向きを変えなければ物資への向きのまま。
+    /// <see cref="SweeperReel"/> は物資をこの向きの側へ回り込ませる。巻き取っていなければ false。
+    /// </summary>
+    public bool TryGetBendDirection(out Vector3 direction)
+    {
+        direction = YawToDirection(bendYaw);
+        return bendActive;
+    }
+
+    /// <summary>
+    /// **撃っている光線をしまい、巻き取りもやめる**（物資は投げずに離す）。
+    /// オンラインで、出てくる場所へ戻されたときなどに呼ぶ（<see cref="SweeperNetSync"/>）。
+    /// </summary>
+    public void CancelShot()
+    {
+        if (phase == ShotPhase.Idle)
+        {
+            return;
+        }
+
+        reel?.Cancel();
+        EndShot();
+    }
+
+    private void Awake()
+    {
+        if (aim == null) aim = GetComponent<SweeperAim>();
+        if (mover == null) mover = GetComponent<SweeperMover>();
+        if (reel == null) reel = GetComponent<SweeperReel>();
+        if (aimArea == null) aimArea = GetComponentInChildren<SweeperAimArea>();
+        if (ring == null) ring = GetComponent<SweeperRing>();
+        if (animationPlayer == null) animationPlayer = GetComponent<SweeperAnimation>();
+
+        stun = GetComponent<PlayerStun>();
+        input = PlayerInputSource.Get(this);
+
+        if (inputActions == null)
+        {
+            Debug.LogError($"{name}: 入力の設定（InputSystem_Actions）が入っていません。", this);
+            enabled = false;
+            return;
+        }
+
+        // 入力の設定は、この体専用の複製を使う（ほかの体が止めたときに、自分の入力まで止まらないように）
+        inputActions = Instantiate(inputActions);
+        playerMap = inputActions.FindActionMap("Player", true);
+        attackAction = playerMap.FindAction("Attack", true);
+
+        beam = CreateBeam();
+        wrap = beam != null ? beam.GetComponentInChildren<LiquidWrap>(true) : null;
+    }
+
+    private void OnDestroy()
+    {
+        if (inputActions != null)
+        {
+            Destroy(inputActions);
+        }
+    }
+
+    private void OnEnable()
+    {
+        playerMap?.Enable();
+    }
+
+    private void OnDisable()
+    {
+        playerMap?.Disable();
+        if (phase != ShotPhase.Idle)
+        {
+            reel?.Cancel();
+            EndShot();
+        }
+    }
+
+    /// <summary>色を変える（<see cref="SweeperPlayer"/> がチームの色を入れる）。</summary>
+    public void SetColor(Color color)
+    {
+        teamColor = color;
+        if (beam != null && phase != ShotPhase.Reeling)
+        {
+            beam.SetColor(IdleColor);
+        }
+    }
+
+    private Color IdleColor => Color.Lerp(teamColor, Color.white, idleWhiten);
+
+    private void Update()
+    {
+        bool blocked = GamePause.BlocksInput;
+        bool stunned = stun != null && stun.IsStunned;
+        bool pressed = !blocked && input.AttackPressed(attackAction);
+        bool released = !blocked && input.AttackReleased(attackAction);
+
+        switch (phase)
+        {
+            case ShotPhase.Idle:
+                if (pressed && !stunned)
+                {
+                    BeginCharge();
+                }
+                break;
+
+            case ShotPhase.Charging:
+                UpdateCharge(released, stunned);
+                break;
+
+            case ShotPhase.Extending:
+                UpdateExtend();
+                break;
+
+            case ShotPhase.Retracting:
+                traveled -= retractSpeed * Time.deltaTime;
+                if (traveled <= 0f)
+                {
+                    EndShot();
+                }
+                break;
+
+            case ShotPhase.Reeling:
+                if (pressed)
+                {
+                    reel.Press();
+                }
+                if (!reel.IsActive)
+                {
+                    EndShot();
+                }
+                break;
+        }
+    }
+
+    private void LateUpdate()
+    {
+        UpdateBend(phase == ShotPhase.Reeling, BeamTip, Time.deltaTime);
+
+        if (beam == null || !IsBeamOut)
+        {
+            return;
+        }
+
+        FollowBeam(BeamTip);
+    }
+
+    /// <summary>光線を手元から <paramref name="tip"/> まで描く。巻き取り中は、しなりの向きに曲げる。</summary>
+    private void FollowBeam(Vector3 tip)
+    {
+        if (bendActive)
+        {
+            // まっすぐの光線（手元→物資。下り坂の傾きを含む）を、物資への向きとしなりの向きの差だけ横に回した向きに出す。
+            // 傾きはそのまま残すので、向きを変えていなければ差が 0 で、上下にも曲がらない
+            Vector3 hand = HandPosition;
+            float turn = Mathf.DeltaAngle(bendTipYaw, bendYaw);
+            Vector3 startDirection = Quaternion.AngleAxis(turn, Vector3.up) * (tip - hand);
+            beam.Follow(hand, tip, startDirection, bendStrength);
+        }
+        else
+        {
+            beam.Follow(HandPosition, tip);
+        }
+    }
+
+    /// <summary>
+    /// しなりの向きを1フレームぶん進める。巻き取りが始まった瞬間は物資への向き（＝まっすぐ）から始め、
+    /// あとは体の向きへ、ばね（<see cref="bendStiffness"/>・<see cref="bendDamping"/>）で遅れて付いていく。
+    /// 物資への向きとの差は <see cref="maxBendAngle"/> までに抑える。
+    /// </summary>
+    private void UpdateBend(bool reeling, Vector3 tip, float deltaTime)
+    {
+        if (!reeling)
+        {
+            bendActive = false;
+            return;
+        }
+
+        Vector3 toTip = tip - transform.position;
+        toTip.y = 0f;
+        float tipYaw = toTip.sqrMagnitude > 0.0001f ? DirectionToYaw(toTip) : DirectionToYaw(transform.forward);
+        bendTipYaw = tipYaw;
+
+        if (!bendActive)
+        {
+            bendActive = true;
+            bendYaw = tipYaw;
+            bendYawSpeed = 0f;
+            return;
+        }
+
+        if (deltaTime <= 0f)
+        {
+            return;
+        }
+
+        // 処理が一瞬止まったとき（大きな deltaTime）に、ばねが暴れないようにする
+        deltaTime = Mathf.Min(deltaTime, 0.05f);
+
+        // 減衰するばね：行きたい向き（体の向き）との差に引かれ、速さに比例して止められる
+        float omega = bendStiffness;
+        float gap = Mathf.DeltaAngle(bendYaw, DirectionToYaw(transform.forward));
+        float accel = omega * omega * gap - 2f * bendDamping * omega * bendYawSpeed;
+        bendYawSpeed += accel * deltaTime;
+        bendYaw += bendYawSpeed * deltaTime;
+
+        // 曲がりすぎ（光線が輪になる）を防ぐ
+        float bent = Mathf.DeltaAngle(tipYaw, bendYaw);
+        if (Mathf.Abs(bent) > maxBendAngle)
+        {
+            bendYaw = tipYaw + Mathf.Sign(bent) * maxBendAngle;
+            bendYawSpeed = 0f;
+        }
+    }
+
+    private static float DirectionToYaw(Vector3 direction)
+    {
+        return Mathf.Atan2(direction.x, direction.z) * Mathf.Rad2Deg;
+    }
+
+    private static Vector3 YawToDirection(float yaw)
+    {
+        float radians = yaw * Mathf.Deg2Rad;
+        return new Vector3(Mathf.Sin(radians), 0f, Mathf.Cos(radians));
+    }
+
+    // ------------------------------------------------------------
+    // オンラインのほかの人の体（2026/10/28）
+    // ------------------------------------------------------------
+
+    /// <summary>ほかの人の体で、最後に見せた段階。段階が変わった瞬間だけ色やアニメーションを切り替えるために持つ。</summary>
+    private ShotPhase remotePhase = ShotPhase.Idle;
+
+    /// <summary>
+    /// **ほかの人の体に、本人から届いた光線の様子をそのまま見せる。**（<see cref="SweeperNetSync"/> が毎フレーム呼ぶ）
+    /// ほかの人の体ではこの部品は止まっている（操作はしない）ので、見た目だけをここで出す。
+    /// </summary>
+    public void ShowRemote(ShotPhase newPhase, Vector3 direction, float reach, Vector3 tip, HookableObject item)
+    {
+        ShownReelItem = newPhase == ShotPhase.Reeling ? item : null;
+
+        if (newPhase != remotePhase)
+        {
+            OnRemotePhaseChanged(remotePhase, newPhase);
+            remotePhase = newPhase;
+        }
+
+        if (newPhase == ShotPhase.Charging)
+        {
+            float ringRadius = ring != null ? ring.Radius : 0.5f;
+            aimArea?.Show(transform.position, direction, ringRadius, reach);
+            return;
+        }
+
+        aimArea?.Hide();
+
+        // しなりは、ほかの人の画面でもこの体の向き（通信で届く）から同じように計算する
+        Vector3 shownTip = newPhase == ShotPhase.Reeling && item != null ? item.AnchorPoint : tip;
+        UpdateBend(newPhase == ShotPhase.Reeling, shownTip, Time.deltaTime);
+
+        if (beam != null && newPhase != ShotPhase.Idle)
+        {
+            FollowBeam(shownTip);
+        }
+    }
+
+    private void OnRemotePhaseChanged(ShotPhase before, ShotPhase after)
+    {
+        switch (after)
+        {
+            case ShotPhase.Idle:
+                beam?.Stop();
+                beam?.SetColor(IdleColor);
+                wrap?.Release();
+                aimArea?.Hide();
+                animationPlayer?.PlayIdle();
+                break;
+
+            case ShotPhase.Charging:
+                animationPlayer?.PlayAim();
+                break;
+
+            case ShotPhase.Extending:
+                beam?.SetColor(IdleColor);
+                animationPlayer?.PlayShoot();
+                break;
+
+            case ShotPhase.Reeling:
+                beam?.ChangeColorFromTip(teamColor);
+                PlayWrap(ShownReelItem);
+                break;
+        }
+
+        // 巻き取りが終わったら縁取りをはなす（Idle 以外へ移ったとき。Idle は上で処理済み）
+        if (before == ShotPhase.Reeling && after != ShotPhase.Idle)
+        {
+            wrap?.Release();
+        }
+    }
+
+    /// <summary>つかんだ物資を液体で縁取り始める。物資が無ければ何もしない。</summary>
+    private void PlayWrap(HookableObject item)
+    {
+        if (wrap != null && item != null)
+        {
+            wrap.Play(item.transform, item.AnchorPoint, teamColor);
+        }
+    }
+
+    /// <summary>光線が出てくる手元の位置。</summary>
+    private Vector3 HandPosition
+    {
+        get
+        {
+            Vector3 forward = transform.forward;
+            forward.y = 0f;
+            forward = forward.sqrMagnitude > 0.0001f ? forward.normalized : Vector3.forward;
+            return transform.position + Vector3.up * handHeight + forward * handForward;
+        }
+    }
+
+    private void BeginCharge()
+    {
+        phase = ShotPhase.Charging;
+        charge = 0f;
+        if (mover != null) mover.FaceAim = true;
+        animationPlayer?.PlayAim();
+    }
+
+    private void UpdateCharge(bool released, bool stunned)
+    {
+        if (stunned)
+        {
+            // スタンしたら、撃たずにやめる
+            aimArea?.Hide();
+            EndShot();
+            return;
+        }
+
+        charge = Mathf.Clamp01(charge + Time.deltaTime / chargeSeconds);
+
+        float ringRadius = ring != null ? ring.Radius : 0.5f;
+        aimArea?.Show(transform.position, aim != null ? aim.Direction : transform.forward, ringRadius, CurrentReach);
+
+        if (released)
+        {
+            Fire();
+        }
+    }
+
+    private void Fire()
+    {
+        aimArea?.Hide();
+
+        launchDirection = aim != null ? aim.Direction : transform.forward;
+        launchDirection.y = 0f;
+        launchDirection = launchDirection.sqrMagnitude > 0.0001f ? launchDirection.normalized : Vector3.forward;
+        launchOrigin = transform.position + Vector3.up * castHeight;
+        targetDistance = CurrentReach;
+        traveled = 0f;
+        phase = ShotPhase.Extending;
+
+        // 撃った瞬間から投げ終わるまで歩けない（向きは狙いで変えられる）
+        if (mover != null) mover.MoveLocked = true;
+
+        if (beam != null)
+        {
+            beam.SetColor(IdleColor);
+        }
+
+        animationPlayer?.PlayShoot();
+    }
+
+    private void UpdateExtend()
+    {
+        float step = extendSpeed * Time.deltaTime;
+        float from = traveled;
+        float to = Mathf.Min(targetDistance, traveled + step);
+
+        if (TryHit(from, to, out RaycastHit hit, out HookableObject hookable))
+        {
+            traveled = hit.distance + from;
+
+            if (hookable != null)
+            {
+                phase = ShotPhase.Reeling;
+                reel.Begin(hookable);
+                beam?.ChangeColorFromTip(teamColor);
+                PlayWrap(hookable);
+                return;
+            }
+
+            // 壁などに当たった：そこから戻る
+            phase = ShotPhase.Retracting;
+            return;
+        }
+
+        traveled = to;
+        if (traveled >= targetDistance)
+        {
+            phase = ShotPhase.Retracting;
+        }
+    }
+
+    /// <summary>
+    /// 光線の先が <paramref name="from"/> から <paramref name="to"/> まで進む間に、何かに当たるか。
+    /// 物資（まだ誰も引っ掛けていない物）に当たれば <paramref name="hookable"/> に入る。
+    /// </summary>
+    private bool TryHit(float from, float to, out RaycastHit nearest, out HookableObject hookable)
+    {
+        nearest = default;
+        hookable = null;
+
+        float distance = to - from;
+        if (distance <= 0f)
+        {
+            return false;
+        }
+
+        Vector3 start = launchOrigin + launchDirection * from;
+        RaycastHit[] hits = Physics.SphereCastAll(start, hitRadius, launchDirection, distance, hitMask, QueryTriggerInteraction.Ignore);
+
+        bool found = false;
+        foreach (RaycastHit hit in hits)
+        {
+            // 自分の体には当たらない。最初から重なっている物（distance 0）は、場所が分からないので物資のときだけ使う
+            if (hit.collider.transform.IsChildOf(transform))
+            {
+                continue;
+            }
+
+            // 重いデブリも引っ掛けられる。投げずに引きずるだけ（SweeperReel。2026/11/5。前は壁と同じ扱いで光線が戻っていた）
+            HookableObject candidate = hit.collider.GetComponentInParent<HookableObject>();
+
+            bool usable = candidate != null && !candidate.IsHooked && !candidate.IsVanished && reel.CanHook(candidate);
+            if (!usable && (!stopAtWalls || candidate != null || hit.distance <= 0f))
+            {
+                // 引っ掛けられない物資（誰かが引いている。オンラインではほかの人が引いている物も）はすり抜ける。壁で止まらない設定のときも同じ
+                continue;
+            }
+
+            if (!found || hit.distance < nearest.distance)
+            {
+                nearest = hit;
+                hookable = usable ? candidate : null;
+                found = true;
+            }
+        }
+
+        return found;
+    }
+
+    /// <summary>光線をしまい、歩けるように戻す。</summary>
+    private void EndShot()
+    {
+        phase = ShotPhase.Idle;
+        traveled = 0f;
+        charge = 0f;
+
+        if (mover != null)
+        {
+            mover.MoveLocked = false;
+            mover.FaceAim = false;
+        }
+
+        if (beam != null)
+        {
+            beam.Stop();
+            beam.SetColor(IdleColor);
+        }
+
+        wrap?.Release();
+        aimArea?.Hide();
+        animationPlayer?.PlayIdle();
+    }
+
+    private LiquidBeam CreateBeam()
+    {
+        LiquidBeam made;
+        if (beamPrefab != null)
+        {
+            made = Instantiate(beamPrefab, transform);
+        }
+        else
+        {
+            // プレハブが入っていないとき。マテリアルは LiquidBeam が自分で作る
+            GameObject child = new GameObject("SweeperBeam");
+            child.transform.SetParent(transform, false);
+            made = child.AddComponent<LiquidBeam>();
+        }
+
+        made.name = "SweeperBeam";
+        made.HoldUntilStopped = true;
+        return made;
+    }
+}

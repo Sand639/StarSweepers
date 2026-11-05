@@ -19,6 +19,15 @@ using UnityEngine;
 /// （列車 <see cref="SpaceJunkTrain"/>・回転する床 <see cref="SpaceJunkRotatingFloor"/> と同じ）。
 /// ・プレイヤー … **自分のPCが、自分の体を運ぶ**
 /// ・物資 … **物理を動かしているPC（ふつうはホスト）が運ぶ**。ほかのPCでは物理が止まっているので何もしない
+///
+/// ## 物資は転がさずに、ベルトの面と一緒に滑らせる（2026/11/4・大槻さん）
+///
+/// 前は、止まっている床の上で物資だけを押していたので、底が床にこすれて**転がりながら進んでいた**。
+/// そのため、まっすぐのベルトのあとに横向きのベルトを置くと、転がる勢いで前の向きへ進み続けて不自然だった。
+/// ・ベルトに動かない Rigidbody（Is Kinematic）を付け、**物理の計算の上ではベルトの面が流れる速さで動いている**ことにした（見た目の位置は変わらない）。
+///   底がベルトと同じ速さになるので、こすれて転がらない
+/// ・物資の速さは、**ベルトの面に沿った向きぜんぶ**（流れる向きと、その横）をベルトの速さに合わせる。横向きのベルトに乗り移ると、前の向きの勢いが消えて横へ流れる
+/// ・回る勢い（角速度）には手を出さない。**重心が偏って傾く・倒れる・ぶつかって回る動きは、そのまま残る**
 /// </summary>
 [RequireComponent(typeof(BoxCollider))]
 public class SpaceJunkConveyor : MonoBehaviour
@@ -64,6 +73,9 @@ public class SpaceJunkConveyor : MonoBehaviour
 
     private BoxCollider box;
 
+    /// <summary>ベルトの面を「動いている床」として物理に見せるための、動かない Rigidbody。Awake で付ける。</summary>
+    private Rigidbody surfaceBody;
+
     /// <summary>見た目の帯（横の筋）。Awake で Belt Size に合わせた数だけ作る。</summary>
     private readonly List<Transform> slats = new List<Transform>();
 
@@ -84,6 +96,16 @@ public class SpaceJunkConveyor : MonoBehaviour
         box = GetComponent<BoxCollider>();
         ApplySize();
         BuildSlats();
+
+        // プレハブやシーンを書き換えずに済むよう、再生したときに付ける
+        surfaceBody = GetComponent<Rigidbody>();
+        if (surfaceBody == null)
+        {
+            surfaceBody = gameObject.AddComponent<Rigidbody>();
+        }
+        surfaceBody.isKinematic = true;
+        surfaceBody.useGravity = false;
+        surfaceBody.interpolation = RigidbodyInterpolation.None;
     }
 
     private void OnValidate()
@@ -194,7 +216,7 @@ public class SpaceJunkConveyor : MonoBehaviour
         int count = OverlapAbove();
         pushedThisStep.Clear();
 
-        float target = Mathf.Abs(speed);
+        Vector3 beltVelocity = FlowDirection * Mathf.Abs(speed);
         float grip = Mathf.Clamp01(itemGrip * Time.fixedDeltaTime);
 
         for (int i = 0; i < count; i++)
@@ -212,16 +234,43 @@ public class SpaceJunkConveyor : MonoBehaviour
                 continue;
             }
 
-            float along = Vector3.Dot(body.linearVelocity, FlowDirection);
-            body.AddForce(FlowDirection * ((target - along) * grip), ForceMode.VelocityChange);
+            // ベルトの面に沿った向きだけ、ベルトとの速さの差を縮める（上下の動き＝落ちる・跳ねるは物理に任せる）。
+            // 重心に力をかけるので、回る勢いは変わらない
+            Vector3 slip = Vector3.ProjectOnPlane(body.linearVelocity - beltVelocity, transform.up);
+            body.AddForce(-slip * grip, ForceMode.VelocityChange);
         }
+
+        MoveSurface();
+    }
+
+    /// <summary>
+    /// ベルトの面を、流れる向きに動いていることにする。一度うしろへ戻してから元の場所へ「動かす」ので、
+    /// 位置は変わらないが、物理の計算ではベルトが流れる速さで動いていることになる（乗った物は摩擦で一緒に滑る）。
+    /// </summary>
+    private void MoveSurface()
+    {
+        Vector3 position = surfaceBody.position;
+        surfaceBody.position = position - FlowDirection * (Mathf.Abs(speed) * Time.fixedDeltaTime);
+        surfaceBody.MovePosition(position);
+    }
+
+    /// <summary>
+    /// 見た目どおりの幅と長さ（m）。Belt Size に、Transform の Scale（親の分も含む）を掛けたもの。
+    /// ロビーのように Scale で縮めて置いたベルトでも、運ぶ範囲と矢印が見た目と合うようにする（2026/11/4）。
+    /// </summary>
+    private Vector2 WorldWidthAndLength()
+    {
+        Vector3 scale = transform.lossyScale;
+        return new Vector2(beltSize.x * Mathf.Abs(scale.x), beltSize.z * Mathf.Abs(scale.z));
     }
 
     /// <summary>ベルトの上の箱に入っている当たり判定を集める。数を返す。</summary>
     private int OverlapAbove()
     {
-        Vector3 halfExtents = new Vector3(beltSize.x * 0.5f, carryHeight * 0.5f, beltSize.z * 0.5f);
-        Vector3 center = transform.TransformPoint(new Vector3(0f, carryHeight * 0.5f, 0f));
+        // 高さ（Carry Height）は Scale に関係なくメートルのまま
+        Vector2 size = WorldWidthAndLength();
+        Vector3 halfExtents = new Vector3(size.x * 0.5f, carryHeight * 0.5f, size.y * 0.5f);
+        Vector3 center = transform.position + transform.up * (carryHeight * 0.5f);
 
         return Physics.OverlapBoxNonAlloc(center, halfExtents, overlapBuffer, transform.rotation,
             ~0, QueryTriggerInteraction.Ignore);
@@ -304,12 +353,15 @@ public class SpaceJunkConveyor : MonoBehaviour
     {
         // 最初に流れる向きを、ベルトの上に矢印（線）で出す
         Gizmos.color = new Color(1f, 0.85f, 0.2f, 0.9f);
+        Vector2 size = WorldWidthAndLength();
         Vector3 forward = transform.forward * (speed >= 0f ? 1f : -1f);
-        Vector3 from = transform.position + Vector3.up * 0.1f - forward * beltSize.z * 0.4f;
-        Vector3 to = transform.position + Vector3.up * 0.1f + forward * beltSize.z * 0.4f;
+        Vector3 from = transform.position + Vector3.up * 0.1f - forward * size.y * 0.4f;
+        Vector3 to = transform.position + Vector3.up * 0.1f + forward * size.y * 0.4f;
         Gizmos.DrawLine(from, to);
-        Vector3 side = Vector3.Cross(Vector3.up, forward) * (beltSize.x * 0.3f);
-        Gizmos.DrawLine(to, to - forward * 1.5f + side);
-        Gizmos.DrawLine(to, to - forward * 1.5f - side);
+        // 矢じりは最大 1.5m。短いベルトでは長さに合わせて小さくする
+        float head = Mathf.Min(1.5f, size.y * 0.3f);
+        Vector3 side = Vector3.Cross(Vector3.up, forward) * (size.x * 0.3f);
+        Gizmos.DrawLine(to, to - forward * head + side);
+        Gizmos.DrawLine(to, to - forward * head - side);
     }
 }

@@ -1,4 +1,5 @@
 using System.Collections.Generic;
+using System.Linq;
 using System.Net;
 using System.Text;
 using System.Net.NetworkInformation;
@@ -1801,8 +1802,14 @@ public class TitleScreen : MonoBehaviour
     // クイックプレイ（2026/10/15・大槻さん）
     // ------------------------------------------------------------
 
-    /// <summary>クイックプレイで、公開のサーバーを探している途中か（二度押し防止）。</summary>
+    /// <summary>クイックプレイで、公開のサーバーを探している・入ろうとしている途中か（二度押し防止）。</summary>
     private bool quickPlaying;
+
+    /// <summary>
+    /// クイックプレイで部屋に入れず、次の部屋を試すまでの間に出す文。それ以外のときは null。
+    /// 次の部屋に入りに行くまでの一瞬、つないでいる途中の表示が消えてちらつかないようにする（<see cref="ChooseBusyContent"/>）。
+    /// </summary>
+    private string quickPlayNotice;
 
     /// <summary>クイックプレイが、一覧の取り直しが終わるのを待つとき、何ミリ秒ごとに確かめるか。</summary>
     private const int QuickPlayWaitStepMilliseconds = 100;
@@ -1810,9 +1817,10 @@ public class TitleScreen : MonoBehaviour
     /// <summary>
     /// **クイックプレイ。** 公開されているサーバー（パブリック）を探して入る。
     ///
-    /// ・入れるサーバー（満員でない・鍵がかかっていない・パスワードなし）のうち、**いちばん人の多いところ**に入る
+    /// ・入れるサーバー（満員でない・鍵がかかっていない・パスワードなし）を、**人の多い順に**試す
     ///   （人がばらばらの部屋に分かれないように）
-    /// ・1つも無ければ、**初期の設定でパブリックのサーバーを作る**（名前は「（名前）のサーバー」・定員・パスワードなし）
+    /// ・**入れなかったら、エラーで止めずに次の部屋を試す**（2026/10/28・大槻さん。相手のゲームと中身（版）が違うと、つないだ直後に相手から切られる）
+    /// ・どこにも入れなかった・1つも無かったら、**初期の設定でパブリックのサーバーを作る**（名前は「（名前）のサーバー」・定員・パスワードなし）
     ///
     /// 探している途中・入る途中の表示は、つないでいる途中の表示（<see cref="UpdateBusyOverlay"/>）がそのまま出す。
     /// </summary>
@@ -1831,7 +1839,20 @@ public class TitleScreen : MonoBehaviour
         }
 
         quickPlaying = true;
+        try
+        {
+            await QuickPlayAsync(internet);
+        }
+        finally
+        {
+            quickPlaying = false;
+            quickPlayNotice = null;
+        }
+    }
 
+    /// <summary><see cref="QuickPlay"/> の中身（終わったら、呼んだ側が二度押し防止を外す）。</summary>
+    private async System.Threading.Tasks.Task QuickPlayAsync(InternetConnection internet)
+    {
         // 参加可能なサーバーの一覧を取っている途中なら、終わるまで待つ（インターネットの係は1つのことしかできないため）
         while (searching && this != null)
         {
@@ -1841,30 +1862,32 @@ public class TitleScreen : MonoBehaviour
         // 待っている間に画面が消えた、またはほかの作業（入る・作る）が始まっていたらやめる
         if (this == null || internet.IsBusy)
         {
-            quickPlaying = false;
             return;
         }
 
         List<ISessionInfo> sessions = await internet.QueryPublicSessionsAsync();
-        quickPlaying = false;
-
-        if (this == null)
-        {
-            return;
-        }
 
         // 一覧を取れなかった（つながっていない など）。理由は、つないでいる途中の表示に「戻る」と一緒に出る
-        if (sessions == null)
+        if (this == null || sessions == null)
         {
             return;
         }
 
-        ISessionInfo best = FindFullestOpenSession(sessions, out int bestPlayers);
-        if (best != null)
+        foreach (ISessionInfo info in OpenSessionsFullestFirst(sessions))
         {
-            Debug.Log($"[UI] クイックプレイ：公開のサーバー「{best.Name}」（{bestPlayers}/{best.MaxPlayers}）に入ります。");
-            internet.JoinGameById(best.Id);
-            return;
+            Debug.Log($"[UI] クイックプレイ：公開のサーバー「{info.Name}」（{PlayersIn(info)}/{info.MaxPlayers}）に入ります。");
+            if (await internet.JoinGameByIdAsync(info.Id, string.Empty, true) || this == null)
+            {
+                return;
+            }
+
+            // つなぐ準備から失敗した（インターネットにつながっていない など）。ほかの部屋でも同じなので、ここでやめる（理由は表示に出る）
+            if (internet.State == InternetConnection.Phase.Failed)
+            {
+                return;
+            }
+
+            quickPlayNotice = "部屋に入れなかったので、ほかの部屋を探しています…";
         }
 
         string serverName = DefaultServerName();
@@ -1874,29 +1897,22 @@ public class TitleScreen : MonoBehaviour
     }
 
     /// <summary>
-    /// すぐ入れるサーバー（空きがある・鍵がかかっていない・パスワードなし）のうち、いちばん人の多いもの。無ければ null。
-    /// 人数が同じなら、先に見つかったほう。
+    /// すぐ入れるサーバー（空きがある・鍵がかかっていない・パスワードなし）を、**人の多い順**に並べたもの。クイックプレイはこの順に試す。
+    /// 人数が同じなら、一覧で先にあったほうが先（テスト：<c>QuickPlayOrderTests</c>）。
     /// </summary>
-    private static ISessionInfo FindFullestOpenSession(List<ISessionInfo> sessions, out int bestPlayers)
+    public static List<ISessionInfo> OpenSessionsFullestFirst(List<ISessionInfo> sessions)
     {
-        ISessionInfo best = null;
-        bestPlayers = -1;
+        List<ISessionInfo> open = new List<ISessionInfo>();
         foreach (ISessionInfo info in sessions)
         {
-            if (info.AvailableSlots <= 0 || info.IsLocked || info.HasPassword)
+            if (info.AvailableSlots > 0 && !info.IsLocked && !info.HasPassword)
             {
-                continue;
-            }
-
-            int players = PlayersIn(info);
-            if (players > bestPlayers)
-            {
-                best = info;
-                bestPlayers = players;
+                open.Add(info);
             }
         }
 
-        return best;
+        // OrderByDescending は、人数が同じものの並びを変えない（List.Sort は変えることがある）
+        return open.OrderByDescending(info => PlayersIn(info)).ToList();
     }
 
     // ------------------------------------------------------------
@@ -2043,6 +2059,11 @@ public class TitleScreen : MonoBehaviour
         else if (internet != null && internet.IsBusy && !searching)
         {
             message = string.IsNullOrEmpty(internet.Message) ? "つないでいます…" : internet.Message;
+        }
+        // クイックプレイで部屋に入れず、次の部屋を試しに行くまでの一瞬（表示を消さない。2026/10/28）
+        else if (quickPlayNotice != null)
+        {
+            message = quickPlayNotice;
         }
         // 失敗はどの画面でも出す（一覧から入るときに、パスワードが違うと分かるように。一覧の検索の失敗は、一覧の中に出してすぐ消す）
         // 参加の確認の窓から入ろうとして失敗した：つないでいる途中の表示ではなく、窓の中に理由を出す（2026/10/19）
