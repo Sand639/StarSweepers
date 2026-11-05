@@ -342,8 +342,13 @@ MonoBehaviour:
   maxSwingSpeed: 540
   backDistance: 6
   backArcHeight: 3.2
+  throwFollowMotion: 0.5
   forwardSpeed: 12
   forwardLift: 1.5
+  heavyDragDistance: 4
+  heavyDragMinDistance: 0.8
+  heavyDragSpeed: 3
+  heavyStopDistance: 2
   criticalStart: 1
   criticalLength: 0.2
   criticalBackDistance: 18
@@ -352,6 +357,8 @@ MonoBehaviour:
   criticalHitPrefab: {fileID: 0}
   flashColor: {r: 1, g: 0.82, b: 0.2, a: 1}
   flashMaterial: {fileID: 2100000, guid: 7a484494f321dc940b60859f5bbd7349, type: 2}
+  outlineMaterial: {fileID: 2100000, guid: 9db1d0f3ee91966438099640cdf530be, type: 2}
+  whiteFlashMaterial: {fileID: 2100000, guid: 20ca7595540946d4e98adb69e22ac443, type: 2}
   cueLead: 0.5
   cueShrinkRing: 1
   cueGoldOutline: 1

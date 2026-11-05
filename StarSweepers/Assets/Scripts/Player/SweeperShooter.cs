@@ -9,7 +9,7 @@ using UnityEngine.InputSystem;
 /// | RT／左クリックを押す | 狙い始める。リングの縁から、届く長さの矢印の帯（<see cref="SweeperAimArea"/>）が出る |
 /// | 押している間 | 帯が最短から最長まで伸びていく（Charge Seconds で最長）。**歩ける**。体は狙う方向を向く |
 /// | 離す | 光線がその長さまで伸びる（<see cref="extendSpeed"/>）。**ここから投げ終わるまで歩けない** |
-/// | 光線が物資に当たる | 自動で巻き取りへ（<see cref="SweeperReel"/>）。巻き取り中に押すと後ろへ投げる |
+/// | 光線が物資に当たる | 自動で巻き取りへ（<see cref="SweeperReel"/>）。巻き取り中に押すと後ろへ投げる（重い物は投げずに引きずるだけ） |
 /// | 何にも当たらない・壁に当たる | 光線が戻ってくる。戻りきったら歩ける |
 ///
 /// 光線の見た目は液体のビーム（<see cref="LiquidBeam"/>）。何もつかんでいない間は薄いチームの色、つかんだら濃くなる。
@@ -142,6 +142,12 @@ public class SweeperShooter : MonoBehaviour
 
     /// <summary>いま離したら、光線がどこまで伸びるか（プレイヤーの中心から m）。</summary>
     public float CurrentReach => Mathf.Lerp(minReach, Mathf.Max(minReach, maxReach), charge);
+
+    /// <summary>いちばん長く伸ばしたときの長さ（プレイヤーの中心から m）。ボットが撃つ場所を決めるのに使う。</summary>
+    public float MaxReach => Mathf.Max(minReach, maxReach);
+
+    /// <summary>光線の先の、当たりを見る球の半径（m）。</summary>
+    public float HitRadius => hitRadius;
 
     /// <summary>いまの段階の名前（検証用の表示に使う）。</summary>
     public string PhaseName => phase.ToString();
@@ -596,13 +602,8 @@ public class SweeperShooter : MonoBehaviour
                 continue;
             }
 
+            // 重いデブリも引っ掛けられる。投げずに引きずるだけ（SweeperReel。2026/11/5。前は壁と同じ扱いで光線が戻っていた）
             HookableObject candidate = hit.collider.GetComponentInParent<HookableObject>();
-
-            // 重いデブリは、いまは引っ張れない（壁と同じ扱い。2026/10/28）
-            if (candidate != null && HeavyHookable.TryGetWeight(candidate, out _))
-            {
-                candidate = null;
-            }
 
             bool usable = candidate != null && !candidate.IsHooked && !candidate.IsVanished && reel.CanHook(candidate);
             if (!usable && (!stopAtWalls || candidate != null || hit.distance <= 0f))

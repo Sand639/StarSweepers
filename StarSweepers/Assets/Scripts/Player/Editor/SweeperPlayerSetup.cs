@@ -11,7 +11,9 @@ using UnityEngine;
 /// | `Tools > StarSweepers > プレイヤー（本実装）のプレハブを作り直す` | `Assets/Prefabs/Common/SweeperPlayer.prefab` を最初の状態で作り直す。⚠️ **インスペクターで調整した値は消える** |
 /// | `Tools > StarSweepers > プレイヤー（本実装）の体をキャラクターダミーに差し替える` | 2つの新しい体のプレハブ（これと `SpaceJunkSweeperPlayer.prefab`）を、**作り直さずに**カプセルからキャラクターダミーへ替える |
 ///
-/// マテリアル（`Art/Materials/SweeperRing.mat`・`SweeperAimStrip.mat`）は無ければ作る。
+/// | `Tools > StarSweepers > プレイヤー（本実装）のプレハブにエフェクトのマテリアルを入れる` | 2つの新しい体のプレハブに、物資のフチ・白い光のマテリアルを**作り直さずに**入れる（2026/11/5） |
+///
+/// マテリアル（`Art/Materials/SweeperRing.mat`・`SweeperAimStrip.mat`・`SweeperItemOutline.mat`・`SweeperItemFlash.mat`）は無ければ作る。
 /// 狙いの帯の画像（`Art/Sprites/AimLengthBody.png`・`AimLengthTip.png`）の読み込み設定もここで整える（繰り返し用に Wrap Mode を Repeat）。
 ///
 /// ※ Editor フォルダにあるため、ゲームのビルドには含まれない。
@@ -23,6 +25,10 @@ public static class SweeperPlayerSetup
     private const string RingMaterialPath = "Assets/Art/Materials/SweeperRing.mat";
     private const string StripMaterialPath = "Assets/Art/Materials/SweeperAimStrip.mat";
     private const string BodyMaterialPath = "Assets/Art/Materials/SweeperBody.mat";
+    private const string OutlineMaterialPath = "Assets/Art/Materials/SweeperItemOutline.mat";
+    private const string ItemFlashMaterialPath = "Assets/Art/Materials/SweeperItemFlash.mat";
+    private const string OutlineShaderName = "StarSweepers/SweeperOutline";
+    private const string OnlinePrefabPath = "Assets/Prefabs/SpaceJunk/Online/SpaceJunkSweeperPlayer.prefab";
     private const string BodyTexturePath = "Assets/Art/Sprites/AimLengthBody.png";
     private const string TipTexturePath = "Assets/Art/Sprites/AimLengthTip.png";
     private const string BeamPrefabPath = "Assets/Prefabs/Effect/LiquidBeam.prefab";
@@ -79,6 +85,10 @@ public static class SweeperPlayerSetup
             FishingSceneBuilder.SetFloat(far, "respawnSeconds", 6f);
         }
 
+        // ----- 重い物（投げられず、引きずるだけ。2026/11/5） -----
+        CreateHeavySupply("HeavySupply_1", new Vector3(-7f, 0.6f, 4f), 1.5f);
+        CreateHeavySupply("HeavySupply_2", new Vector3(7f, 0.6f, 4f), 3f);
+
         // ----- 画面の説明 -----
         GameObject hudObject = new GameObject("SweeperPlayerTestHud");
         SweeperPlayerTestHud hud = hudObject.AddComponent<SweeperPlayerTestHud>();
@@ -131,6 +141,93 @@ public static class SweeperPlayerSetup
 
         Debug.Log($"[SweeperPlayer] プレイヤー（本実装）のプレハブを作りました：{PrefabPath}");
         return prefab;
+    }
+
+    /// <summary>
+    /// **作り直さずに、今の検証シーンへ重い物を2つ足す**（2026/11/5。もうあれば何もしない）。
+    /// 作り直すと、手で直したライトの設定などが消えるため。`-executeMethod SweeperPlayerSetup.AddHeavySuppliesToTestScene` で使う。
+    /// </summary>
+    public static void AddHeavySuppliesToTestScene()
+    {
+        var scene = EditorSceneManager.OpenScene(ScenePath, OpenSceneMode.Single);
+        if (GameObject.Find("HeavySupply_1") != null)
+        {
+            Debug.Log("[SweeperPlayer] 検証シーンには、もう重い物があります。");
+            return;
+        }
+
+        CreateHeavySupply("HeavySupply_1", new Vector3(-7f, 0.6f, 4f), 1.5f);
+        CreateHeavySupply("HeavySupply_2", new Vector3(7f, 0.6f, 4f), 3f);
+        EditorSceneManager.SaveScene(scene);
+        Debug.Log($"[SweeperPlayer] 検証シーンに重い物を2つ足しました：{ScenePath}");
+    }
+
+    /// <summary>検証シーンの重い物。ふつうの物資を置いて、再生したときに重くする部品（<see cref="SweeperHeavyTestItem"/>）を付ける。</summary>
+    private static void CreateHeavySupply(string name, Vector3 position, float weight)
+    {
+        HookableObject item = FishingSceneBuilder.CreateSupply(name, position);
+        FishingSceneBuilder.SetFloat(item, "respawnSeconds", 6f);
+        SweeperHeavyTestItem heavy = item.gameObject.AddComponent<SweeperHeavyTestItem>();
+        FishingSceneBuilder.SetFloat(heavy, "weight", weight);
+        FishingSceneBuilder.SetFloat(heavy, "scale", 1.3f + 0.2f * weight);
+    }
+
+    /// <summary>
+    /// **2つの新しい体のプレハブ（これと `SpaceJunkSweeperPlayer.prefab`）に、物資のフチ・白い光のマテリアルを入れる。**（2026/11/5）
+    /// 作り直さないので、インスペクターで調整した値は残る。マテリアルのファイルが無ければ作る。
+    /// プレハブからマテリアルのファイルを指しておくと、シェーダーもビルドに入る（前は再生中に名前で探していて、ビルドでは出ないことがあった）。
+    /// </summary>
+    [MenuItem("Tools/StarSweepers/プレイヤー（本実装）のプレハブにエフェクトのマテリアルを入れる")]
+    public static void AssignGlowMaterials()
+    {
+        Material outline = OutlineMaterial();
+        Material flash = ItemFlashMaterial();
+
+        foreach (string path in new[] { PrefabPath, OnlinePrefabPath })
+        {
+            if (AssetDatabase.LoadAssetAtPath<GameObject>(path) == null)
+            {
+                Debug.LogWarning($"[SweeperPlayer] {path} が見つかりません。");
+                continue;
+            }
+
+            GameObject contents = PrefabUtility.LoadPrefabContents(path);
+            SweeperReel reel = contents.GetComponent<SweeperReel>();
+            if (reel != null)
+            {
+                FishingSceneBuilder.SetRef(reel, "outlineMaterial", outline);
+                FishingSceneBuilder.SetRef(reel, "whiteFlashMaterial", flash);
+                PrefabUtility.SaveAsPrefabAsset(contents, path);
+                Debug.Log($"[SweeperPlayer] エフェクトのマテリアルを入れました：{path}");
+            }
+            PrefabUtility.UnloadPrefabContents(contents);
+        }
+
+        AssetDatabase.SaveAssets();
+    }
+
+    /// <summary>物資の金色のフチのマテリアル（裏の面だけ描く）。無ければ作る。</summary>
+    internal static Material OutlineMaterial()
+    {
+        return GetOrCreateGlowMaterial(OutlineMaterialPath, UnityEngine.Rendering.CullMode.Front);
+    }
+
+    /// <summary>物資が白く光るマテリアル（表の面を描く）。無ければ作る。</summary>
+    internal static Material ItemFlashMaterial()
+    {
+        return GetOrCreateGlowMaterial(ItemFlashMaterialPath, UnityEngine.Rendering.CullMode.Back);
+    }
+
+    /// <summary>`SweeperOutline` シェーダーのマテリアルを作る（あればそのまま使う）。描く面（_Cull）だけ違う2つを作る。</summary>
+    private static Material GetOrCreateGlowMaterial(string path, UnityEngine.Rendering.CullMode cull)
+    {
+        Material material = GetOrCreateShaderMaterial(path, OutlineShaderName);
+        if (material != null && material.HasProperty("_Cull") && !Mathf.Approximately(material.GetFloat("_Cull"), (float)cull))
+        {
+            material.SetFloat("_Cull", (float)cull);
+            EditorUtility.SetDirty(material);
+        }
+        return material;
     }
 
     /// <summary>体（カプセル）のマテリアル（薄い灰色）。無ければ作る。</summary>
@@ -197,6 +294,8 @@ public static class SweeperPlayerSetup
         FishingSceneBuilder.SetRef(mover, "inputActions", inputActions);
         FishingSceneBuilder.SetRef(aim, "cursorVisual", cursor.transform);
         FishingSceneBuilder.SetRef(reel, "flashMaterial", ringMaterial);
+        FishingSceneBuilder.SetRef(reel, "outlineMaterial", OutlineMaterial());
+        FishingSceneBuilder.SetRef(reel, "whiteFlashMaterial", ItemFlashMaterial());
         FishingSceneBuilder.SetRef(shooter, "aim", aim);
         FishingSceneBuilder.SetRef(shooter, "mover", mover);
         FishingSceneBuilder.SetRef(shooter, "reel", reel);
