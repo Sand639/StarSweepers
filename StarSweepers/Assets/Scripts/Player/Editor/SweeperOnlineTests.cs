@@ -16,7 +16,7 @@ using UnityEngine.TestTools;
 /// ・光線が物資に当たると、ホストが「その人が引っ掛け中」と記録し、持ち主が参加者へ移る
 /// ・巻き取り中に押すと、ホストが物資を受け取り（記録が消え、持ち主がホストへ戻る）、物資が上へ飛ぶ（頭を越える放物線）
 /// ・体の歩く部品が止められると、光線の部品も止まる
-/// ・設定「プレイヤー：新しい体」で、部屋を作る前の Player Prefab が新しい体に入れ替わる（ボットは今の体のまま）
+/// ・部屋を作る前の Player Prefab が、設定なしで新しい体に入れ替わる（2026/11/3）。ボットも新しい体で出す（2026/11/5）
 ///
 /// `Window > General > Test Runner` の EditMode から実行できる。
 /// </summary>
@@ -37,7 +37,7 @@ public class SweeperOnlineTests
     }
 
     [UnityTest]
-    public IEnumerator Switch_ReplacesPlayerPrefabBeforeHosting_AndKeepsBotsOnCurrentBody()
+    public IEnumerator Switch_ReplacesPlayerPrefabBeforeHosting_AndBotsUseSweeperBody()
     {
         yield return new EnterPlayMode();
         yield return CheckSwitch();
@@ -59,8 +59,6 @@ public class SweeperOnlineTests
         Assert.That(currentBody, Is.Not.Null);
         Assert.That(sweeperBody, Is.Not.Null, "新しい体のプレハブが無い（メニューで作る）");
 
-        PlayerBodyType saved = GameSettings.PlayerBody;
-
         GameObject root = new GameObject("SwitchTestManager");
         try
         {
@@ -75,24 +73,16 @@ public class SweeperOnlineTests
             manager.NetworkConfig.Prefabs.Add(new NetworkPrefab { Prefab = sweeperBody });
             yield return WaitFor("singleton", () => NetworkManager.Singleton == manager);
 
-            GameSettings.PlayerBody = PlayerBodyType.Current;
-            yield return Wait(0.3f);
-            Assert.That(manager.NetworkConfig.PlayerPrefab, Is.EqualTo(currentBody), "今の体のときは入れ替えない");
-
-            GameSettings.PlayerBody = PlayerBodyType.Sweeper;
             yield return WaitFor("swap", () => manager.NetworkConfig.PlayerPrefab == sweeperBody);
             Assert.That(Object.FindObjectsByType<SweeperOnlineSwitch>(FindObjectsInactive.Include, FindObjectsSortMode.None).Length,
                 Is.GreaterThan(0), "切り替えの係が作られていない");
             Assert.That(manager.NetworkConfig.PlayerPrefab, Is.EqualTo(sweeperBody), "新しい体に入れ替わっていない");
-            Assert.That(SweeperOnlineSwitch.BotPrefabOr(manager.NetworkConfig.PlayerPrefab), Is.EqualTo(currentBody),
-                "ボットは今の体のままにする");
-
-            GameSettings.PlayerBody = PlayerBodyType.Current;
-            yield return WaitFor("swap back", () => manager.NetworkConfig.PlayerPrefab == currentBody);
+            Assert.That(SweeperOnlineSwitch.BotPrefabOr(manager.NetworkConfig.PlayerPrefab), Is.EqualTo(sweeperBody),
+                "ボットも新しい体で出す（2026/11/5）");
+            Assert.That(SweeperOnlineSwitch.CurrentBodyPrefab, Is.EqualTo(currentBody), "今の体を覚えていない");
         }
         finally
         {
-            GameSettings.PlayerBody = saved;
             Object.Destroy(root);
             Object.Destroy(currentBody);
         }

@@ -9,7 +9,8 @@ using UnityEngine.SceneManagement;
 /// 始まりの演出の部品が持って使う。シーンには置かない。
 ///
 /// 1. 飛ぶ（使う側が渡す Fly 秒）… 各チームのゴールエリアが、そのチームのプレイヤーを乗せ、横に並んでマップの奥から、
-///    マップの奥の端の少し先まで飛ぶ（近づくにつれてゆっくりに）。乗っている人の並びが、奥を向いたときの左右になるように向きを回しておく
+///    マップの奥の端の少し先まで飛ぶ（近づくにつれてゆっくりに）。乗っている人が手前（飛んでいく向き）を向くように向きを回しておく
+///    （2026/11/4 から。乗っている人はゴールエリアと一緒に回る。並びは左右になる）
 /// 2. 設置（使う側が渡す Land 秒）… それぞれ元のゴールの位置へ飛んで設置される（途中で少しふくらむ。向きも元に戻す）
 ///
 /// 飛んでいるのは**ゴールの見た目の写し**（当たり判定なし）。本物のゴールは動かさず、演出のあいだ見た目だけ隠す
@@ -17,7 +18,7 @@ using UnityEngine.SceneManagement;
 /// 写すのは <see cref="SpaceJunkGoal.IntroVisual"/>（ふだんは色を塗る床。ゴールエリアを3Dモデルに替えたら、そのモデル）。
 ///
 /// プレイヤーは、**設置されたときに立つ場所**（<see cref="SpaceJunkPlayerSetup.TryGetGoalSpawnPosition"/>。ゴールエリアの上の決まった場所）を
-/// ゴールエリアと同じだけ動かして回した所に、**全員のPCで全員ぶん**置く。自分のぶんはその位置が通信で配られ、
+/// ゴールエリアと同じだけ動かして回した所に、ゴールエリアと同じだけ回した向きで、**全員のPCで全員ぶん**置く。自分のぶんはその位置が通信で配られ、
 /// ほかの人のぶんは、通信の遅れでゴールエリアからずれて見えないように、こちらで上書きする。設置された時点で、ずれは 0 になる。
 /// そのため、**使う側は `DefaultExecutionOrder(10000)` の LateUpdate から <see cref="Update"/> を呼ぶこと**
 /// （通信の位置合わせ（NetworkTransform）は LateUpdate より前に動くので、そのあとで上書きすれば、そのフレームの表示に勝てる）。
@@ -48,7 +49,7 @@ public class SpaceJunkGoalCarrier
         /// <summary>飛び終わり（マップに近づいた所）。ここから元の位置へ設置される。</summary>
         public Vector3 Approach;
 
-        /// <summary>飛んでいる間に回しておく角度（度）。プレイヤーが並ぶ向きが、奥を向いたときの左右になるように回す。設置で 0 に戻る。</summary>
+        /// <summary>飛んでいる間に回しておく角度（度）。乗っているプレイヤーが手前を向くように回す。設置で 0 に戻る。</summary>
         public float FlyYaw;
 
         /// <summary>横に並べるときの幅（m）。</summary>
@@ -231,31 +232,15 @@ public class SpaceJunkGoalCarrier
     }
 
     /// <summary>
-    /// 飛んでいる間に回しておく角度（度）。ゴールの「横」（ゴールから中心へ向かう向きと直角。プレイヤーが並ぶ向き。
-    /// <see cref="SpaceJunkPlayerSetup.TryGetGoalSpawnPosition"/> と同じ求め方）が、奥を向いたときの左右になる角度。
-    /// 回す量が小さいほう（±90 度以内）を選ぶ。
+    /// 飛んでいる間に回しておく角度（度）。**設置されたときにプレイヤーが向く向き（中心のほう）が、手前（飛んでいく向き。カメラの側）になる角度。**
+    /// プレイヤーはゴールエリアと一緒に回るので、飛んでいる間は全員が手前を向く（2026/11/4・大槻さん「プレイヤーの角度が地面の角度と同じ向きを向くように。
+    /// この写真だと正面スタート」。前は、並ぶ向きを左右に合わせる小さいほうの角度で回していて、プレイヤーは横を向いていた）。
+    /// 中心のほうを向くと並ぶ向きは直角になるので、並びはこれまでどおり左右になる。
     /// </summary>
     private float FlyYawOf(Vector3 final)
     {
-        Vector3 toCenter = new Vector3(-final.x, 0f, -final.z);
-        if (toCenter.sqrMagnitude < 0.01f)
-        {
-            toCenter = Vector3.forward;
-        }
-
-        Vector3 side = Vector3.Cross(Vector3.up, toCenter.normalized);
-        float angle = Vector3.SignedAngle(side, Right, Vector3.up);
-
-        if (angle > 90f)
-        {
-            angle -= 180f;
-        }
-        else if (angle < -90f)
-        {
-            angle += 180f;
-        }
-
-        return angle;
+        Vector3 facing = SpaceJunkPlayerSetup.SpawnFacing(final) * Vector3.forward;
+        return Vector3.SignedAngle(facing, -Backward, Vector3.up);
     }
 
     /// <summary>
@@ -295,7 +280,7 @@ public class SpaceJunkGoalCarrier
 
     /// <summary>
     /// **全員を、自分のチームのゴールエリアに乗せる**（全員のPCで、全員ぶん）。
-    /// 設置されたときに立つ場所を、ゴールエリアと同じだけ動かして回した所に置く。
+    /// 設置されたときに立つ場所を、ゴールエリアと同じだけ動かして回した所に置く。向き（設置されたときは中心のほう）も同じだけ回す。
     /// 落ちたりぶつかったりしないよう、乗っている間は当たり判定（CharacterController）を切る（ほかの人のぶんは元から切れている）。
     /// </summary>
     private void RidePlayers()
@@ -336,8 +321,9 @@ public class SpaceJunkGoalCarrier
                 disabledControllers.Add(controller);
             }
 
+            // 向きも、設置されたときの向き（中心のほう）をゴールエリアと同じだけ回す（地面と一緒に回る）
             Vector3 position = ride.Position + ride.Rotation * (spot - ride.Final);
-            player.transform.position = position;
+            player.transform.SetPositionAndRotation(position, ride.Rotation * SpaceJunkPlayerSetup.SpawnFacing(spot));
             Riders.Add((player, Vector3.Dot(position, Right)));
         }
     }

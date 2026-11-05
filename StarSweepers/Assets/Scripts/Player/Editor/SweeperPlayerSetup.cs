@@ -9,8 +9,11 @@ using UnityEngine;
 /// | --- | --- |
 /// | `Tools > StarSweepers > プレイヤー（本実装）の検証シーンを作り直す` | `Assets/Scenes/Test/SweeperPlayerTest.unity` を作り直す。プレハブが無ければ先に作る |
 /// | `Tools > StarSweepers > プレイヤー（本実装）のプレハブを作り直す` | `Assets/Prefabs/Common/SweeperPlayer.prefab` を最初の状態で作り直す。⚠️ **インスペクターで調整した値は消える** |
+/// | `Tools > StarSweepers > プレイヤー（本実装）の体をキャラクターダミーに差し替える` | 2つの新しい体のプレハブ（これと `SpaceJunkSweeperPlayer.prefab`）を、**作り直さずに**カプセルからキャラクターダミーへ替える |
 ///
-/// マテリアル（`Art/Materials/SweeperRing.mat`・`SweeperAimStrip.mat`）は無ければ作る。
+/// | `Tools > StarSweepers > プレイヤー（本実装）のプレハブにエフェクトのマテリアルを入れる` | 2つの新しい体のプレハブに、物資のフチ・白い光のマテリアルを**作り直さずに**入れる（2026/11/5） |
+///
+/// マテリアル（`Art/Materials/SweeperRing.mat`・`SweeperAimStrip.mat`・`SweeperItemOutline.mat`・`SweeperItemFlash.mat`）は無ければ作る。
 /// 狙いの帯の画像（`Art/Sprites/AimLengthBody.png`・`AimLengthTip.png`）の読み込み設定もここで整える（繰り返し用に Wrap Mode を Repeat）。
 ///
 /// ※ Editor フォルダにあるため、ゲームのビルドには含まれない。
@@ -22,9 +25,15 @@ public static class SweeperPlayerSetup
     private const string RingMaterialPath = "Assets/Art/Materials/SweeperRing.mat";
     private const string StripMaterialPath = "Assets/Art/Materials/SweeperAimStrip.mat";
     private const string BodyMaterialPath = "Assets/Art/Materials/SweeperBody.mat";
+    private const string OutlineMaterialPath = "Assets/Art/Materials/SweeperItemOutline.mat";
+    private const string ItemFlashMaterialPath = "Assets/Art/Materials/SweeperItemFlash.mat";
+    private const string OutlineShaderName = "StarSweepers/SweeperOutline";
+    private const string OnlinePrefabPath = "Assets/Prefabs/SpaceJunk/Online/SpaceJunkSweeperPlayer.prefab";
     private const string BodyTexturePath = "Assets/Art/Sprites/AimLengthBody.png";
     private const string TipTexturePath = "Assets/Art/Sprites/AimLengthTip.png";
     private const string BeamPrefabPath = "Assets/Prefabs/Effect/LiquidBeam.prefab";
+    private const string ModelPath = "Assets/Art/Models/SM_Character_Dummy.fbx";
+    private const string ModelName = "Model";
 
     /// <summary>検証シーンに並べる、見本のプレイヤー（操作はしない）の形と色。</summary>
     private static readonly (SweeperRing.RingShape shape, int team, string name)[] Samples =
@@ -76,6 +85,10 @@ public static class SweeperPlayerSetup
             FishingSceneBuilder.SetFloat(far, "respawnSeconds", 6f);
         }
 
+        // ----- 重い物（投げられず、引きずるだけ。2026/11/5） -----
+        CreateHeavySupply("HeavySupply_1", new Vector3(-7f, 0.6f, 4f), 1.5f);
+        CreateHeavySupply("HeavySupply_2", new Vector3(7f, 0.6f, 4f), 3f);
+
         // ----- 画面の説明 -----
         GameObject hudObject = new GameObject("SweeperPlayerTestHud");
         SweeperPlayerTestHud hud = hudObject.AddComponent<SweeperPlayerTestHud>();
@@ -119,12 +132,102 @@ public static class SweeperPlayerSetup
         visor.transform.localScale = new Vector3(0.5f, 0.15f, 0.12f);
         Object.DestroyImmediate(visor.GetComponent<Collider>());
 
+        // カプセルの見た目をキャラクターダミーに替える（モデルが無ければカプセルのまま）
+        PutModel(root);
+
         FishingSceneBuilder.EnsureFolder("Assets/Prefabs/Common");
         GameObject prefab = PrefabUtility.SaveAsPrefabAsset(root, PrefabPath);
         Object.DestroyImmediate(root);
 
         Debug.Log($"[SweeperPlayer] プレイヤー（本実装）のプレハブを作りました：{PrefabPath}");
         return prefab;
+    }
+
+    /// <summary>
+    /// **作り直さずに、今の検証シーンへ重い物を2つ足す**（2026/11/5。もうあれば何もしない）。
+    /// 作り直すと、手で直したライトの設定などが消えるため。`-executeMethod SweeperPlayerSetup.AddHeavySuppliesToTestScene` で使う。
+    /// </summary>
+    public static void AddHeavySuppliesToTestScene()
+    {
+        var scene = EditorSceneManager.OpenScene(ScenePath, OpenSceneMode.Single);
+        if (GameObject.Find("HeavySupply_1") != null)
+        {
+            Debug.Log("[SweeperPlayer] 検証シーンには、もう重い物があります。");
+            return;
+        }
+
+        CreateHeavySupply("HeavySupply_1", new Vector3(-7f, 0.6f, 4f), 1.5f);
+        CreateHeavySupply("HeavySupply_2", new Vector3(7f, 0.6f, 4f), 3f);
+        EditorSceneManager.SaveScene(scene);
+        Debug.Log($"[SweeperPlayer] 検証シーンに重い物を2つ足しました：{ScenePath}");
+    }
+
+    /// <summary>検証シーンの重い物。ふつうの物資を置いて、再生したときに重くする部品（<see cref="SweeperHeavyTestItem"/>）を付ける。</summary>
+    private static void CreateHeavySupply(string name, Vector3 position, float weight)
+    {
+        HookableObject item = FishingSceneBuilder.CreateSupply(name, position);
+        FishingSceneBuilder.SetFloat(item, "respawnSeconds", 6f);
+        SweeperHeavyTestItem heavy = item.gameObject.AddComponent<SweeperHeavyTestItem>();
+        FishingSceneBuilder.SetFloat(heavy, "weight", weight);
+        FishingSceneBuilder.SetFloat(heavy, "scale", 1.3f + 0.2f * weight);
+    }
+
+    /// <summary>
+    /// **2つの新しい体のプレハブ（これと `SpaceJunkSweeperPlayer.prefab`）に、物資のフチ・白い光のマテリアルを入れる。**（2026/11/5）
+    /// 作り直さないので、インスペクターで調整した値は残る。マテリアルのファイルが無ければ作る。
+    /// プレハブからマテリアルのファイルを指しておくと、シェーダーもビルドに入る（前は再生中に名前で探していて、ビルドでは出ないことがあった）。
+    /// </summary>
+    [MenuItem("Tools/StarSweepers/プレイヤー（本実装）のプレハブにエフェクトのマテリアルを入れる")]
+    public static void AssignGlowMaterials()
+    {
+        Material outline = OutlineMaterial();
+        Material flash = ItemFlashMaterial();
+
+        foreach (string path in new[] { PrefabPath, OnlinePrefabPath })
+        {
+            if (AssetDatabase.LoadAssetAtPath<GameObject>(path) == null)
+            {
+                Debug.LogWarning($"[SweeperPlayer] {path} が見つかりません。");
+                continue;
+            }
+
+            GameObject contents = PrefabUtility.LoadPrefabContents(path);
+            SweeperReel reel = contents.GetComponent<SweeperReel>();
+            if (reel != null)
+            {
+                FishingSceneBuilder.SetRef(reel, "outlineMaterial", outline);
+                FishingSceneBuilder.SetRef(reel, "whiteFlashMaterial", flash);
+                PrefabUtility.SaveAsPrefabAsset(contents, path);
+                Debug.Log($"[SweeperPlayer] エフェクトのマテリアルを入れました：{path}");
+            }
+            PrefabUtility.UnloadPrefabContents(contents);
+        }
+
+        AssetDatabase.SaveAssets();
+    }
+
+    /// <summary>物資の金色のフチのマテリアル（裏の面だけ描く）。無ければ作る。</summary>
+    internal static Material OutlineMaterial()
+    {
+        return GetOrCreateGlowMaterial(OutlineMaterialPath, UnityEngine.Rendering.CullMode.Front);
+    }
+
+    /// <summary>物資が白く光るマテリアル（表の面を描く）。無ければ作る。</summary>
+    internal static Material ItemFlashMaterial()
+    {
+        return GetOrCreateGlowMaterial(ItemFlashMaterialPath, UnityEngine.Rendering.CullMode.Back);
+    }
+
+    /// <summary>`SweeperOutline` シェーダーのマテリアルを作る（あればそのまま使う）。描く面（_Cull）だけ違う2つを作る。</summary>
+    private static Material GetOrCreateGlowMaterial(string path, UnityEngine.Rendering.CullMode cull)
+    {
+        Material material = GetOrCreateShaderMaterial(path, OutlineShaderName);
+        if (material != null && material.HasProperty("_Cull") && !Mathf.Approximately(material.GetFloat("_Cull"), (float)cull))
+        {
+            material.SetFloat("_Cull", (float)cull);
+            EditorUtility.SetDirty(material);
+        }
+        return material;
     }
 
     /// <summary>体（カプセル）のマテリアル（薄い灰色）。無ければ作る。</summary>
@@ -191,6 +294,8 @@ public static class SweeperPlayerSetup
         FishingSceneBuilder.SetRef(mover, "inputActions", inputActions);
         FishingSceneBuilder.SetRef(aim, "cursorVisual", cursor.transform);
         FishingSceneBuilder.SetRef(reel, "flashMaterial", ringMaterial);
+        FishingSceneBuilder.SetRef(reel, "outlineMaterial", OutlineMaterial());
+        FishingSceneBuilder.SetRef(reel, "whiteFlashMaterial", ItemFlashMaterial());
         FishingSceneBuilder.SetRef(shooter, "aim", aim);
         FishingSceneBuilder.SetRef(shooter, "mover", mover);
         FishingSceneBuilder.SetRef(shooter, "reel", reel);
@@ -279,5 +384,92 @@ public static class SweeperPlayerSetup
         SerializedObject serialized = new SerializedObject(owner);
         serialized.FindProperty(field).boolValue = value;
         serialized.ApplyModifiedPropertiesWithoutUndo();
+    }
+
+    // ------------------------------------------------------------
+    // キャラクターのモデル（2026/10/29・小野田さんの依頼）
+    // ------------------------------------------------------------
+
+    [MenuItem("Tools/StarSweepers/プレイヤー（本実装）の体をキャラクターダミーに差し替える")]
+    public static void ReplaceBodyWithModelInPrefabs()
+    {
+        foreach (string path in new[] { PrefabPath, SweeperOnlineSetup.PrefabPath })
+        {
+            if (AssetDatabase.LoadAssetAtPath<GameObject>(path) == null)
+            {
+                Debug.LogWarning($"[SweeperPlayer] {path} が見つかりません。先にプレハブを作ってください。");
+                continue;
+            }
+
+            // 作り直さずに開いて直す（インスペクターで調整した値を消さないため）
+            GameObject root = PrefabUtility.LoadPrefabContents(path);
+            if (PutModel(root))
+            {
+                PrefabUtility.SaveAsPrefabAsset(root, path);
+                Debug.Log($"[SweeperPlayer] 体をキャラクターダミーに差し替えました：{path}");
+            }
+            else
+            {
+                Debug.Log($"[SweeperPlayer] 差し替え済みか、モデルが無いので何もしませんでした：{path}");
+            }
+            PrefabUtility.UnloadPrefabContents(root);
+        }
+    }
+
+    /// <summary>
+    /// **体の見た目を、カプセルからキャラクターダミー（Hansさん作）に替える。** 替えたら true。
+    ///
+    /// ・モデルは子の <c>Model</c> に置く（足元が原点。**大きさ・向きは変えない**。Hansさんのモデルは変更前に本人の了承が要るため）
+    /// ・カプセルは見た目（MeshFilter・MeshRenderer）だけ外し、<c>Body</c> という入れ物は残す
+    ///   （FrontMark の親で、ほかのツールが名前で探すため）
+    /// ・スタンで点滅させる見た目（<see cref="PlayerStun"/> の bodyRenderers）のカプセルを、モデルの見た目に入れ替える
+    /// ・アニメーションはまだ無い。<see cref="SweeperAnimation"/> はモデルの Animator を見つけるが、状態が無いので何もしない
+    /// </summary>
+    internal static bool PutModel(GameObject root)
+    {
+        if (root.transform.Find(ModelName) != null)
+        {
+            return false;
+        }
+
+        GameObject modelAsset = AssetDatabase.LoadAssetAtPath<GameObject>(ModelPath);
+        if (modelAsset == null)
+        {
+            Debug.LogWarning($"[SweeperPlayer] {ModelPath} が見つかりません。体はカプセルのままです。");
+            return false;
+        }
+
+        GameObject model = (GameObject)PrefabUtility.InstantiatePrefab(modelAsset, root.transform);
+        model.name = ModelName;
+        model.transform.localPosition = Vector3.zero;
+        model.transform.localRotation = Quaternion.identity;
+        model.transform.localScale = Vector3.one;
+        Renderer[] modelRenderers = model.GetComponentsInChildren<Renderer>(true);
+
+        Transform body = root.transform.Find("Body");
+        MeshRenderer capsule = body != null ? body.GetComponent<MeshRenderer>() : null;
+
+        PlayerStun stun = root.GetComponent<PlayerStun>();
+        if (stun != null)
+        {
+            var renderers = new System.Collections.Generic.List<Object>(modelRenderers);
+            SerializedProperty array = new SerializedObject(stun).FindProperty("bodyRenderers");
+            for (int i = 0; i < array.arraySize; i++)
+            {
+                Object item = array.GetArrayElementAtIndex(i).objectReferenceValue;
+                if (item != null && item != capsule)
+                {
+                    renderers.Add(item);
+                }
+            }
+            FishingSceneBuilder.SetObjectArray(stun, "bodyRenderers", renderers.ToArray());
+        }
+
+        if (capsule != null)
+        {
+            Object.DestroyImmediate(capsule);
+            Object.DestroyImmediate(body.GetComponent<MeshFilter>());
+        }
+        return true;
     }
 }
