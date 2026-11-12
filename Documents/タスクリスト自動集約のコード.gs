@@ -28,12 +28,15 @@
  *              この機能は既定で **OFF** です。メニューから「予定を見る」で中身を確認してから
  *              「自動反映をONにする」を押してください。
  *
- * 隠し列     … 全体タスク J＝職能（どの分表か）、K＝元の行（分表の行番号）。
- *              分表     J＝タスクID、K＝種別（本体／鏡像）。
- *              ※全体タスクの J/K と分表の J/K は中身が別物です。触らないでください。
+ * 隠し列     … 同期の仕組みは **Q/R の2列だけ**にまとめてある（4枚とも非表示）。
+ *              全体タスク Q＝職能（どの分表か）、R＝元の行（分表の行番号）。
+ *              分表     Q＝タスクID、R＝種別（本体／鏡像）。
+ *              ※全体タスクの Q/R と分表の Q/R は中身が別物です。触らないでください。
+ *              ※A〜I が利用者のデータ。J〜P はスクリプトが一切触らない空き領域。
+ *              ※昔は J/K に置いていた。初期設定をやり直すと Q/R へ移って J/K は空く。
  *
  * 【安全のための決まり】
- *   スクリプトが分表で**削除・上書きするのは、K列に「鏡像」と書いてある行だけ**です。
+ *   スクリプトが分表で**削除・上書きするのは、R列に「鏡像」と書いてある行だけ**です。
  *   印の無い行はすべて利用者自身のデータとして扱い、絶対に消しません。
  *
  * 読み書き先は getTaskBook_() で新しいタスクリストだけに制限します。
@@ -52,12 +55,17 @@ const TASK_COL_DUE = 4;          // D 締切
 const TASK_COL_STATUS = 5;       // E ステータス
 const TASK_COL_NAME = 6;         // F タスク名
 const TASK_COL_OWNER = 7;        // G 担当者
-const TASK_COL_JOB = 10;         // J 職能（全体タスクの同期用）
-const TASK_COL_SRCROW = 11;      // K 元の行（全体タスクの同期用）
+const TASK_COL_JOB = 17;         // Q 職能（全体タスクの同期用・非表示）
+const TASK_COL_SRCROW = 18;      // R 元の行（全体タスクの同期用・非表示）
 
-// 分表の同期用隠し列（全体タスクの J/K とは中身が違うので注意）
-const TASK_COL_TASKID = 10;      // J タスクID
-const TASK_COL_KIND = 11;        // K 種別（本体／鏡像）
+// 分表の同期用隠し列（全体タスクの Q/R とは中身が違うので注意）
+const TASK_COL_TASKID = 17;      // Q タスクID
+const TASK_COL_KIND = 18;        // R 種別（本体／鏡像）
+
+// 同期の仕組みは Q/R の2列にまとめて置く。A〜I は利用者のもの、J〜P は何もしない。
+const TASK_SYNC_FIRST_COL = 17;
+const TASK_SYNC_COL_COUNT = 2;
+const TASK_LEGACY_SYNC_COL = 10;  // 前は J/K だった。初期設定で Q/R に移して空ける
 const TASK_KIND_SOURCE = '本体';
 const TASK_KIND_MIRROR = '鏡像';
 
@@ -136,19 +144,23 @@ function setupTaskList() {
   // 前回記録したドロップダウンの署名も消して、確実に敷き直す
   ScriptProperties.deleteProperty(TASK_DV_SIGNATURE_KEY);
 
+  summary.getRange(1, 1).setNote(TASK_SUMMARY_NOTE);
+
+  // 全体タスクは毎回作り直すので、昔 J/K に入れていた分は消して Q/R に置き直す
+  clearLegacySyncColumns_(summary);
   summary.getRange(1, TASK_COL_JOB).setValue('職能（同期用・編集しないでください）');
   summary.getRange(1, TASK_COL_SRCROW).setValue('元の行（同期用・編集しないでください）');
-  summary.getRange(1, 1).setNote(TASK_SUMMARY_NOTE);
-  try { summary.hideColumns(TASK_COL_JOB, 2); } catch (error) { console.log('列の非表示化をスキップしました'); }
+  hideSyncColumns_(summary);
 
   // 分表にも同期用の隠し列（タスクID／種別）を用意する
   TASK_SOURCE_NAMES.forEach(function (name) {
     try {
       const sheet = ss.getSheetByName(name);
       if (!sheet) return;
+      migrateLegacySyncColumns_(sheet);   // 昔 J/K に書いた中身を Q/R へ移す（IDを失わないため）
       sheet.getRange(1, TASK_COL_TASKID).setValue('タスクID（同期用・編集しないでください）');
       sheet.getRange(1, TASK_COL_KIND).setValue('種別（同期用・編集しないでください）');
-      sheet.hideColumns(TASK_COL_TASKID, 2);
+      hideSyncColumns_(sheet);
     } catch (error) {
       console.log('「' + name + '」の同期用列の設定をスキップしました');
     }
@@ -168,6 +180,45 @@ function setupTaskList() {
     '並び順：締切 → 職能（プロ・デザ・プラ） → 担当者\n' +
     'ステータス表示：完了＝灰色／遂行中＝太字\n' +
     '職種をまたぐタスク：' + mirrorMode_() + '（メニューからONにできます）';
+}
+
+/** 同期の仕組みを置く列（Q/R）を隠す。利用者に中身を見せないため。 */
+function hideSyncColumns_(sheet) {
+  try {
+    sheet.hideColumns(TASK_SYNC_FIRST_COL, TASK_SYNC_COL_COUNT);
+  } catch (error) {
+    console.log('「' + sheet.getName() + '」の同期用列を隠せませんでした');
+  }
+}
+
+/**
+ * 昔 J/K に置いていた同期用列を Q/R へ移し、J/K は空けて表示に戻す。
+ * タスクIDを失うと鏡像行が本体と結びつかなくなるので、消す前に必ず移す。
+ */
+function migrateLegacySyncColumns_(sheet) {
+  if (TASK_LEGACY_SYNC_COL === TASK_SYNC_FIRST_COL) return;
+  const lastRow = Math.min(sheet.getLastRow(), TASK_LAST_DATA_ROW);
+  if (lastRow >= 1) {
+    const old = sheet.getRange(1, TASK_LEGACY_SYNC_COL, lastRow, TASK_SYNC_COL_COUNT).getValues();
+    const hasContent = old.some(function (rowValues) {
+      return rowValues.some(function (value) { return normalizeText_(value) !== ''; });
+    });
+    if (hasContent) {
+      sheet.getRange(1, TASK_SYNC_FIRST_COL, lastRow, TASK_SYNC_COL_COUNT).setValues(old);
+    }
+  }
+  clearLegacySyncColumns_(sheet);
+}
+
+/** 昔の J/K を空にして、隠れていたら表示に戻す */
+function clearLegacySyncColumns_(sheet) {
+  const lastRow = Math.min(sheet.getLastRow(), TASK_LAST_DATA_ROW);
+  if (lastRow >= 1) {
+    sheet.getRange(1, TASK_LEGACY_SYNC_COL, lastRow, TASK_SYNC_COL_COUNT).clearContent();
+  }
+  try {
+    sheet.showColumns(TASK_LEGACY_SYNC_COL, TASK_SYNC_COL_COUNT);
+  } catch (error) { }
 }
 
 /** 全体タスクは自動生成。うっかり編集しそうになったら警告を出す（編集自体は禁止しない）。 */
@@ -247,13 +298,13 @@ function handleEdit_(e) {
 
   if (sheetName === TASK_SUMMARY_NAME) {
     // 全体タスクは表示専用。直接編集されたら分表の内容で上書きし直す（書き戻しはしない）。
-    if (column >= TASK_COL_JOB) return;
+    if (column > TASK_NUM_COLUMNS) return;
     rebuildSummary_();
     return;
   }
 
   if (TASK_SOURCE_NAMES.indexOf(sheetName) < 0) return;
-  if (column >= TASK_COL_TASKID) return;   // 同期用の隠し列は触らない
+  if (column > TASK_NUM_COLUMNS) return;   // A〜I 以外（同期用の隠し列など）は触らない
   handleSourceEdit_(sheetName, row, column, e.range.getNumRows(), e.range.getNumColumns());
 }
 
@@ -545,7 +596,7 @@ function readSourceSnapshot_(ss) {
 
 /**
  * 「何をするか」だけを決める（この関数は表に一切書き込まない）。
- * 削除対象になるのは K列＝鏡像 の行だけ。本体行は絶対に消さない。
+ * 削除対象になるのは R列＝鏡像 の行だけ。本体行は絶対に消さない。
  */
 function planMirrors_(snapshot, roleMap) {
   const assigns = [];   // IDを振る本体行
@@ -986,7 +1037,7 @@ function inspectTaskBook() {
   SpreadsheetApp.flush();
   const ss = getTaskBook_();
   const response = Sheets.Spreadsheets.get(ss.getId(), {
-    ranges: ['全体タスク!A1:K8', '全体タスク!G100:G101', '全体タスク!G150:G151', 'プログラマー!A1:K4', 'デザイナー!A1:K4', 'プランナー!A1:K4'],
+    ranges: ['全体タスク!A1:R8', '全体タスク!G100:G101', '全体タスク!G150:G151', 'プログラマー!A1:R4', 'デザイナー!A1:R4', 'プランナー!A1:R4'],
     fields: 'sheets(properties(title),conditionalFormats,data(startRow,rowData(values(userEnteredValue,dataValidation))))'
   });
 
