@@ -83,9 +83,9 @@ const TASK_SUMMARY_NOTE = 'このシートは自動生成です。' +
 /* ------------------------------------------------------------------ */
 
 function onOpen() {
-  const ss = SpreadsheetApp.getActiveSpreadsheet();
-  if (!ss || ss.getId() !== TASK_BOOK_ID) return;
-  ss.getUi().createMenu('タスク同期')
+  // UI は SpreadsheetApp.getUi() から取る（Spreadsheet に getUi は無い）
+  SpreadsheetApp.getUi()
+    .createMenu('タスク同期')
     .addItem('今すぐ同期する（締切順に並べ直す）', 'syncNowFromMenu')
     .addSeparator()
     .addItem('職種をまたぐタスク：予定を見る（表は変わりません）', 'previewMirrorPlanFromMenu')
