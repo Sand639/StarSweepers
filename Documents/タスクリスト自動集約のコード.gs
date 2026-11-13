@@ -564,22 +564,28 @@ function rolesOfOwnerText_(ownerText, roleMap) {
 function readSourceSnapshot_(ss) {
   const sources = [];
   const mirrors = [];
+  const taskRows = {};   // シート名 → タスクが書いてある行番号の並び
   TASK_SOURCE_NAMES.forEach(function (name) {
     const sheet = ss.getSheetByName(name);
     if (!sheet) return;
     const rowCount = usedRowCount_(sheet);
     if (rowCount < 1) return;
     const values = sheet.getRange(TASK_FIRST_DATA_ROW, 1, rowCount, TASK_COL_KIND).getValues();
+    const rows = [];
     values.forEach(function (row, index) {
       const rowIndex = TASK_FIRST_DATA_ROW + index;
       const kind = normalizeText_(row[TASK_COL_KIND - 1]);
       const id = normalizeText_(row[TASK_COL_TASKID - 1]);
+      const taskName = row[TASK_COL_NAME - 1];
+      const hasTaskName = !(taskName === '' || taskName === null || taskName === undefined);
+      // A列（マイルステージ）は一番下まで塗りつぶしてあるので「タスクの行」の目印にはならない。
+      // タスク名か種別が書いてある行だけを数える。
+      if (hasTaskName || kind === TASK_KIND_MIRROR) rows.push(rowIndex);
       if (kind === TASK_KIND_MIRROR) {
         mirrors.push({ id: id || null, sheet: name, row: rowIndex });
         return;
       }
-      const taskName = row[TASK_COL_NAME - 1];
-      if (taskName === '' || taskName === null || taskName === undefined) return;
+      if (!hasTaskName) return;
       sources.push({
         id: id || null,
         sheet: name,
@@ -590,8 +596,21 @@ function readSourceSnapshot_(ss) {
         targets: []
       });
     });
+    taskRows[name] = rows;
   });
-  return { sources: sources, mirrors: mirrors };
+  return { sources: sources, mirrors: mirrors, taskRows: taskRows };
+}
+
+/**
+ * タスクの列から外れて、一番下にぽつんと置かれている鏡像かどうか。
+ * 昔の版で「締切が入っていない本体」の鏡像を作ると、A列の塗りつぶしの下端（＝シートの一番下）まで
+ * 飛ばされていた。その置き忘れを拾い直すための判定。
+ */
+function isParkedMirror_(mirror, taskRows) {
+  const rows = (taskRows || {})[mirror.sheet] || [];
+  if (rows.length < 2) return false;
+  if (rows[rows.length - 1] !== mirror.row) return false;   // 一番下のタスクでなければ対象外
+  return rows[rows.length - 2] < mirror.row - 1;            // ひとつ上と隣り合っていなければ「ぽつん」
 }
 
 /**
@@ -616,6 +635,7 @@ function planMirrors_(snapshot, roleMap) {
   });
 
   const mirrorsById = {};
+  const parked = [];   // 一番下に置き忘れている鏡像（消して、締切順の位置に作り直す）
   snapshot.mirrors.forEach(function (mirror) {
     const src = mirror.id ? liveIds[mirror.id] : null;
     // 本体が消えた、または担当者が変わってこの職種が対象でなくなった
@@ -623,7 +643,14 @@ function planMirrors_(snapshot, roleMap) {
     const list = mirrorsById[mirror.id] || (mirrorsById[mirror.id] = []);
     if (list.some(function (m) { return m.sheet === mirror.sheet; })) { deletes.push(mirror); return; }
     list.push(mirror);
+    if (isParkedMirror_(mirror, snapshot.taskRows)) { parked.push(mirror); return; }
     updates.push({ id: mirror.id, sheet: mirror.sheet });
+  });
+
+  // 置き忘れの鏡像は「削除」に回す。mirrorsById からも外すので、下のループが作り直す。
+  parked.forEach(function (mirror) {
+    deletes.push(mirror);
+    mirrorsById[mirror.id] = (mirrorsById[mirror.id] || []).filter(function (m) { return m !== mirror; });
   });
 
   snapshot.sources.forEach(function (src) {
@@ -635,7 +662,7 @@ function planMirrors_(snapshot, roleMap) {
     });
   });
 
-  return { assigns: assigns, deletes: deletes, creates: creates, updates: updates };
+  return { assigns: assigns, deletes: deletes, creates: creates, updates: updates, parked: parked };
 }
 
 function describePlan_(plan, roleMap, mode) {
@@ -653,6 +680,10 @@ function describePlan_(plan, roleMap, mode) {
     lines.push('  ' + c.sheet + ' ← 「' + c.taskName + '」 担当者=' + c.owner);
   });
   lines.push('中身を本体で上書きする鏡像: ' + plan.updates.length + ' 件');
+  lines.push('一番下から置き直す鏡像: ' + (plan.parked || []).length + ' 件');
+  (plan.parked || []).slice(0, 40).forEach(function (p) {
+    lines.push('  ' + p.sheet + ' 行' + p.row + '（ID=' + (p.id || 'なし') + '）');
+  });
   lines.push('削除する鏡像: ' + plan.deletes.length + ' 件');
   plan.deletes.slice(0, 40).forEach(function (d) {
     lines.push('  ' + d.sheet + ' 行' + d.row + '（ID=' + (d.id || 'なし') + '）');
@@ -726,18 +757,33 @@ function executeMirrorPlan_(ss, plan) {
   writeMirrorIndex_(ss);
 }
 
-/** 締切が自分より遅い最初の行の手前（締切なしなら一番下） */
-function mirrorInsertRow_(sheet, due) {
+/** タスクが書いてある最後の行。A列の塗りつぶし（一番下まで入っている）に引っ張られないように。 */
+function lastTaskRow_(sheet) {
   const rowCount = usedRowCount_(sheet);
-  if (rowCount < 1) return TASK_FIRST_DATA_ROW;
-  if (due === null) return TASK_FIRST_DATA_ROW + rowCount;
-  const dues = sheet.getRange(TASK_FIRST_DATA_ROW, TASK_COL_DUE, rowCount, 1).getValues();
+  if (rowCount < 1) return TASK_FIRST_DATA_ROW - 1;
+  const values = sheet.getRange(TASK_FIRST_DATA_ROW, 1, rowCount, TASK_COL_KIND).getValues();
+  let last = TASK_FIRST_DATA_ROW - 1;
+  values.forEach(function (rowValues, index) {
+    const taskName = rowValues[TASK_COL_NAME - 1];
+    const kind = normalizeText_(rowValues[TASK_COL_KIND - 1]);
+    const hasTaskName = !(taskName === '' || taskName === null || taskName === undefined);
+    if (hasTaskName || kind === TASK_KIND_MIRROR) last = TASK_FIRST_DATA_ROW + index;
+  });
+  return last;
+}
+
+/** 締切が自分より遅い最初の行の手前（締切なしならタスクの一番下） */
+function mirrorInsertRow_(sheet, due) {
+  const lastTask = lastTaskRow_(sheet);
+  if (lastTask < TASK_FIRST_DATA_ROW) return TASK_FIRST_DATA_ROW;
+  if (due === null) return lastTask + 1;
+  const dues = sheet.getRange(TASK_FIRST_DATA_ROW, TASK_COL_DUE, lastTask - TASK_FIRST_DATA_ROW + 1, 1).getValues();
   for (let i = 0; i < dues.length; i++) {
     const d = dueKey_(dues[i][0]);
     if (d === null) return TASK_FIRST_DATA_ROW + i;
     if (d > due) return TASK_FIRST_DATA_ROW + i;
   }
-  return TASK_FIRST_DATA_ROW + rowCount;
+  return lastTask + 1;
 }
 
 /** 鏡像は斜体にして、本体と見た目で区別できるようにする */
